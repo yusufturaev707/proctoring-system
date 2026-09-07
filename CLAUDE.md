@@ -276,6 +276,16 @@ yarating; `code` React tomonda tarjima kaliti sifatida ishlatiladi.
   o'chirmaydi, `deleted_at` qo'yadi; ro'yxatlarda `.alive()` ishlatiladi.
 * **Redis `maxmemory-policy` `noeviction` bo'lishi kerak** — `allkeys-lru`
   da faol sessiya tokenlari imtihon o'rtasida o'chib ketadi.
+* **(client) `pyqtSignal` ni `event` deb nomlamang.** `QObject.event()` —
+  Qt'ning markaziy virtual metodi; uni signal bilan bosib qo'yish
+  obyektga birinchi bola qo'shilishi bilan (masalan `parent=self` bilan
+  yaratilgan `QThread`) butun jarayonni **qulatadi**, va Python hech
+  qanday istisno bermaydi — process jimgina o'ladi.
+* **(client) `QThread` ning "ishlayapti" bayrog'ini `run()` ichida
+  qo'ymang** — `start()` dan keyin darhol `stop()` chaqirilsa, endigina
+  boshlangan `run()` bayroqni qaytarib qo'yadi va thread abadiy
+  ishlaydi. Bayroq `start()` da, chaqiruvchi thread'da qo'yiladi
+  (`device_watch._ProcessScanner`).
 
 ## Muhit o'zgaruvchilari
 

@@ -42,6 +42,8 @@ from PyQt6.QtWidgets import (
 from config import PERIODIC_FACE_INTERVAL_MS
 from services.app_state import AppState
 from services.camera_worker import CameraWorker, retire_camera
+from services.device_watch import DeviceWatcher
+from services.lockdown import lockdown
 from services.monitoring import SessionMonitor
 from services.realtime import ProctorChannel
 from services.repositories import ProctoringRepository
@@ -138,6 +140,12 @@ class ExamWebViewPage(QWidget):
         self._channel.warning.connect(self._on_proctor_warning)
         self._channel.terminated.connect(self._on_proctor_terminate)
         self._channel.resumed.connect(self._on_proctor_resume)
+
+        # Qurilma kuzatuvi: oyna fokusi, to'liq ekran, monitorlar, RDP
+        # va bloklangan tugmalar. U hodisalarni faqat CHIQARADI -
+        # buferga yozish shu yerda, bitta joyda.
+        self._watcher = DeviceWatcher(parent=self)
+        self._watcher.detected.connect(self._on_device_event)
 
         self._camera: Optional[CameraWorker] = None
         self._last_embedding = None
@@ -259,6 +267,15 @@ class ExamWebViewPage(QWidget):
         session = self._state.session
         self._channel.start(session.token if session else "")
 
+        # `self.window()` - sahifa emas, uni o'z ichiga olgan
+        # `MainWindow`: to'liq ekran holati o'sha yerda.
+        self._watcher.start(self._state.config, window=self.window())
+        # Bloklangan tugma bosilgani hodisa oqimiga tushadi. Observer
+        # SESSIYA davomida qo'yiladi va yakunda olib tashlanadi:
+        # qulflashning o'zi dastur bo'yicha ishlaydi (login sahifasida
+        # ham), lekin hodisa yozadigan sessiya faqat shu yerda bor.
+        lockdown.set_observer(self._watcher.report_blocked_key)
+
     def _configure_profile(self, policy: dict) -> None:
         """
         Har sessiya uchun YANGI off-the-record profil.
@@ -336,11 +353,29 @@ class ExamWebViewPage(QWidget):
     # ------------------------------------------------------------------
     # Nazorat
     # ------------------------------------------------------------------
+    def _on_device_event(self, event_type: str, severity: int, payload: dict) -> None:
+        """Kuzatuvchi chiqargan hodisani buferga qo'yadi."""
+        self._monitor.push_event(event_type, severity=severity, payload=payload)
+
     def _attach_camera(self, camera: Optional[CameraWorker]) -> None:
         """4-sahifadan kelgan kamerani davriy tekshiruvga ulaydi."""
         self._camera = camera
         if camera is not None:
             camera.face_result.connect(self._on_face_result)
+            camera.camera_error.connect(self._on_camera_error)
+
+    def _on_camera_error(self, message: str) -> None:
+        """
+        Kamera yo'qoldi yoki ochilmadi.
+
+        `camera_blocked` dan ATAYLAB farqlanmaydi: kabel uzilgani,
+        drayver yiqilgani va ob'ektiv yopilgani `cv2` darajasida bir xil
+        ko'rinadi. Sabab `payload` da qoladi va qarorni proktor chiqaradi.
+        """
+        log.warning("Kamera xatosi: %s", message)
+        self._monitor.push_event(
+            "camera_lost", severity=3, payload={"reason": message[:300]}
+        )
 
     def _on_face_result(self, result: dict) -> None:
         """
@@ -398,6 +433,15 @@ class ExamWebViewPage(QWidget):
     def _on_network_changed(self, online: bool) -> None:
         self.network_badge.setText("Aloqa bor" if online else "Aloqa yo'q")
         self.network_badge.setStyleSheet(badge_style("success" if online else "error"))
+        # Uzilish hodisa oqimida ham qoladi. Bu bayonnoma uchun muhim:
+        # uzilish paytida skrinshot va hodisalarda bo'shliq bo'ladi va
+        # uning SABABI yozilmasa, bo'shliq nazoratning nosozligiday
+        # ko'rinadi. Hodisa uzilishdan KEYIN yuboriladi (bufer bilan),
+        # ya'ni u o'zi ham o'sha bo'shliqning ichida turadi.
+        self._monitor.push_event(
+            "network_restored" if online else "network_lost",
+            severity=0 if online else 2,
+        )
         if not online:
             self.message.show_message(
                 "Server bilan aloqa yo'q. Hodisalar buferda saqlanmoqda.", "warning"
@@ -544,6 +588,10 @@ class ExamWebViewPage(QWidget):
         # Kanal BIRINCHI yopiladi: aks holda sessiya yakunlangach
         # kelgan buyruq allaqachon to'xtagan sahifani qo'zg'atadi.
         self._channel.stop()
+        # Observer kuzatuvchidan OLDIN olib tashlanadi: hook thread'i
+        # to'xtagan obyektga hodisa yuborib qolmasin.
+        lockdown.set_observer(None)
+        self._watcher.stop()
         # Skrinshot xizmati sessiya tokeni bekor qilinishidan OLDIN
         # to'xtatiladi: u yakunda qolgan kadrlarni va commit'larni
         # yuborishga urinadi, tokensiz esa ular 401 oladi.
@@ -551,10 +599,16 @@ class ExamWebViewPage(QWidget):
         self._monitor.stop()
 
         if self._camera is not None:
-            try:
-                self._camera.face_result.disconnect(self._on_face_result)
-            except TypeError:
-                pass
+            for signal, slot in (
+                (self._camera.face_result, self._on_face_result),
+                (self._camera.camera_error, self._on_camera_error),
+            ):
+                try:
+                    signal.disconnect(slot)
+                except TypeError:
+                    # Ulanmagan signal - kamera bu sessiyada
+                    # biriktirilmagan bo'lishi mumkin.
+                    pass
             retire_camera(self._camera)
             self._camera = None
 

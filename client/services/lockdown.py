@@ -104,6 +104,34 @@ class _Lockdown:
         self._accessibility_saved: dict = {}
         self._lock = threading.RLock()
         self._cleanup_registered = False
+        #: Bloklangan bosish haqida xabar qiluvchi (ixtiyoriy).
+        self._observer: Optional[callable] = None
+
+    def set_observer(self, observer: Optional[callable]) -> None:
+        """
+        Bloklangan tugma bosilganda chaqiriladigan funksiya.
+
+        Nima uchun kerak: bloklashning O'ZI hodisa emas, lekin talabgor
+        Alt+Tab ni QAYTA-QAYTA bosayotgani - eng aniq niyat belgisi.
+        Usiz proktor faqat natijani (hech narsa bo'lmagan ekranni)
+        ko'radi va urinishlarni umuman bilmaydi.
+
+        DIQQAT: `keyboard` kutubxonasining hook thread'idan chaqiriladi,
+        UI thread'idan EMAS. Observer thread-safe bo'lishi shart
+        (Qt signalini emit qilish - shunday).
+        """
+        self._observer = observer
+
+    def _notify(self, code: str) -> None:
+        if self._observer is None:
+            return
+        try:
+            self._observer(code)
+        except Exception:
+            # Observer xatosi bloklashni buzmasligi kerak: hook
+            # ichidagi istisno `keyboard` kutubxonasini yiqitadi va
+            # o'sha zahoti BARCHA tugmalar ochilib qoladi.
+            log.debug("Qulflash observer xatosi", exc_info=True)
 
     # ------------------------------------------------------------------
     @property
@@ -162,10 +190,22 @@ class _Lockdown:
                     # va ro'yxati ['alt','tab',...] shaklida yozilgan.
                     if "+" in code:
                         handle = keyboard.add_hotkey(
-                            code, lambda: None, suppress=True, trigger_on_release=False
+                            code,
+                            lambda c=code: self._notify(c),
+                            suppress=True,
+                            trigger_on_release=False,
                         )
                     else:
-                        handle = keyboard.block_key(code)
+                        # `block_key` o'rniga `hook_key`: ikkalasi ham
+                        # bir xil bloklaydi (`block_key` shunchaki
+                        # `hook_key(..., lambda e: False, suppress=True)`),
+                        # lekin `hook_key` bosilganini XABAR QILISH
+                        # imkonini beradi. `False` qaytarish - hodisani
+                        # yutish; boshqa qiymat tugmani o'tkazib
+                        # yuborardi.
+                        handle = keyboard.hook_key(
+                            code, self._make_blocker(code), suppress=True
+                        )
                 except Exception as exc:
                     failed.append("{} ({})".format(code, str(exc)[:60]))
                     continue
@@ -185,13 +225,31 @@ class _Lockdown:
             self._restore_accessibility()
 
     # ------------------------------------------------------------------
+    def _make_blocker(self, code: str):
+        """
+        Yakka tugma uchun hook: xabar qiladi va hodisani YUTADI.
+
+        Faqat bosilishda (`down`) xabar beriladi: har bosish `down` va
+        `up` juftligini beradi va ikkalasini ham hisoblash urinishlar
+        sonini ikki barobar ko'rsatardi.
+        """
+
+        def handler(event) -> bool:
+            if getattr(event, "event_type", None) == "down":
+                self._notify(code)
+            return False
+
+        return handler
+
     def _unhook_all(self) -> None:
         for code, handle in self._handles:
             try:
                 if "+" in code:
                     keyboard.remove_hotkey(handle)
                 else:
-                    keyboard.unblock_key(handle)
+                    # `hook_key` va `block_key` bir xil handle beradi;
+                    # `unblock_key` ham aslida `unhook` ning taxallusi.
+                    keyboard.unhook(handle)
             except Exception as exc:
                 log.debug("Hook bo'shatilmadi (%s): %s", code, exc)
         self._handles.clear()
