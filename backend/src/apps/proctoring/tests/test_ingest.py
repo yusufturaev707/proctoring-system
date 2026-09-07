@@ -27,6 +27,20 @@ from apps.proctoring.services import ingest
 from apps.proctoring.tests import factories
 
 
+async def _receive_with_timeout(layer, channel, timeout=0.25):
+    """
+    Kanalda xabar YO'Qligini tekshirish uchun.
+
+    `layer.receive` xabar kelguncha CHEKSIZ kutadi, ya'ni "hech nima
+    yuborilmadi" ni to'g'ridan-to'g'ri tasdiqlab bo'lmaydi — testni
+    osiltirib qo'yadi. Qisqa timeout bilan kutish esa buni aniq
+    aytadi.
+    """
+    import asyncio
+
+    return await asyncio.wait_for(layer.receive(channel), timeout)
+
+
 class ClampTimeTests(TestCase):
     """Vaqt chegaralari — partitsiyani himoya qiladi."""
 
@@ -125,6 +139,80 @@ class RiskWeightTests(TestCase):
         self.assertEqual(heaviest, ProctoringEvent.Type.RDP_DETECTED)
 
 
+class BroadcastDetailTests(TestCase):
+    """
+    Dashboard'ga uzatiladigan tafsilot.
+
+    Payload'ni to'liq uzatib bo'lmaydi: uni CLIENT to'ldiradi, ya'ni u
+    ishonchsiz va cheklanmagan. Shuning uchun oq ro'yxat va qat'iy
+    chegaralar — bu yerda client bergan ma'lumot proktorning brauzeriga
+    o'tadi.
+    """
+
+    def test_extracts_whitelisted_keys(self):
+        detail = ingest._broadcast_detail(
+            {"processes": ["AnyDesk.exe"], "count": 2, "repeats": 7}
+        )
+        self.assertEqual(
+            detail, {"processes": ["AnyDesk.exe"], "count": 2, "repeats": 7}
+        )
+
+    def test_drops_unknown_keys(self):
+        """
+        Ro'yxatda yo'q kalit UZATILMAYDI.
+
+        Buzilgan client har hodisaga o'zicha maydon qo'shsa, ular
+        kanaldan o'tib ketardi.
+        """
+        detail = ingest._broadcast_detail(
+            {"count": 1, "kelajakdagi_kalit": "x", "screenshot_key": "maxfiy/yo'l"}
+        )
+        self.assertEqual(detail, {"count": 1})
+
+    def test_truncates_long_text(self):
+        detail = ingest._broadcast_detail({"reason": "x" * 5_000})
+        self.assertEqual(len(detail["reason"]), ingest._DETAIL_TEXT_LIMIT)
+
+    def test_caps_list_length_and_item_length(self):
+        """
+        Ro'yxat ham uzunligi, ham elementlari bo'yicha cheklanadi.
+
+        Chegarasiz 10 000 elementli ro'yxat channel layer'ining
+        buferini (`capacity` 2000) to'ldirib, BARCHA proktorlarning
+        kanalini o'ldirardi.
+        """
+        detail = ingest._broadcast_detail(
+            {"processes": ["p" * 500] * 50}
+        )
+        self.assertEqual(len(detail["processes"]), ingest._DETAIL_LIST_LIMIT)
+        self.assertEqual(len(detail["processes"][0]), ingest._DETAIL_TEXT_LIMIT)
+
+    def test_accepts_json_string(self):
+        """`_broadcast` ga payload allaqachon JSON satr bo'lib keladi."""
+        self.assertEqual(
+            ingest._broadcast_detail('{"count": 3}'), {"count": 3}
+        )
+
+    def test_malformed_input_returns_empty(self):
+        for value in ("json emas", None, "[]", 42, ["a"]):
+            with self.subTest(value=value):
+                self.assertEqual(ingest._broadcast_detail(value), {})
+
+    def test_nested_structures_are_dropped(self):
+        """
+        Ichma-ich obyekt uzatilmaydi.
+
+        Faqat oddiy turlar (son, satr, satrlar ro'yxati) o'tadi —
+        chuqurligi cheklanmagan struktura o'lchamni ham, frontenddagi
+        ko'rsatishni ham nazoratdan chiqarardi.
+        """
+        detail = ingest._broadcast_detail({"reason": {"ichki": {"yana": 1}}})
+        self.assertEqual(detail, {})
+
+    def test_booleans_survive(self):
+        self.assertEqual(ingest._broadcast_detail({"count": True}), {"count": True})
+
+
 class PushEventTests(RedisStateMixin, TestCase):
     def setUp(self):
         super().setUp()
@@ -180,6 +268,71 @@ class PushEventTests(RedisStateMixin, TestCase):
             hot["risk"], ingest.RISK_WEIGHTS[ProctoringEvent.Type.MULTI_MONITOR]
         )
         self.assertEqual(hot["events"], 1)
+
+    def test_broadcast_reaches_the_zone_group_with_detail(self):
+        """
+        Dashboard oladigan xabarning SHAKLI — frontend shartnomasi.
+
+        `LiveMonitor` aynan shu maydonlarga tayanadi: `event_type`
+        turkumni tanlaydi, `detail` esa hodisani bir qatorda
+        tushuntiradi ("Client anomaliyasi" o'z-o'zicha hech nima
+        demaydi, "bir xil kadrlar" deydi).
+        """
+        from asgiref.sync import async_to_sync
+        from channels.layers import get_channel_layer
+
+        layer = get_channel_layer()
+        group = f"zone.{self.session.zone_id}"
+        async_to_sync(layer.group_add)(group, "test-monitor")
+        self.addCleanup(async_to_sync(layer.group_discard), group, "test-monitor")
+
+        ingest.push_event(
+            session_id=self.session.pk,
+            zone_id=self.session.zone_id,
+            type=ProctoringEvent.Type.CLIENT_ANOMALY,
+            severity=ProctoringEvent.Severity.CRITICAL,
+            occurred_at=timezone.now(),
+            payload={"reason": "identical_frames", "repeats": 5, "sha256": "abc"},
+        )
+
+        message = async_to_sync(layer.receive)("test-monitor")
+        payload = message["payload"]
+
+        self.assertEqual(message["type"], "proctoring.event")
+        self.assertEqual(payload["session_id"], self.session.pk)
+        self.assertEqual(payload["event_type"], ProctoringEvent.Type.CLIENT_ANOMALY)
+        self.assertEqual(payload["severity"], ProctoringEvent.Severity.CRITICAL)
+        self.assertEqual(
+            payload["detail"], {"reason": "identical_frames", "repeats": 5}
+        )
+
+    def test_low_severity_event_is_not_broadcast(self):
+        """
+        Chegaradan pastdagi hodisa kanalga UMUMAN chiqmaydi.
+
+        10 000 sessiyadan kelayotgan har bir hodisani uzatish
+        dashboard'ni ham, Redis pub/sub'ni ham yiqitadi.
+        """
+        from asgiref.sync import async_to_sync
+        from channels.layers import get_channel_layer
+
+        layer = get_channel_layer()
+        group = f"zone.{self.session.zone_id}"
+        async_to_sync(layer.group_add)(group, "test-quiet")
+        self.addCleanup(async_to_sync(layer.group_discard), group, "test-quiet")
+
+        ingest.push_event(
+            session_id=self.session.pk,
+            zone_id=self.session.zone_id,
+            type=ProctoringEvent.Type.WINDOW_FOCUS,
+            severity=ProctoringEvent.Severity.INFO,
+            occurred_at=timezone.now(),
+        )
+
+        import asyncio
+
+        with self.assertRaises(asyncio.TimeoutError):
+            async_to_sync(_receive_with_timeout)(layer, "test-quiet")
 
     def test_redis_failure_falls_back_to_direct_write(self):
         """

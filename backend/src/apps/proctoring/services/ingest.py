@@ -253,6 +253,72 @@ def _write_immediately(record: dict) -> None:
 # --------------------------------------------------------------------------
 # Realtime
 # --------------------------------------------------------------------------
+#: Dashboard'ga uzatiladigan payload kalitlari (oq ro'yxat).
+#
+# Payload'ni TO'LIQ uzatib bo'lmaydi: uni client to'ldiradi, ya'ni u
+# ishonchsiz va cheklanmagan. Buzilgan client har hodisaga bir
+# megabaytlik matn qo'shsa, u channel layer'ining `capacity` (2000)
+# buferini to'ldirib, BARCHA proktorlarning kanalini o'ldiradi.
+#
+# Ro'yxatdagi kalitlar — hodisani ekranda bir qatorda tushuntirish
+# uchun yetadiganlari: "Client anomaliyasi" degan yorliqning o'zi
+# proktorga hech narsa aytmaydi, "Client anomaliyasi — bir xil
+# kadrlar" esa aytadi.
+_BROADCAST_DETAIL_KEYS = (
+    "processes",   # rdp_detected — qaysi dastur
+    "count",       # multi_monitor — nechta ekran
+    "key",         # hotkey_blocked — qaysi kombinatsiya
+    "repeats",     # hotkey_blocked — necha marta
+    "reason",      # client_anomaly / camera_lost — sabab
+    "kind",        # client_anomaly — turi
+    "host",        # navigation_blocked — qaysi domen
+    "score",       # face_* — ball
+    "threshold",   # face_* — chegara
+    "faces",       # face_* — nechta yuz
+)
+
+#: Bitta matn maydonining eng ko'p uzunligi.
+_DETAIL_TEXT_LIMIT = 120
+
+#: Ro'yxatdan nechta element uzatiladi.
+_DETAIL_LIST_LIMIT = 5
+
+
+def _broadcast_detail(raw_payload) -> dict:
+    """
+    Payload'dan dashboard uchun ixcham tafsilot ajratadi.
+
+    Har bir qiymat turi va uzunligi bo'yicha CHEKLANADI — bu yerda
+    client bergan ma'lumot proktorning brauzeriga o'tadi.
+    """
+    if isinstance(raw_payload, str):
+        try:
+            payload = json.loads(raw_payload)
+        except (TypeError, ValueError):
+            return {}
+    else:
+        payload = raw_payload
+
+    if not isinstance(payload, dict):
+        return {}
+
+    detail = {}
+    for key in _BROADCAST_DETAIL_KEYS:
+        if key not in payload:
+            continue
+        value = payload[key]
+        if isinstance(value, bool) or isinstance(value, (int, float)):
+            detail[key] = value
+        elif isinstance(value, str):
+            detail[key] = value[:_DETAIL_TEXT_LIMIT]
+        elif isinstance(value, (list, tuple)):
+            detail[key] = [
+                str(item)[:_DETAIL_TEXT_LIMIT]
+                for item in list(value)[:_DETAIL_LIST_LIMIT]
+            ]
+    return detail
+
+
 def _broadcast(record: dict) -> None:
     """
     Proktor dashboard'iga push.
@@ -283,6 +349,9 @@ def _broadcast(record: dict) -> None:
                     "event_type": record["type"],
                     "severity": record["severity"],
                     "occurred_at": record["occurred_at"],
+                    # Hodisani bir qatorda tushuntiradigan ixcham
+                    # tafsilot (oq ro'yxat bo'yicha, cheklangan).
+                    "detail": _broadcast_detail(record.get("payload")),
                 },
             },
         )

@@ -1,22 +1,24 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  Alert, Badge, Box, Button, Card, CardContent, CardHeader, Chip, Divider,
-  Grid, IconButton, List, ListItem, ListItemText, MenuItem, Stack, TextField,
-  Tooltip, Typography,
+  Alert, Box, Card, CardContent, Chip, Grid, IconButton, MenuItem, Stack,
+  TextField, Tooltip, Typography,
 } from '@mui/material'
+import { alpha } from '@mui/material/styles'
 import CampaignIcon from '@mui/icons-material/CampaignOutlined'
 import BlockIcon from '@mui/icons-material/BlockOutlined'
 import OpenIcon from '@mui/icons-material/OpenInNewOutlined'
-import ClearIcon from '@mui/icons-material/ClearAllOutlined'
+import ShieldIcon from '@mui/icons-material/GppMaybeOutlined'
 import WifiIcon from '@mui/icons-material/WifiTetheringOutlined'
 import WifiOffIcon from '@mui/icons-material/WifiTetheringOffOutlined'
 
 import PageHeader from '../components/PageHeader'
 import DataTable from '../components/data/DataTable'
 import ConfirmDialog from '../components/ConfirmDialog'
-import { OnlineDot, RiskBar, SeverityChip, StatusChip } from '../components/StatusChip'
+import EventStream from '../components/monitor/EventStream'
+import IntegrityAlerts from '../components/monitor/IntegrityAlerts'
+import { OnlineDot, RiskBar, StatusChip } from '../components/StatusChip'
 import { useLiveMonitor } from '../hooks/useLiveMonitor'
 import { useUi } from '../context/UiContext'
 import { useAuth } from '../context/AuthContext'
@@ -24,7 +26,8 @@ import {
   sessions as sessionsApi, zones as zonesApi, exams as examsApi,
   examSchedules as schedulesApi, regions as regionsApi,
 } from '../api/endpoints'
-import { EVENT_LABEL, formatTime, fromNow } from '../utils/labels'
+import { fromNow } from '../utils/labels'
+import { isIntegrityEvent } from '../utils/events'
 
 /** Bugungi sana `YYYY-MM-DD` ko'rinishida (mahalliy vaqt bo'yicha). */
 const today = () => {
@@ -59,6 +62,17 @@ export default function LiveMonitor() {
   const [zoneFilter, setZoneFilter] = useState('')
   const [warnTarget, setWarnTarget] = useState(null)
   const [terminateTarget, setTerminateTarget] = useState(null)
+  const [streamCategory, setStreamCategory] = useState('all')
+  /**
+   * Ko'rib chiqilgan butunlik ogohlantirishlari.
+   *
+   * Kalit — sessiya, qiymat — o'sha paytdagi eng so'nggi hodisaning
+   * qabul qilingan vaqti. Aynan VAQT saqlanadi, oddiy "yopildi"
+   * bayrog'i emas: o'sha sessiyada YANGI hodisa kelsa, ogohlantirish
+   * qaytadan ko'rinishi kerak. Aks holda bir marta yopilgan sessiya
+   * butun smena davomida jim qolardi.
+   */
+  const [acknowledged, setAcknowledged] = useState({})
 
   const { data: zonesData } = useQuery({ queryKey: ['zones-all'], queryFn: () => zonesApi.list({ page_size: 200 }) })
   const { data: regionsData } = useQuery({
@@ -170,11 +184,83 @@ export default function LiveMonitor() {
     })
   }, [data, updates])
 
+  /**
+   * Sessiya -> ism/bino.
+   *
+   * Hodisa oqimida backend faqat `session_id` yuboradi (xabar yengil
+   * bo'lishi kerak — 10 000 sessiyadan kelayotgan oqim), proktor esa
+   * talabgorni ISM bo'yicha biladi. Jadval ma'lumoti allaqachon
+   * yuklangan, shuning uchun bu xarita qo'shimcha so'rovsiz tuziladi.
+   */
+  const sessionIndex = useMemo(() => {
+    const index = {}
+    rows.forEach((row) => {
+      index[row.id] = { name: row.candidate_name, zone: row.zone_name }
+    })
+    return index
+  }, [rows])
+
+  /**
+   * Qurilma butunligi ogohlantirishlari — sessiya bo'yicha bittadan.
+   *
+   * Bir sessiyada RDP ham, ikkinchi monitor ham aniqlansa, bannerda
+   * ikkita qator emas, bitta (eng so'nggi) qator turadi va takror soni
+   * ko'rsatiladi: banner qisqa bo'lishi kerak, aks holda u o'zi
+   * ro'yxatga aylanib, ajratib ko'rsatishning ma'nosi qolmaydi.
+   */
+  const integrityItems = useMemo(() => {
+    const bySession = new Map()
+    events.forEach((event) => {
+      if (!isIntegrityEvent(event.event_type)) return
+      const existing = bySession.get(event.session_id)
+      if (existing) {
+        existing.repeats += 1
+        return
+      }
+      bySession.set(event.session_id, { ...event, repeats: 1 })
+    })
+
+    return [...bySession.values()].filter((item) => {
+      const ackedAt = acknowledged[item.session_id]
+      return !ackedAt || (item.receivedAt || 0) > ackedAt
+    })
+  }, [events, acknowledged])
+
+  /** Bannerda turgan sessiyalar jadvalda ham belgilanadi. */
+  const flaggedSessions = useMemo(
+    () => new Set(integrityItems.map((item) => item.session_id)),
+    [integrityItems],
+  )
+
+  const acknowledge = useCallback((item) => {
+    setAcknowledged((previous) => ({
+      ...previous,
+      [item.session_id]: item.receivedAt || Date.now(),
+    }))
+  }, [])
+
+  const openSession = useCallback(
+    (sessionId) => navigate(`/sessions/${sessionId}`),
+    [navigate],
+  )
+
   const columns = useMemo(
     () => [
       {
         field: 'is_online', headerName: '', width: 44, sortable: false,
         renderCell: (params) => <OnlineDot online={params.value} />,
+      },
+      {
+        // Butunlik belgisi — banner bilan jadvalni BOG'LAYDI. Bannersiz
+        // proktor "qaysi qator" degan savolga ism bo'yicha qidirib javob
+        // topardi; bu ustun uni bir qarashda ko'rsatadi.
+        field: '__integrity', headerName: '', width: 40, sortable: false,
+        renderCell: (params) =>
+          flaggedSessions.has(params.row.id) ? (
+            <Tooltip title="Qurilma butunligi ogohlantirishi">
+              <ShieldIcon color="error" fontSize="small" />
+            </Tooltip>
+          ) : null,
       },
       { field: 'candidate_name', headerName: 'Talabgor', flex: 1.4, minWidth: 190 },
       { field: 'masked_pinfl', headerName: 'JSHSHIR', width: 140 },
@@ -223,7 +309,7 @@ export default function LiveMonitor() {
             )}
             <Tooltip title="Batafsil">
               <IconButton size="small"
-                onClick={(e) => { e.stopPropagation(); navigate(`/sessions/${params.row.id}`) }}>
+                onClick={(e) => { e.stopPropagation(); openSession(params.row.id) }}>
                 <OpenIcon fontSize="small" />
               </IconButton>
             </Tooltip>
@@ -231,7 +317,7 @@ export default function LiveMonitor() {
         ),
       },
     ],
-    [can, navigate],
+    [can, openSession, flaggedSessions],
   )
 
   return (
@@ -254,6 +340,19 @@ export default function LiveMonitor() {
           Real vaqt kanali uzilgan — ro‘yxat har 10 soniyada yangilanmoqda.
         </Alert>
       )}
+
+      {/*
+        Butunlik ogohlantirishlari filtrlardan ham TEPADA turadi: ular
+        proktor qidirib topadigan narsa emas, unga darhol ko'rinishi
+        kerak bo'lgan narsa.
+      */}
+      <IntegrityAlerts
+        items={integrityItems}
+        sessionIndex={sessionIndex}
+        onAcknowledge={acknowledge}
+        onSelectSession={openSession}
+        onShowInStream={() => setStreamCategory('integrity')}
+      />
 
       {/*
         Filtrlar ataylab shu TARTIBDA: imtihon -> sana -> viloyat -> bino.
@@ -340,55 +439,42 @@ export default function LiveMonitor() {
             rows={rows}
             columns={columns}
             loading={isLoading}
-            onRowClick={(params) => navigate(`/sessions/${params.id}`)}
+            onRowClick={(params) => openSession(params.id)}
             height={660}
+            getRowClassName={(params) =>
+              flaggedSessions.has(params.id) ? 'row--integrity' : ''
+            }
+            gridSx={{
+              '& .row--integrity': {
+                bgcolor: (theme) =>
+                  alpha(
+                    theme.palette.error.main,
+                    theme.palette.mode === 'light' ? 0.07 : 0.16,
+                  ),
+              },
+              // Hover ustunligini qaytaramiz: aks holda belgilangan
+              // qatorda sichqoncha qayerda turgani ko'rinmay qoladi.
+              '& .row--integrity:hover': {
+                bgcolor: (theme) =>
+                  alpha(
+                    theme.palette.error.main,
+                    theme.palette.mode === 'light' ? 0.13 : 0.24,
+                  ),
+              },
+            }}
           />
         </Grid>
 
         <Grid item xs={12} xl={4}>
-          <Card sx={{ height: 660, display: 'flex', flexDirection: 'column' }}>
-            <CardHeader
-              title={
-                <Badge badgeContent={events.length} color="error" max={99}>
-                  <Typography variant="h6">Hodisa oqimi</Typography>
-                </Badge>
-              }
-              subheader="Faqat o‘rta va undan yuqori darajali"
-              action={
-                <Tooltip title="Tozalash">
-                  <IconButton onClick={clearEvents}><ClearIcon /></IconButton>
-                </Tooltip>
-              }
-            />
-            <Divider />
-            <Box sx={{ flex: 1, overflowY: 'auto' }}>
-              {events.length === 0 ? (
-                <Box sx={{ p: 4, textAlign: 'center' }}>
-                  <Typography variant="body2" color="text.secondary">
-                    Hozircha hodisa yo‘q
-                  </Typography>
-                </Box>
-              ) : (
-                <List dense disablePadding>
-                  {events.map((event, index) => (
-                    <ListItem
-                      key={`${event.session_id}-${event.occurred_at}-${index}`}
-                      divider
-                      secondaryAction={<SeverityChip severity={event.severity} />}
-                      sx={{ cursor: 'pointer' }}
-                      onClick={() => navigate(`/sessions/${event.session_id}`)}
-                    >
-                      <ListItemText
-                        primary={EVENT_LABEL[event.event_type] || event.event_type}
-                        secondary={`Sessiya #${event.session_id} • ${formatTime(event.occurred_at)}`}
-                        primaryTypographyProps={{ fontSize: 14, fontWeight: 500 }}
-                      />
-                    </ListItem>
-                  ))}
-                </List>
-              )}
-            </Box>
-          </Card>
+          <EventStream
+            events={events}
+            onClear={clearEvents}
+            sessionIndex={sessionIndex}
+            onSelectSession={openSession}
+            category={streamCategory}
+            onCategoryChange={setStreamCategory}
+            height={660}
+          />
         </Grid>
       </Grid>
 

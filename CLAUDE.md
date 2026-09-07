@@ -258,6 +258,18 @@ yarating; `code` React tomonda tarjima kaliti sifatida ishlatiladi.
   `ROUTE_LOADERS` orqali (menyu hover'da prefetch qiladi — ikkalasi bir
   xil loader'ni ishlatishi shart).
 * `App.jsx` dagi `Guard` faqat UI qulayligi; haqiqiy himoya backendda.
+* **Hodisa turkumlari `utils/events.js` da va ular BACKENDDA YO'Q.**
+  `integrity` / `identity` / `behaviour` / `system` — sof taqdimot
+  qarori. Backend `severity` beradi, u boshqa savolga javob beradi
+  ("qanchalik jiddiy", "qaysi turkumdan" emas). Yangi hodisa turi
+  qo'shsangiz uni `EVENT_LABEL` ga ham, `EVENT_CATEGORY` ga ham
+  qo'shing — aks holda u "tizim" turkumiga tushib, jonli kuzatuvda
+  ko'zga tashlanmay qoladi.
+* **WebSocket hodisasidagi `detail` — oq ro'yxat.** Backend
+  (`ingest._BROADCAST_DETAIL_KEYS`) payload'dan faqat sanab
+  o'tilgan kalitlarni, uzunlik chegarasi bilan uzatadi: payload'ni
+  client to'ldiradi va u cheklanmagan. Yangi kalit kerak bo'lsa uni
+  ikkala tomonda ham qo'shish shart (`utils/events.js:eventDetail`).
 * Tema: `theme/palettes.js` (5 sxema × 3 rejim × 2 zichlik), sozlamalar
   `localStorage` da, `context/UiContext.jsx` boshqaradi.
 

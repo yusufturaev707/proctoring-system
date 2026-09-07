@@ -89,6 +89,16 @@ export default function DataTable({
   cursorNav,
   /** `№` ustunini chizish (standart — ha). */
   showRowNumber = true,
+  /**
+   * Qo'shimcha grid uslublari (masalan `getRowClassName` bilan
+   * belgilangan qatorlar uchun).
+   *
+   * ALOHIDA prop, `sx` EMAS: `sx` `...rest` orqali ichki uslublarni
+   * BUTUNLAY almashtirardi va chaqiruvchi bitta qator rangini
+   * o'zgartirmoqchi bo'lganda ustun sarlavhalari, hover va `№`
+   * ustunining butun uslubi yo'qolardi.
+   */
+  gridSx,
   ...rest
 }) {
   const serverSide = typeof rowCount === 'number'
@@ -207,6 +217,7 @@ export default function DataTable({
             },
             '& .MuiDataGrid-row:hover': { bgcolor: 'action.hover' },
             '& .MuiDataGrid-overlayWrapper': { height: 'auto !important', minHeight: 260 },
+            ...(gridSx || {}),
           }}
           {...rest}
         />
