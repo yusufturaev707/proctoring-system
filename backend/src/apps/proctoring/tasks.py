@@ -1,0 +1,500 @@
+"""
+Fon vazifalari.
+
+Eng muhimi — `flush_event_buffer`. Bu tizimning yuqori yuklamaga
+bardoshligini ta'minlaydigan asosiy mexanizm:
+
+    HTTP so'rov  ->  Redis Stream (XADD)       ~0.2 ms, DB'ga tegmaydi
+    Celery (5s)  ->  bulk_create (10 000 qator) bitta tranzaksiya
+
+Bu 3 000 tranzaksiya/sekundni ~0.2 tranzaksiya/sekundga aylantiradi.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from datetime import datetime, timedelta
+
+from celery import shared_task
+from django.conf import settings
+from django.utils import timezone
+
+from apps.common.redis_client import get_redis
+from apps.proctoring.models import (
+    ExamSession,
+    ProctoringEvent,
+    ScreenshotMeta,
+)
+from apps.proctoring.services import state as session_state
+from apps.proctoring.services import stream as stream_service
+
+logger = logging.getLogger(__name__)
+
+# --------------------------------------------------------------------------
+# Ingest buffer -> PostgreSQL
+#
+# Ishonchlilik mexanikasi `services/stream.py` da: osilib qolgan
+# yozuvlarni qaytarib olish, batch yiqilganda qator-ma-qator o'tish va
+# yozib bo'lmagan qatorni dead-letter oqimiga ko'chirish.
+# --------------------------------------------------------------------------
+@shared_task(name="proctoring.flush_event_buffer")
+def flush_event_buffer():
+    """
+    Redis Stream'dagi hodisalarni PostgreSQL'ga ommaviy yozadi.
+
+    `ignore_conflicts=True` — `client_event_id` bo'yicha dublikatlar
+    jimgina tashlab yuboriladi. Client tarmoq uzilishidan keyin
+    buferini qayta yuborishi normal holat.
+
+    Celery `retry` ATAYLAB ishlatilmaydi: yiqilgan batch qayta
+    o'qilmasdi (`>` faqat yangi xabarlarni beradi) va o'sha yozuvlar
+    abadiy PEL'da qolib ketardi. Endi tiklash `XAUTOCLAIM` orqali
+    keyingi siklda o'z-o'zidan bo'ladi.
+    """
+    stream = settings.PROCTORING["EVENT_STREAM_KEY"]
+    client = get_redis()
+
+    entries = stream_service.read_batch(
+        client, stream, settings.PROCTORING["EVENT_BATCH_SIZE"]
+    )
+    if not entries:
+        return {"read": 0, "written": 0, "dead": 0}
+
+    rows: list[tuple[str, dict, ProctoringEvent]] = []
+    malformed: list[str] = []
+
+    for entry_id, fields in entries:
+        try:
+            rows.append(
+                (
+                    entry_id,
+                    fields,
+                    ProctoringEvent(
+                        session_id=int(fields["session_id"]),
+                        type=fields["type"],
+                        severity=int(fields["severity"]),
+                        occurred_at=_parse(fields["occurred_at"]),
+                        payload=json.loads(fields.get("payload") or "{}"),
+                        screenshot_key=fields.get("screenshot_key", ""),
+                        client_event_id=fields.get("client_event_id", ""),
+                    ),
+                )
+            )
+        except (KeyError, ValueError, TypeError) as exc:
+            # Yozuvning o'zi buzuq — model obyektiga aylantirib bo'lmadi.
+            logger.warning("Buzilgan event yozuvi: %s", exc)
+            stream_service.to_dead_letter(stream, fields, f"parse: {exc}")
+            malformed.append(entry_id)
+
+    result = stream_service.write_with_fallback(ProctoringEvent, rows, stream)
+    stream_service.ack(client, stream, result["ok"] + malformed)
+
+    dead = result["dead"] + len(malformed)
+    if dead:
+        logger.error("Event flush: %s ta yozuv dead-letter'ga ketdi", dead)
+
+    return {
+        "read": len(entries),
+        "written": len(result["ok"]) - result["dead"],
+        "dead": dead,
+    }
+
+
+@shared_task(name="proctoring.flush_screenshot_buffer")
+def flush_screenshot_buffer():
+    """Skrinshot metadata'sini ommaviy yozadi (binary allaqachon S3'da)."""
+    stream = settings.PROCTORING["SCREENSHOT_STREAM_KEY"]
+    client = get_redis()
+
+    entries = stream_service.read_batch(
+        client, stream, settings.PROCTORING["EVENT_BATCH_SIZE"]
+    )
+    if not entries:
+        return {"read": 0, "written": 0, "dead": 0}
+
+    # Retention: skrinshotlar 90 kundan keyin o'chiriladi.
+    purge_after = timezone.now() + timedelta(days=90)
+    rows: list[tuple[str, dict, ScreenshotMeta]] = []
+    malformed: list[str] = []
+
+    for entry_id, fields in entries:
+        try:
+            rows.append(
+                (
+                    entry_id,
+                    fields,
+                    ScreenshotMeta(
+                        session_id=int(fields["session_id"]),
+                        kind=fields.get("kind", "screen"),
+                        object_key=fields["object_key"],
+                        sha256=fields.get("sha256", ""),
+                        size_bytes=int(fields.get("size_bytes", 0)),
+                        width=int(fields.get("width", 0)),
+                        height=int(fields.get("height", 0)),
+                        captured_at=_parse(fields["captured_at"]),
+                        is_committed=True,
+                        purge_after=purge_after,
+                    ),
+                )
+            )
+        except (KeyError, ValueError, TypeError) as exc:
+            logger.warning("Buzilgan screenshot yozuvi: %s", exc)
+            stream_service.to_dead_letter(stream, fields, f"parse: {exc}")
+            malformed.append(entry_id)
+
+    result = stream_service.write_with_fallback(ScreenshotMeta, rows, stream)
+    stream_service.ack(client, stream, result["ok"] + malformed)
+
+    return {
+        "read": len(entries),
+        "written": len(result["ok"]) - result["dead"],
+        "dead": result["dead"] + len(malformed),
+    }
+
+
+@shared_task(name="proctoring.flush_session_state")
+def flush_session_state():
+    """
+    Redis'dagi issiq holatni sessiyalarga ko'chiradi (write-behind).
+
+    Har bir heartbeat uchun `UPDATE` qilish o'rniga, 10 soniyada bir
+    marta o'zgargan sessiyalarni bitta `bulk_update` bilan yangilaymiz.
+    """
+    session_ids = session_state.drain_dirty()
+    if not session_ids:
+        return {"updated": 0}
+
+    states = session_state.get_states(session_ids)
+    sessions = list(ExamSession.objects.filter(pk__in=session_ids))
+    if not sessions:
+        return {"updated": 0}
+
+    now = timezone.now()
+    to_update: list[ExamSession] = []
+
+    for session in sessions:
+        state = states.get(session.pk) or {}
+        if not state:
+            continue
+
+        heartbeat = state.get("hb")
+        if heartbeat:
+            session.last_heartbeat_at = datetime.fromtimestamp(
+                int(heartbeat), tz=timezone.get_current_timezone()
+            )
+        session.event_count = int(state.get("events", session.event_count) or 0)
+        session.screenshot_count = int(state.get("shots", session.screenshot_count) or 0)
+        session.face_fail_count = int(state.get("face_fails", session.face_fail_count) or 0)
+        session.face_check_count = int(state.get("face_checks", session.face_check_count) or 0)
+        session.risk_score = min(100, int(state.get("risk", session.risk_score) or 0))
+        session.updated_at = now
+        to_update.append(session)
+
+    if to_update:
+        ExamSession.objects.bulk_update(
+            to_update,
+            [
+                "last_heartbeat_at", "event_count", "screenshot_count",
+                "face_fail_count", "face_check_count", "risk_score", "updated_at",
+            ],
+            batch_size=500,
+        )
+    return {"updated": len(to_update)}
+
+
+# --------------------------------------------------------------------------
+# Texnik xizmat
+# --------------------------------------------------------------------------
+@shared_task(name="proctoring.close_stale_sessions")
+def close_stale_sessions():
+    """
+    Heartbeat kelmay qolgan sessiyalarni yopadi.
+
+    Client o'lgan, elektr uzilgan yoki tarmoq yo'qolgan bo'lishi mumkin.
+    Bunday sessiyalar abadiy "jarayonda" qolib ketmasligi kerak — aks
+    holda `SessionAlreadyActive` qulfi talabgorni qayta kirishdan
+    to'sib qo'yadi.
+    """
+    threshold = timezone.now() - timedelta(
+        seconds=settings.PROCTORING["STALE_SESSION_AFTER"]
+    )
+    stale = ExamSession.objects.filter(
+        status__in=[
+            ExamSession.Status.IN_PROGRESS,
+            ExamSession.Status.READY,
+            ExamSession.Status.FACE_CHECK,
+        ],
+        last_heartbeat_at__lt=threshold,
+    )[:500]
+
+    from apps.proctoring.services.session import expire_session
+
+    closed = 0
+    for session in stale:
+        try:
+            expire_session(session)
+            closed += 1
+        except Exception as exc:
+            logger.error("Sessiyani yopishda xato (%s): %s", session.pk, exc)
+
+    if closed:
+        logger.info("%s ta eskirgan sessiya yopildi", closed)
+    return {"closed": closed}
+
+
+@shared_task(name="proctoring.report_session_result", bind=True, max_retries=5)
+def report_session_result(self, public_id: str, status: str, meta: dict):
+    """
+    Sessiya natijasini tashqi platformaga yuboradi.
+
+    Kritik yo'lda emas — shuning uchun retry va uzun backoff bilan.
+    Talabgor bu chaqiruvni kutmaydi.
+    """
+    from apps.integrations.exam_platform import get_client
+
+    ok = get_client().report_result(session_id=public_id, status=status, meta=meta)
+    if not ok:
+        # 30s, 60s, 120s... — tashqi API tiklanishiga vaqt beramiz.
+        raise self.retry(countdown=30 * (2**self.request.retries), max_retries=5)
+    return {"reported": public_id}
+
+
+def _create_daily_partition(cursor, day) -> str:
+    """
+    Bir kunlik partitsiya yaratadi.
+
+    DEFAULT partitsiyada shu kunga tegishli qatorlar bo'lsa, PostgreSQL
+    `CREATE ... PARTITION OF` ni RAD ETADI. Shuning uchun avval o'sha
+    qatorlarni vaqtincha chiqarib olib, partitsiya yaratilgach qaytaramiz.
+    Hammasi bitta tranzaksiyada — orada hodisa yo'qolmasin.
+
+    Xato MATNIGA tayanmaymiz, oldindan so'rov bilan tekshiramiz: server
+    xabarlari lokalga bog'liq (rus tilidagi PostgreSQL "would be violated"
+    demaydi) va bunday tekshiruv jimgina buzilardi.
+    """
+    name = f"proctoring_event_{day:%Y%m%d}"
+    bounds = [day, day + timedelta(days=1)]
+
+    cursor.execute("SELECT to_regclass(%s)", [name])
+    if cursor.fetchone()[0] is not None:
+        return name
+
+    cursor.execute(
+        "SELECT EXISTS(SELECT 1 FROM proctoring_event_default "
+        "WHERE occurred_at >= %s AND occurred_at < %s)",
+        bounds,
+    )
+    has_orphans = cursor.fetchone()[0]
+
+    if not has_orphans:
+        cursor.execute(
+            f"CREATE TABLE {name} PARTITION OF proctoring_event "
+            f"FOR VALUES FROM (%s) TO (%s)",
+            bounds,
+        )
+        return name
+
+    logger.warning(
+        "%s: DEFAULT partitsiyada shu kunning qatorlari bor — ko'chirilmoqda", name
+    )
+    cursor.execute(
+        "CREATE TEMP TABLE _moved_rows ON COMMIT DROP AS "
+        "WITH moved AS ("
+        "  DELETE FROM proctoring_event_default "
+        "   WHERE occurred_at >= %s AND occurred_at < %s RETURNING *"
+        ") SELECT * FROM moved",
+        bounds,
+    )
+    cursor.execute(
+        f"CREATE TABLE {name} PARTITION OF proctoring_event FOR VALUES FROM (%s) TO (%s)",
+        bounds,
+    )
+    cursor.execute("INSERT INTO proctoring_event SELECT * FROM _moved_rows")
+    cursor.execute("SELECT count(*) FROM _moved_rows")
+    logger.info("%s: %s ta qator DEFAULT dan ko'chirildi", name, cursor.fetchone()[0])
+    cursor.execute("DROP TABLE _moved_rows")
+    return name
+
+
+@shared_task(name="proctoring.rotate_event_partitions")
+def rotate_event_partitions(days_ahead: int = 7):
+    """
+    Kelgusi kunlar uchun partitsiyalar yaratadi.
+
+    `proctoring_event` jadvali `occurred_at` bo'yicha RANGE partitsiyalangan.
+    Partitsiya oldindan yaratilmasa, yangi kun boshlanganda INSERT xato
+    beradi va butun batch yiqiladi.
+
+    DEFAULT partitsiya — oxirgi himoya qatlami. Beat bir hafta ishlamay
+    qolsa yoki kutilmagan sana kelsa, qator YO'QOLMAYDI: u DEFAULT ga
+    tushadi va keyingi rotatsiyada o'z kuniga ko'chiriladi.
+    """
+    from django.db import connection, transaction
+
+    created = []
+    today = timezone.localdate()
+
+    with transaction.atomic(), connection.cursor() as cursor:
+        # Jadval partitsiyalanganmi? Bo'lmasa — bu vazifa bekor.
+        cursor.execute(
+            "SELECT 1 FROM pg_partitioned_table pt "
+            "JOIN pg_class c ON c.oid = pt.partrelid "
+            "WHERE c.relname = 'proctoring_event'"
+        )
+        if cursor.fetchone() is None:
+            logger.debug("proctoring_event partitsiyalanmagan — rotatsiya o'tkazib yuborildi")
+            return {"created": [], "default": False}
+
+        cursor.execute(
+            "CREATE TABLE IF NOT EXISTS proctoring_event_default "
+            "PARTITION OF proctoring_event DEFAULT"
+        )
+
+        # Kechagi kun ham: vaqt mintaqasi chegarasidagi hodisalar uchun.
+        for offset in range(-1, days_ahead + 1):
+            created.append(_create_daily_partition(cursor, today + timedelta(days=offset)))
+
+        cursor.execute("SELECT count(*) FROM proctoring_event_default")
+        orphans = cursor.fetchone()[0]
+
+    if orphans:
+        logger.warning(
+            "DEFAULT partitsiyada %s ta qator qoldi — sanasi kutilgan "
+            "oynadan tashqarida", orphans,
+        )
+
+    return {"created": created, "default": True, "default_rows": orphans}
+
+
+@shared_task(name="proctoring.purge_expired_artifacts")
+def purge_expired_artifacts(batch_size: int = 5000):
+    """
+    Retention siyosati: eski skrinshotlar va PII.
+
+    Skrinshotlar avval object storage'dan, keyin metadata DB'dan
+    o'chiriladi (teskari tartibda qilinsa "yetim" fayllar qoladi).
+    """
+    from apps.common.storage import delete_objects
+
+    now = timezone.now()
+
+    expired = list(
+        ScreenshotMeta.objects.filter(purge_after__lt=now).values_list("id", "object_key")[
+            :batch_size
+        ]
+    )
+    deleted_objects = 0
+    if expired:
+        deleted_objects = delete_objects([key for _, key in expired])
+        ScreenshotMeta.objects.filter(id__in=[pk for pk, _ in expired]).delete()
+
+    # Sessiyadagi talabgor PII'sini anonimlashtirish. Sessiya qatori
+    # O'CHIRILMAYDI — hodisalar, audit va statistika unga bog'langan;
+    # faqat shaxsni aniqlash imkoni yo'qoladi.
+    #
+    # `bulk_update` emas, `update()`: bu yerda hech qanday Python mantiq
+    # yo'q va yuz minglab qator bo'lishi mumkin.
+    stale_pii = ExamSession.objects.filter(
+        anonymize_after__lt=now, is_anonymized=False
+    ).values_list("id", flat=True)[:batch_size]
+    ids = list(stale_pii)
+
+    anonymized = 0
+    if ids:
+        anonymized = ExamSession.objects.filter(id__in=ids).update(
+            pinfl=None,
+            last_name="",
+            first_name="",
+            middle_name="",
+            external_candidate_id="",
+            reference_embedding=None,
+            photo_key="",
+            is_anonymized=True,
+            updated_at=now,
+        )
+
+    return {"screenshots_purged": deleted_objects, "sessions_anonymized": anonymized}
+
+
+def _parse(value) -> datetime:
+    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return parsed if timezone.is_aware(parsed) else timezone.make_aware(parsed)
+
+
+@shared_task(name="proctoring.purge_expired_screenshots")
+def purge_expired_screenshots(batch_size: int = 2000, max_batches: int = 50):
+    """
+    Muddati o'tgan skrinshotlar: FAYL va DB qatori BIRGA o'chiriladi.
+
+    Tartib muhim — avval fayl, keyin qator. Teskarisida (qator avval)
+    jarayon o'rtada yiqilsa, diskda hech kim biladigan yetim fayl qoladi:
+    uni topish uchun butun daraxtni DB bilan solishtirish kerak bo'ladi.
+    Bu tartibda esa eng yomon holat — fayli yo'q qator, u keyingi
+    yurishda baribir o'chadi (`storage.delete` topilmasa `False` qaytaradi,
+    xato ko'tarmaydi).
+
+    Nima uchun soatiga: 500 client × 3 soat × 10s ≈ 500 000 fayl/kun.
+    Kunlik bitta yurishda bu diskka bir necha soatlik `unlink` bo'roni
+    beradi va o'sha paytdagi imtihonga xalaqit qiladi. Soatlik kichik
+    partiyalar yukni tekis yoyadi.
+
+    `batch_size` — bitta so'rovda olinadigan qator soni;
+    `max_batches` — bitta yurishdagi chegara (task cheksiz ishlamasin).
+    """
+    from apps.common.screenshot_storage import get_screenshot_storage
+    from apps.proctoring.models import ProctoringScreenshot
+
+    retention_days = settings.SCREENSHOT_STORAGE["RETENTION_DAYS"]
+    cutoff = timezone.now() - timedelta(days=retention_days)
+    storage = get_screenshot_storage()
+
+    files_deleted = 0
+    rows_deleted = 0
+    missing = 0
+
+    for _batch in range(max_batches):
+        expired = list(
+            ProctoringScreenshot.objects.filter(captured_at__lt=cutoff)
+            .order_by("captured_at")
+            .values_list("id", "file_path")[:batch_size]
+        )
+        if not expired:
+            break
+
+        removable: list[int] = []
+        for screenshot_id, file_path in expired:
+            try:
+                if storage.delete(file_path):
+                    files_deleted += 1
+                else:
+                    missing += 1
+                removable.append(screenshot_id)
+            except OSError as exc:
+                # Disk to'la, huquq yo'q, NFS uzildi — qatorni QOLDIRAMIZ.
+                # U keyingi yurishda qayta uriniladi; o'chirib yuborsak
+                # fayl abadiy yetim bo'lib qoladi.
+                logger.error(
+                    "Skrinshot fayli o'chirilmadi (id=%s, %s): %s",
+                    screenshot_id, file_path, exc,
+                )
+
+        if removable:
+            rows_deleted += ProctoringScreenshot.objects.filter(
+                id__in=removable
+            ).delete()[0]
+
+        if len(expired) < batch_size:
+            break
+
+    # Bo'shab qolgan sessiya kataloglari. Ularsiz bir yildan keyin diskda
+    # millionlab bo'sh katalog qoladi va backup ham, `ls` ham imkonsiz.
+    pruned_dirs = storage.prune_empty_dirs() if rows_deleted else 0
+
+    return {
+        "files_deleted": files_deleted,
+        "rows_deleted": rows_deleted,
+        "files_missing": missing,
+        "dirs_pruned": pruned_dirs,
+        "retention_days": retention_days,
+    }

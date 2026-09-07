@@ -1,0 +1,40 @@
+# Virtual muhit (1.2 GB)
+venv/
+.venv/
+
+__pycache__/
+*.py[cod]
+
+# Sirlar. Namunasi `.env.example` da.
+.env
+.env.local
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+*.log
+
+# --------------------------------------------------------------------
+# InsightFace modellari — ATAYLAB versiya nazoratida EMAS.
+#
+# Ikki sabab:
+#   1. Hajm: `w600k_r50.onnx` 167 MB, `1k3d68.onnx` 137 MB — ikkalasi
+#      ham GitHub'ning 100 MB fayl chegarasidan katta va repo'ni
+#      har bir `clone` da yarim gigabaytga aylantiradi.
+#   2. Ular O'ZGARMAYDI: buffalo_l — tashqi, versiyalangan artefakt.
+#      Git uni diff qila olmaydi, ya'ni har bir nusxa to'liq blob.
+#
+# Qayerdan olinadi: https://github.com/deepinsight/insightface
+# (`buffalo_l` paketi) yoki `insightface` kutubxonasi birinchi ishga
+# tushishda o'zi yuklab oladi (`INSIGHTFACE_ROOT` shu papkaga qarab
+# turadi — `main.py` ga qarang).
+#
+# Katalog strukturasi saqlanadi (`.gitkeep`), shunda yangi dasturchi
+# fayllarni QAYERGA qo'yishni izlab yurmaydi.
+# --------------------------------------------------------------------
+models/**/*.onnx
+models/**/*.pt
+models/**/*.bin
+models/**/*.param

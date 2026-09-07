@@ -1,0 +1,20 @@
+# Satr oxirlarini normallashtirish.
+#
+# Loyiha Windows'da yoziladi, lekin production'da Linux'da ishlaydi
+# (`deploy/README.md`). Bu qatorsiz repozitoriyda CRLF va LF aralashib
+# ketadi va har bir `git diff` butun faylni "o'zgargan" deb ko'rsatadi.
+# Repozitoriyda HAR DOIM LF, ishchi nusxada — platforma standarti.
+* text=auto eol=lf
+
+# Windows'da AYNAN CRLF bo'lishi kerak bo'lganlar.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary — hech qachon o'zgartirilmaydi.
+*.png binary
+*.jpg binary
+*.ico binary
+*.onnx binary
+*.woff  binary
+*.woff2 binary

@@ -1,0 +1,11 @@
+InsightFace `buffalo_l` modellari shu yerga qo'yiladi (`.gitignore` ga
+qarang — ular hajmi tufayli repozitoriyda saqlanmaydi).
+
+Kerakli fayllar:
+    det_10g.onnx        yuz detektori
+    w600k_r50.onnx      ArcFace embedding (512-o'lchamli)
+    2d106det.onnx       landmark
+    1k3d68.onnx         3D landmark
+    genderage.onnx      jins/yosh
+
+Ular `insightface` paketining `buffalo_l` bundle'idan olinadi.

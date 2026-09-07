@@ -1,0 +1,176 @@
+#
+# Nginx — proctoring tizimi uchun namuna konfiguratsiya.
+#
+# Muhim: HTTP API va WebSocket ALOHIDA upstream'larga boradi.
+# Django (WSGI/gunicorn) WebSocket'ni umuman qo'llab-quvvatlamaydi;
+# u Daphne/Uvicorn (ASGI) da yashaydi.
+#
+
+upstream proctoring_http {
+    least_conn;
+    server 127.0.0.1:8000 max_fails=3 fail_timeout=10s;
+    # server 10.0.0.11:8000 max_fails=3 fail_timeout=10s;
+    keepalive 64;
+}
+
+upstream proctoring_ws {
+    # WebSocket ulanishlari uzun umrli — ip_hash bilan bir clientni
+    # bitta node'ga bog'laymiz (Redis channel layer bo'lsa ham reconnect kam bo'ladi).
+    ip_hash;
+    server 127.0.0.1:8001;
+    # server 10.0.0.11:8001;
+}
+
+# Client ingest yo'li uchun alohida rate limit zonasi.
+limit_req_zone $binary_remote_addr zone=ingest:20m rate=60r/s;
+limit_req_zone $binary_remote_addr zone=login:10m  rate=2r/s;
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name proctoring.example.uz;
+
+    ssl_certificate     /etc/ssl/certs/proctoring.crt;
+    ssl_certificate_key /etc/ssl/private/proctoring.key;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+
+    # Client event batch'lari uchun.
+    #
+    # Skrinshot uchun ikki yo'l bor va ular bu yerda boshqacha ko'rinadi:
+    #   * presigned  -> binary umuman shu server'dan o'tmaydi (MinIO/S3);
+    #   * upload     -> binary shu yerdan o'tadi, `SCREENSHOT_MAX_BYTES`
+    #                   (standart 5 MB) dan katta bo'lmasligi kerak.
+    client_max_body_size 12m;
+    client_body_timeout 30s;
+
+    # ---- WebSocket ----
+    location /ws/ {
+        proxy_pass http://proctoring_ws;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        # ATAYLAB `$proxy_add_x_forwarded_for` EMAS: u client yuborgan
+        # header'ga qo'shib qo'yadi va soxta qiymat ro'yxat boshida
+        # qoladi. `$remote_addr` esa uni butunlay almashtiradi.
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Imtihon 3-4 soat davom etadi — ulanish uzilmasligi kerak.
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
+    }
+
+    # ---- Skrinshot yuklash (fayl tizimi yo'li) ----
+    #
+    # Alohida location: bu yerda tanani BUFFERLASH shart. Buffersiz
+    # gunicorn worker'i sekin client'ning 2 MB faylini tarmoq tezligida
+    # kutib turadi va shu vaqt davomida boshqa hech kimga xizmat
+    # qilmaydi. Nginx faylni to'liq qabul qilib, keyin Django'ga bir
+    # zarbda uzatadi — worker faqat diskka yozish vaqtida band bo'ladi.
+    location = /api/v1/client/screenshots/upload/ {
+        limit_req zone=ingest burst=120 nodelay;
+        limit_req_status 429;
+
+        client_max_body_size 6m;          # SCREENSHOT_MAX_BYTES + zaxira
+        client_body_buffer_size 256k;
+        proxy_request_buffering on;
+
+        proxy_pass http://proctoring_http;
+        include /etc/nginx/proxy_common.conf;
+        proxy_read_timeout 30s;
+    }
+
+    # ---- Client ingest (yuqori chastota) ----
+    location /api/v1/client/ {
+        limit_req zone=ingest burst=120 nodelay;
+        limit_req_status 429;
+
+        proxy_pass http://proctoring_http;
+        include /etc/nginx/proxy_common.conf;
+        proxy_read_timeout 30s;
+    }
+
+    # ---- Skrinshot fayllari (X-Accel-Redirect) ----
+    #
+    # `internal` — bu location'ga TASHQARIDAN kirib bo'lmaydi. Unga
+    # faqat Django `X-Accel-Redirect: /protected-screenshots/...`
+    # qaytarganda tushiladi, ya'ni ruxsat allaqachon tekshirilgan.
+    # `internal` ni olib tashlash butun himoyani yo'q qiladi: skrinshot
+    # katalogi ochiq fayl serveriga aylanadi.
+    #
+    # `alias` oxiridagi `/` MAJBURIY. Usiz `/protected-screenshots../`
+    # so'rovi katalogdan tashqariga chiqadi.
+    location /protected-screenshots/ {
+        internal;
+        alias /srv/proctoring/storage/screenshots/;
+
+        # Content-Type'ni Django beradi (haqiqiy tur baytlardan
+        # aniqlangan). Nginx o'z mime xaritasidan taxmin qilmasin.
+        types { }
+        default_type application/octet-stream;
+
+        # Skrinshot — dalil va shaxsiy ma'lumot. Proxy'da ham,
+        # brauzerda ham qolmasligi kerak.
+        add_header Cache-Control "private, no-store" always;
+        add_header X-Content-Type-Options nosniff always;
+
+        sendfile on;
+        tcp_nopush on;
+    }
+
+    # ---- Login (brute-force himoyasi) ----
+    location /api/v1/auth/login/ {
+        limit_req zone=login burst=5 nodelay;
+        proxy_pass http://proctoring_http;
+        include /etc/nginx/proxy_common.conf;
+    }
+
+    # ---- Qolgan API ----
+    location /api/ {
+        proxy_pass http://proctoring_http;
+        include /etc/nginx/proxy_common.conf;
+    }
+
+    location /admin/ {
+        # Admin panel faqat ichki tarmoqdan.
+        allow 10.0.0.0/8;
+        deny all;
+        proxy_pass http://proctoring_http;
+        include /etc/nginx/proxy_common.conf;
+    }
+
+    location /static/ {
+        alias /srv/proctoring/static/;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # ---- React admin (SPA) ----
+    location / {
+        root /srv/proctoring/frontend/dist;
+        try_files $uri $uri/ /index.html;
+    }
+}
+
+server {
+    listen 80;
+    server_name proctoring.example.uz;
+    return 301 https://$host$request_uri;
+}
+
+# /etc/nginx/proxy_common.conf:
+#   proxy_http_version 1.1;
+#   proxy_set_header Connection "";
+#   proxy_set_header Host $host;
+#   proxy_set_header X-Real-IP $remote_addr;
+#   proxy_set_header X-Forwarded-For $remote_addr;
+#   proxy_set_header X-Forwarded-Proto $scheme;
+#   proxy_set_header X-Request-ID $request_id;

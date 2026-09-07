@@ -1,0 +1,19 @@
+# Loyiha ildizidagi umumiy qoidalar. Har bir komponentning O'Z
+# `.gitignore` i ham bor (`backend/`, `frontend/`, `client/`) — bu yerda
+# faqat ikkalasiga ham tegishli narsalar turadi.
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Muhit fayllari HECH QACHON commit qilinmaydi — ular sirlarni saqlaydi
+# (`SECRET_KEY`, `TOKEN_HASH_KEY`, `FIELD_ENCRYPTION_KEY`, kamera
+# parollari kaliti). Namunasi `.env.example` da va u commit qilinadi.
+.env
+.env.local

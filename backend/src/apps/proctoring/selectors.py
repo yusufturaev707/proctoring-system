@@ -1,0 +1,207 @@
+"""
+O'qish so'rovlari.
+
+Har bir selector'da `select_related` / `only` majburiy: 10 000 qatorlik
+sessiya ro'yxatida N+1 muammosi 30 000 ta qo'shimcha so'rovga aylanadi.
+"""
+
+from __future__ import annotations
+
+from django.db.models import Count, Q
+from django.utils import timezone
+
+from apps.proctoring.models import (
+    AuditLog,
+    ExamSession,
+    FaceVerificationLog,
+    ProctoringEvent,
+    ProctoringScreenshot,
+    ScreenshotMeta,
+    TechnicalProblem,
+)
+
+
+def sessions_base():
+    return ExamSession.objects.select_related(
+        "exam", "computer", "zone", "zone__region", "device", "terminated_by"
+    )
+
+
+def sessions_for_pinfl(pinfl: str):
+    """
+    Bitta talabgorning barcha imtihonlari (tarix ekrani).
+
+    `idx_session_pinfl` indeksida ishlaydi. Talabgor bir necha sanada
+    topshirishi odatiy hol, shuning uchun bu ro'yxat kerak.
+    """
+    return sessions_base().filter(pinfl=pinfl).order_by("-exam_date", "-attempt_no")
+
+
+def sessions_for_monitoring(*, region_id=None, zone_id=None, exam_id=None, exam_date=None):
+    """
+    Jonli monitoring ro'yxati.
+
+    Faqat faol sessiyalar va faqat kerakli ustunlar. `-risk_score` bo'yicha
+    tartiblash `idx_session_risk` qisman indeksidan foydalanadi — proktor
+    eng shubhali sessiyalarni tepada ko'radi.
+    """
+    queryset = sessions_base().exclude(status__in=ExamSession.TERMINAL_STATUSES)
+
+    if region_id:
+        queryset = queryset.filter(zone__region_id=region_id)
+    if zone_id:
+        queryset = queryset.filter(zone_id=zone_id)
+    if exam_id:
+        queryset = queryset.filter(exam_id=exam_id)
+    queryset = queryset.filter(exam_date=exam_date or timezone.localdate())
+
+    return queryset.order_by("-risk_score", "-last_heartbeat_at")
+
+
+def session_events(session_id: int, *, min_severity: int | None = None, types=None):
+    queryset = ProctoringEvent.objects.filter(session_id=session_id)
+    if min_severity is not None:
+        queryset = queryset.filter(severity__gte=min_severity)
+    if types:
+        queryset = queryset.filter(type__in=types)
+    return queryset.order_by("-occurred_at")
+
+
+def session_face_logs(session_id: int, *, only_failed: bool = False):
+    queryset = FaceVerificationLog.objects.filter(session_id=session_id)
+    if only_failed:
+        queryset = queryset.filter(passed=False)
+    return queryset.order_by("-occurred_at")
+
+
+def session_screenshots(session_id: int, kind: str | None = None):
+    queryset = ScreenshotMeta.objects.filter(session_id=session_id, is_committed=True)
+    if kind:
+        queryset = queryset.filter(kind=kind)
+    return queryset.order_by("-captured_at")
+
+
+def session_stored_screenshots(session_id: int):
+    """Fayl tizimida saqlangan skrinshotlar (`ProctoringScreenshot`)."""
+    return ProctoringScreenshot.objects.filter(session_id=session_id).order_by(
+        "-captured_at", "-seq"
+    )
+
+
+def stored_screenshot_for_user(screenshot_id: int, user):
+    """
+    Bitta skrinshot — foydalanuvchining hududi bo'yicha cheklangan holda.
+
+    Hudud filtri AYNAN shu yerda: fayl beruvchi endpoint `get_object()`
+    zanjiridan o'tmaydi, ya'ni `RegionScopedPermission` unga qo'llanmaydi.
+    Filtrsiz qoldirilsa, boshqa viloyat proktori id'ni tanlab boshqa
+    hududdagi talabgorning ekranini ko'ra oladi (IDOR).
+
+    Topilmasa `None` qaytaradi — "ruxsat yo'q" va "mavjud emas" farqi
+    oshkor qilinmaydi.
+    """
+    queryset = ProctoringScreenshot.objects.select_related("session", "session__zone")
+    if user.is_region_scoped:
+        queryset = queryset.filter(session__zone__region_id=user.region_id)
+    return queryset.filter(pk=screenshot_id).first()
+
+
+def technical_problems(*, unresolved_only: bool = False, region_id=None):
+    queryset = TechnicalProblem.objects.select_related(
+        "session", "session__zone", "resolved_by"
+    )
+    if unresolved_only:
+        queryset = queryset.filter(is_resolved=False)
+    if region_id:
+        queryset = queryset.filter(session__zone__region_id=region_id)
+    return queryset.order_by("-started_at")
+
+
+def audit_logs(*, actor_id=None, action=None, object_type=None):
+    queryset = AuditLog.objects.select_related("actor")
+    if actor_id:
+        queryset = queryset.filter(actor_id=actor_id)
+    if action:
+        queryset = queryset.filter(action=action)
+    if object_type:
+        queryset = queryset.filter(object_type=object_type)
+    return queryset.order_by("-id")
+
+
+# --------------------------------------------------------------------------
+# Dashboard agregatlari
+# --------------------------------------------------------------------------
+def dashboard_summary(*, region_id=None, exam_date=None) -> dict:
+    """
+    Bitta so'rovda barcha hisoblagichlar.
+
+    `Count(filter=Q(...))` bir nechta alohida `COUNT` so'rovini bitta
+    jadval skanerlashiga birlashtiradi — 8 ta round-trip o'rniga 1 ta.
+    """
+    exam_date = exam_date or timezone.localdate()
+    queryset = ExamSession.objects.filter(exam_date=exam_date)
+    if region_id:
+        queryset = queryset.filter(zone__region_id=region_id)
+
+    aggregates = queryset.aggregate(
+        total=Count("id"),
+        in_progress=Count("id", filter=Q(status=ExamSession.Status.IN_PROGRESS)),
+        ready=Count("id", filter=Q(status=ExamSession.Status.READY)),
+        face_check=Count("id", filter=Q(status=ExamSession.Status.FACE_CHECK)),
+        finished=Count("id", filter=Q(status=ExamSession.Status.FINISHED)),
+        terminated=Count("id", filter=Q(status=ExamSession.Status.TERMINATED)),
+        technical=Count("id", filter=Q(status=ExamSession.Status.TECHNICAL_PROBLEM)),
+        expired=Count("id", filter=Q(status=ExamSession.Status.EXPIRED)),
+        high_risk=Count("id", filter=Q(risk_score__gte=50) & ~Q(status__in=ExamSession.TERMINAL_STATUSES)),
+    )
+    aggregates["date"] = exam_date
+    return aggregates
+
+
+def zone_breakdown(*, region_id=None, exam_date=None) -> list[dict]:
+    """Bino bo'yicha kesim — dashboard xaritasi uchun."""
+    from apps.regions.models import Zone
+
+    exam_date = exam_date or timezone.localdate()
+    queryset = Zone.objects.filter(deleted_at__isnull=True, is_active=True)
+    if region_id:
+        queryset = queryset.filter(region_id=region_id)
+
+    session_filter = Q(sessions__exam_date=exam_date)
+    return list(
+        queryset.select_related("region")
+        .annotate(
+            total=Count("sessions", filter=session_filter, distinct=True),
+            active=Count(
+                "sessions",
+                filter=session_filter & Q(sessions__status=ExamSession.Status.IN_PROGRESS),
+                distinct=True,
+            ),
+            terminated=Count(
+                "sessions",
+                filter=session_filter & Q(sessions__status=ExamSession.Status.TERMINATED),
+                distinct=True,
+            ),
+            problems=Count(
+                "sessions",
+                filter=session_filter & Q(sessions__status=ExamSession.Status.TECHNICAL_PROBLEM),
+                distinct=True,
+            ),
+        )
+        .values("id", "name", "number", "region__name", "total", "active", "terminated", "problems")
+        .order_by("region__name", "number")
+    )
+
+
+def event_type_breakdown(*, exam_date=None, region_id=None, limit: int = 15) -> list[dict]:
+    """Eng ko'p uchraydigan hodisa turlari."""
+    exam_date = exam_date or timezone.localdate()
+    queryset = ProctoringEvent.objects.filter(session__exam_date=exam_date)
+    if region_id:
+        queryset = queryset.filter(session__zone__region_id=region_id)
+
+    return list(
+        queryset.values("type")
+        .annotate(count=Count("id"))
+        .order_by("-count")[:limit]
+    )
