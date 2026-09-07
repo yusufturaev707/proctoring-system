@@ -128,6 +128,18 @@ Fayl tizimi yo'lining qat'iy qoidalari:
   bu qiymat ishga tushishni to'xtatadi).
 * nginx `internal` location'siz butun himoya yo'q — `deploy/nginx.conf.example`.
 
+Client tomoni (`client/services/screen_capture.py`) qaysi yo'l yoqilganini
+**oldindan bilmaydi** — handshake buni aytmaydi. Rejim sessiya boshida bir
+marta aniqlanadi: `presign/` 503 qaytarsa, fayl tizimi yo'liga o'tiladi.
+Yangi sozlama qo'shganda shu shartnomani buzmang.
+
+**`Setting.screenshot_dedup_threshold` — dHash'dagi FARQLI BITLAR soni
+(0–64)**, foiz emas. Bu ikki komponent orasidagi kontrakt va u faqat
+client kodida yashaydi: model maydonida birlik yozilmagan. `0` — dedup
+o'chirilgan. Ketma-ket 6 marta o'tkazib yuborilgach kadr chegaradan
+qat'i nazar yuboriladi (`_FORCE_SEND_AFTER_SKIPS`) — dedup dalilda
+"ko'r oyna" yarata olmasligi kerak.
+
 ### Backend app'lari (`backend/src/apps/`)
 
 | App | Mas'uliyat |

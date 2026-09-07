@@ -164,6 +164,58 @@ class ApiClient(metaclass=SingletonMeta):
 
         return self._unwrap(response)
 
+    def put_binary(self, url: str, data: bytes, content_type: str) -> None:
+        """
+        Presigned URL'ga to'g'ridan-to'g'ri PUT (obyekt storage'iga).
+
+        BIZNING header'larimiz YUBORILMAYDI va bu majburiy: presigned
+        URL imzosi so'rov parametrlarida yashaydi, `Authorization`
+        header'i esa S3 uchun ikkinchi, ziddiyatli autentifikatsiya
+        usuli - u bo'lsa so'rov rad etiladi. `X-Device-ID` va sessiya
+        tokeni ham bu yerda begona: ular bizning backendimiz uchun va
+        uchinchi tomon storage'iga oshkor qilinmasligi kerak.
+
+        `base_url` bu chaqiruvga TA'SIR QILMAYDI: httpx absolyut URL'ni
+        o'zgartirmasdan ishlatadi.
+
+        Javob tanasi o'qilmaydi - S3 muvaffaqiyatda bo'sh tana va ETag
+        qaytaradi, bizga esa faqat statusi kerak.
+        """
+        try:
+            response = self._client.put(
+                url,
+                content=data,
+                headers={"Content-Type": content_type},
+                # Skrinshot ~100 KB va sekin kanalda ham tez ketadi;
+                # umumiy `API_TIMEOUT` (30 s) bu yerda ham yetarli.
+                timeout=API_TIMEOUT,
+            )
+        except httpx.TimeoutException as exc:
+            raise NetworkError(
+                "Obyekt storage'i javob bermadi (timeout).", code="network"
+            ) from exc
+        except httpx.RequestError as exc:
+            raise NetworkError(
+                "Obyekt storage'iga ulanib bo'lmadi.", code="network"
+            ) from exc
+
+        if response.is_success:
+            return
+
+        # S3 xatosi XML qaytaradi, bizning konvertimizda emas. Uni
+        # tahlil qilmaymiz: client bu xato bilan hech nima qila
+        # olmaydi, faqat qayta urinadi.
+        log.warning(
+            "Obyekt storage'iga yuklab bo'lmadi: %s %s",
+            response.status_code,
+            response.text[:200],
+        )
+        raise ClientError(
+            "Skrinshotni saqlab bo'lmadi (storage {})".format(response.status_code),
+            code="storage_upload_failed",
+            status=response.status_code,
+        )
+
     # ------------------------------------------------------------------
     # Ichki
     # ------------------------------------------------------------------

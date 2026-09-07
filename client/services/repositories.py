@@ -273,6 +273,57 @@ class ProctoringRepository:
     def session_state(self) -> dict:
         return self._api.get("/client/session/state/")
 
+    # --- Skrinshotlar -------------------------------------------------
+    #
+    # Backend ikki xil yo'lni qo'llab-quvvatlaydi va o'rnatish profiliga
+    # qarab BITTASI yoqilgan bo'ladi. Qaysi biri ekanini client sessiya
+    # boshida aniqlaydi (`services/screen_capture.py`), shuning uchun
+    # bu yerda uchala metod ham bor.
+
+    def presign_screenshots(
+        self, *, count: int = 1, kind: str = "screen",
+        content_type: str = "image/jpeg",
+    ) -> dict:
+        """
+        Obyekt storage'iga to'g'ridan-to'g'ri yuklash uchun URL'lar.
+
+        Obyekt storage'i o'chirilgan bo'lsa 503 qaytadi - chaqiruvchi
+        buni fayl tizimi yo'liga o'tish signali sifatida o'qiydi.
+        `count` bir marta bir nechta URL olish uchun (backend chegarasi
+        20 ta): har kadr uchun alohida so'rov yuborish ortiqcha yuk.
+        """
+        return self._api.post(
+            "/client/screenshots/presign/",
+            json_body={"kind": kind, "content_type": content_type, "count": int(count)},
+        )
+
+    def commit_screenshots(self, screenshots: list[dict]) -> dict:
+        """
+        Yuklangan skrinshotlar metadata'sini tasdiqlaydi (batch).
+
+        Binary allaqachon storage'da; bu chaqiruv DB'ga yozuv qo'shadi.
+        Backend chegarasi - bir so'rovda 50 ta.
+        """
+        return self._api.post(
+            "/client/screenshots/commit/", json_body={"screenshots": screenshots}
+        )
+
+    def upload_screenshot(self, *, data: bytes, captured_at: str) -> dict:
+        """
+        Fayl tizimi yo'li: binary AYNAN shu so'rovda ketadi.
+
+        Fayl nomi va `Content-Type` server uchun HECH NARSANI
+        anglatmaydi - u faylning haqiqiy turini baytlardan aniqlaydi
+        (`services/screenshots.py`), nomni esa o'zi yasaydi. Ular bu
+        yerda faqat multipart shakli talab qilgani uchun berilyapti.
+        """
+        return self._api.request(
+            "POST",
+            "/client/screenshots/upload/",
+            files={"file": ("screen.jpg", data, "image/jpeg")},
+            data={"captured_at": captured_at},
+        )
+
     # --- Yakunlash ----------------------------------------------------
     def finish_session(self, *, reason: str = "") -> dict:
         return self._api.post("/client/session/finish/", json_body={"reason": reason})

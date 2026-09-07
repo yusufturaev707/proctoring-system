@@ -110,6 +110,21 @@ EVENT_FLUSH_INTERVAL_MS = _env_int("EVENT_FLUSH_INTERVAL_MS", 5_000)
 EVENT_BATCH_MAX = 200
 PERIODIC_FACE_INTERVAL_MS = _env_int("PERIODIC_FACE_INTERVAL_MS", 60_000)
 
+# ── Skrinshot ────────────────────────────────────────────────────────
+# Interval, sifat, kenglik va dedup chegarasi SERVERDAN keladi
+# (`Setting` -> handshake `config.capture`) - ular imtihonga qarab
+# o'zgaradi va clientda qadab qo'yilmasligi kerak. Bu yerda faqat
+# mashinaga bog'liq ikkita qiymat qoladi.
+#
+# `0` - skrinshot umuman olinmaydi. Faqat ishlab chiqish uchun:
+# dasturchi ekranida shaxsiy oynalar bo'lishi mumkin.
+SCREENSHOT_ENABLED = _env_bool("SCREENSHOT_ENABLED", True)
+
+# Tarmoq uzilganda RAM'da saqlanadigan kadrlar soni. 20 x ~100 KB = 2 MB.
+# Kattalashtirish uzilishga chidamlilikni oshiradi, lekin imtihon
+# mashinasi (ko'pincha 4 GB RAM) da bu resurs tanqis.
+SCREENSHOT_RETRY_QUEUE = _env_int("SCREENSHOT_RETRY_QUEUE", 20)
+
 # ── UI ───────────────────────────────────────────────────────────────
 # Imtihon rejimida to'liq ekran majburiy: oynadan chiqish yo'llari
 # kamayadi. Dev'da uni o'chirib qo'yish qulay (DevTools, log ko'rish).

@@ -44,6 +44,7 @@ from services.app_state import AppState
 from services.camera_worker import CameraWorker, retire_camera
 from services.monitoring import SessionMonitor
 from services.repositories import ProctoringRepository
+from services.screen_capture import ScreenshotService
 from services.workers import ApiWorker, WorkerHolder
 from ui.styles import COLORS, badge_style
 from ui.widgets.indicators import BusyOverlay, MessageBar
@@ -120,6 +121,14 @@ class ExamWebViewPage(QWidget):
         self._monitor.session_lost.connect(self._on_session_lost)
         self._monitor.network_changed.connect(self._on_network_changed)
 
+        # Skrinshot xizmati ALOHIDA: uning taymeri, buferi va yuklash
+        # yo'li hodisalar oqimidan mustaqil. Ular bir obyektga
+        # birlashtirilsa, skrinshotning sekin yuklanishi hodisalar
+        # flush'ini ham ushlab qolardi.
+        self._screenshots = ScreenshotService(repo, parent=self)
+        self._screenshots.sent.connect(self._on_screenshot_sent)
+        self._screenshots.failed.connect(self._on_screenshot_failed)
+
         self._camera: Optional[CameraWorker] = None
         self._last_embedding = None
         self._interceptor: Optional[DomainAllowlistInterceptor] = None
@@ -161,6 +170,15 @@ class ExamWebViewPage(QWidget):
         self.face_badge.setStyleSheet(badge_style("muted"))
         self.face_badge.setFixedHeight(24)
         bar_layout.addWidget(self.face_badge)
+
+        # Operator skrinshot olinayotganini KO'RISHI kerak: bu nazorat
+        # ishlayotganining yagona ko'rinadigan belgisi va u ishlamay
+        # qolsa, imtihon tugagandan keyin emas, o'sha payt bilinishi
+        # kerak (dalilni keyin qayta yig'ib bo'lmaydi).
+        self.shot_badge = QLabel("Skrinshot: -")
+        self.shot_badge.setStyleSheet(badge_style("muted"))
+        self.shot_badge.setFixedHeight(24)
+        bar_layout.addWidget(self.shot_badge)
 
         self.network_badge = QLabel("Aloqa bor")
         self.network_badge.setStyleSheet(badge_style("success"))
@@ -206,6 +224,11 @@ class ExamWebViewPage(QWidget):
         self.candidate_label.setText(candidate.full_name if candidate else "-")
         self.exam_label.setText(exam.name if exam else "")
         self.message.clear_message()
+        # Hisoblagich HAR TALABGOR uchun noldan boshlanadi - aks holda
+        # ekranda oldingi sessiyaning soni qolib, operator skrinshot
+        # olinayotgan deb o'ylardi.
+        self.shot_badge.setText("Skrinshot: -")
+        self.shot_badge.setStyleSheet(badge_style("muted"))
 
         policy = access.get("webview_policy") or {}
         self._configure_profile(policy)
@@ -214,6 +237,9 @@ class ExamWebViewPage(QWidget):
         self._attach_camera(camera)
         self._monitor.start()
         self._face_timer.start()
+        # Sozlama handshake'dan keladi: interval, sifat, kenglik va
+        # dedup chegarasi imtihonga biriktirilgan profilga bog'liq.
+        self._screenshots.start(self._state.config)
 
     def _configure_profile(self, policy: dict) -> None:
         """
@@ -361,6 +387,22 @@ class ExamWebViewPage(QWidget):
         else:
             self.message.clear_message()
 
+    def _on_screenshot_sent(self, total: int) -> None:
+        self.shot_badge.setText("Skrinshot: {}".format(total))
+        self.shot_badge.setStyleSheet(badge_style("success"))
+
+    def _on_screenshot_failed(self, message: str) -> None:
+        # Xabar `MessageBar` ga CHIQARILMAYDI: u tarmoq holati uchun
+        # band va skrinshot xatosi odatda o'sha uzilishning natijasi -
+        # ikkita bir xil ogohlantirish operatorni chalg'itadi. Nishon
+        # esa ko'rinib turadi.
+        pending = self._screenshots.pending
+        self.shot_badge.setText(
+            "Skrinshot: navbatda {}".format(pending) if pending else "Skrinshot: xato"
+        )
+        self.shot_badge.setStyleSheet(badge_style("error"))
+        log.info("Skrinshot xatosi: %s", message)
+
     def _on_blocked_host(self, host: str) -> None:
         # Interceptor boshqa thread'dan chaqiriladi - bu yerda faqat
         # buferga yozamiz, UI'ga tegmaymiz.
@@ -425,6 +467,10 @@ class ExamWebViewPage(QWidget):
     def stop(self) -> None:
         """Nazoratni to'xtatadi va WebView'ni tozalaydi."""
         self._face_timer.stop()
+        # Skrinshot xizmati sessiya tokeni bekor qilinishidan OLDIN
+        # to'xtatiladi: u yakunda qolgan kadrlarni va commit'larni
+        # yuborishga urinadi, tokensiz esa ular 401 oladi.
+        self._screenshots.stop()
         self._monitor.stop()
 
         if self._camera is not None:
@@ -446,4 +492,5 @@ class ExamWebViewPage(QWidget):
 
     def shutdown(self) -> None:
         self.stop()
+        self._screenshots.shutdown()
         self._workers.wait_all()
