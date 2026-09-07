@@ -418,6 +418,37 @@ PROCTORING = {
     # kirib birinchi IP'ni kirita oladi — tizim o'zini qulflab qo'ymaydi.
     "REQUIRE_ALLOWED_IP": env_bool("REQUIRE_ALLOWED_IP", True),
 
+    # --- Server imtihon tarmog'ining ICHIDAMI ---
+    #
+    # `AllowedPublicIp` — bu binolarning TASHQI (NAT) manzillari
+    # ro'yxati. U faqat server clientlarni internet orqali ko'rganda
+    # ma'noga ega:
+    #
+    #   A) server internetda (nginx ortida) — client NAT orqali keladi,
+    #      server binoning tashqi manzilini ko'radi, ro'yxat ishlaydi;
+    #   B) server BINO ICHIDA (yoki dev'da o'sha mashinada) — client
+    #      unga LAN manzili bilan yetib boradi va server uning tashqi
+    #      manzilini printsipial ravishda KO'RA OLMAYDI.
+    #
+    # B holatida ommaviy manzillar ro'yxati xususiy manzilga hech qachon
+    # mos kelmaydi, ya'ni `check_source_ip` HAMMANI rad etadi. Har bir
+    # ish stantsiyasining 192.168.x.x manzilini ro'yxatga kiritish esa
+    # yechim emas (`network_preflight` docstring'i buni tushuntiradi).
+    #
+    # Shuning uchun qaror TAXMIN QILINMAYDI, u sozlamada aytiladi:
+    #
+    #   true  — xususiy (LAN/loopback) manba manzili tekshiruvdan
+    #           o'tadi. Bu B holati: LAN'ning O'ZI perimetr, unga
+    #           kirish uchun binoga jismonan kirish kerak.
+    #   false — (standart) faqat ro'yxatdagi manzil o'tadi. Bu A holati.
+    #
+    # DIQQAT: `true` IP tekshiruvini LAN uchun o'chiradi, boshqa
+    # qatlamlarni emas — qurilma baribir ro'yxatdan o'tgan va
+    # tasdiqlangan bo'lishi, xodim JWT'si va ochiq imtihon oynasi
+    # bo'lishi shart. Ommaviy manzildan kelgan so'rov esa avvalgidek
+    # ro'yxat bo'yicha tekshiriladi.
+    "ALLOW_PRIVATE_SOURCE_IP": env_bool("ALLOW_PRIVATE_SOURCE_IP", False),
+
     # --- Qurilma identifikatori ---
     # `X-Device-ID` kredensial EMAS — u sessiya qaysi kompyuterda va qaysi
     # binoda o'tayotganini belgilaydi. Usiz sessiyaning zonasi bo'lmaydi,

@@ -200,6 +200,16 @@ yupqa; biznes-mantiq service'da.
   **qulaylik to'sig'i**, himoya emas: haqiqiy tekshiruv o'zgarishsiz
   `ClientBaseView.check_source_ip` da va u faqat server ko'rgan manzilga
   qaraydi.
+* **Server clientni QAYSI manzilda ko'radi** — `ALLOW_PRIVATE_SOURCE_IP`
+  shuni hal qiladi. `AllowedPublicIp` binolarning **tashqi** (NAT)
+  manzillari ro'yxati va u faqat server clientlarni internet orqali
+  ko'rganda ishlaydi. Server bino ichida tursa (yoki dev'da client
+  bilan bir mashinada), u LAN/loopback manzilni ko'radi va ro'yxat
+  unga hech qachon mos kelmaydi — `false` bilan **hamma rad etiladi**.
+  Belgisi: preflight o'tadi, keyingi har bir so'rov 403 (`ip_not_allowed`).
+  `local.py` da standart `true`, production'da `false`.
+  **Yumshatish faqat xususiy manzilga tegishli** — ommaviy manzil
+  avvalgidek ro'yxat bo'yicha tekshiriladi.
 * **`AllowedPublicIp` da faol yozuv qolmasa** — `REQUIRE_ALLOWED_IP`
   (standart `true`) hal qiladi: hech kim kira olmaydi. Bu qiymat
   `false` bo'lsa ro'yxat bo'shligi "tekshiruv o'chirilgan" degani va
@@ -303,6 +313,12 @@ yarating; `code` React tomonda tarjima kaliti sifatida ishlatiladi.
   o'chirmaydi, `deleted_at` qo'yadi; ro'yxatlarda `.alive()` ishlatiladi.
 * **Redis `maxmemory-policy` `noeviction` bo'lishi kerak** — `allkeys-lru`
   da faol sessiya tokenlari imtihon o'rtasida o'chib ketadi.
+* **Python `203.0.113.0/24` ni XUSUSIY deb biladi.** RFC 5737 hujjat
+  diapazonlari (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`)
+  `ipaddress.is_private` da `True` beradi. Testlarda "ommaviy manzil"
+  kerak bo'lsa haqiqiysini oling (`8.8.8.8`) — aks holda
+  `ALLOW_PRIVATE_SOURCE_IP` bilan bog'liq testlar chalkash natija
+  beradi.
 * **(test) client yuzasida `force_authenticate` ISHLATMANG** — DRF uni
   ko'rganda view'ning butun `authentication_classes` ro'yxatini
   `ForcedAuthentication` bilan almashtiradi. `DeviceResolution` va

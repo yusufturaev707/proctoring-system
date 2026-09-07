@@ -69,6 +69,25 @@ X_FRAME_OPTIONS = "DENY"
 # Admin panelni standart bo'lmagan yo'lga ko'chirish (bot skanerlariga qarshi).
 ADMIN_URL = env("ADMIN_URL", "admin/")
 
+# --------------------------------------------------------------------------
+# Xususiy manba manzillariga ruxsat
+#
+# Bu QONUNIY o'rnatish profili (server bino ichida turadi va clientlarni
+# LAN manzili bilan ko'radi), lekin u IP tekshiruvini o'sha tarmoq uchun
+# o'chiradi. Ishga tushishni TO'XTATMAYDI — aks holda topologiya B dagi
+# muassasa umuman ishga tushira olmasdi — lekin jimgina ham o'tmaydi:
+# uni yoqqan odam ham, keyin log o'qigan odam ham bilishi kerak.
+# --------------------------------------------------------------------------
+if PROCTORING["ALLOW_PRIVATE_SOURCE_IP"]:  # noqa: F405
+    import logging
+
+    logging.getLogger("django").warning(
+        "ALLOW_PRIVATE_SOURCE_IP=true — LAN/loopback manzillari `AllowedPublicIp` "
+        "ro'yxatidan o'tkazib yuboriladi. Bu faqat server imtihon tarmog'ining "
+        "ICHIDA turgan o'rnatish uchun to'g'ri. Server internetda (nginx ortida) "
+        "bo'lsa, uni `false` qiling."
+    )
+
 
 # --------------------------------------------------------------------------
 # Performance

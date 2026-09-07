@@ -14,6 +14,8 @@ import logging
 from django.conf import settings
 from django.core.cache import cache
 
+from apps.common.utils.network import is_private_ip
+
 logger = logging.getLogger(__name__)
 
 SETTING_CACHE_TTL = 300
@@ -294,6 +296,16 @@ def require_allowed_ip() -> bool:
     return bool(settings.PROCTORING.get("REQUIRE_ALLOWED_IP", True))
 
 
+def allow_private_source() -> bool:
+    """
+    Xususiy (LAN/loopback) manba manzili tekshiruvdan o'tadimi.
+
+    Sabab va ikki topologiya `PROCTORING["ALLOW_PRIVATE_SOURCE_IP"]`
+    izohida (`config/settings/base.py`).
+    """
+    return bool(settings.PROCTORING.get("ALLOW_PRIVATE_SOURCE_IP", False))
+
+
 def ip_check_enforced() -> bool:
     """
     Tekshiruv umuman kuchdami?
@@ -313,11 +325,25 @@ def is_ip_allowed(ip_address: str, zone_id: int | None = None) -> bool:
     Ilgari bu holat so'zsiz "ruxsat" degani edi va oqibati kutilmagan
     bo'lardi: ro'yxatdagi yagona manzilni nofaol qilish yoki o'chirish
     butun cheklovni jimgina olib tashlardi.
+
+    XUSUSIY MANBA MANZILI — alohida holat. `AllowedPublicIp` binolarning
+    TASHQI manzillari ro'yxati; 192.168.x.x yoki 127.0.0.1 ni u bo'yicha
+    baholab bo'lmaydi. Bu "ruxsat yo'q" emas, "bu ro'yxat bu savolga
+    javob bera olmaydi" degani va farqni jimgina "rad etish" deb talqin
+    qilish server bino ichida turgan o'rnatishda HAMMANI bloklaydi.
+    Qaror `ALLOW_PRIVATE_SOURCE_IP` da.
     """
     allowed = allowed_ip_map()
 
     if not allowed:
         return not require_allowed_ip()
+
+    # Tekshiruv ro'yxat BO'SH EMASLIGIDAN keyin turadi: ro'yxat
+    # to'ldirilmagan bo'lsa, "hali hech kimga ruxsat berilmagan"
+    # qoidasi kuchda qoladi va u LAN uchun ham amal qiladi.
+    if allow_private_source() and is_private_ip(ip_address):
+        return True
+
     if ip_address not in allowed:
         return False
 

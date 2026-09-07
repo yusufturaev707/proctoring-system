@@ -105,11 +105,43 @@ class ClientBaseView(APIView):
         return getattr(self.request, "device", None)
 
     def check_source_ip(self, zone_id=None) -> str:
+        """
+        Haqiqiy IP tekshiruvi — FAQAT server ko'rgan manzil bo'yicha.
+
+        Preflight'dan farqi shu va u ataylab: preflight client aytgan
+        qiymatga qaraydi (uni o'zgartirish mumkin), bu esa TCP ulanishi
+        kelgan manzilga.
+
+        Xato XABARI muhim. Ilgari u faqat "Ruxsat etilmagan IP: X"
+        derdi va eng chalkash holatni — preflight o'tib, keyingi so'rov
+        rad etilishini — umuman tushuntirmasdi. Sabab esa deyarli har
+        doim bitta: server clientni NAT orqali ko'rmayapti, ya'ni u
+        binoning tashqi manzilini emas, LAN manzilini ko'ryapti.
+        """
+        from apps.common.utils.network import is_private_ip
+
         ip_address = client_ip(self.request)
-        if not controls_services.is_ip_allowed(ip_address, zone_id):
-            logger.warning("Ruxsat etilmagan IP: %s (zone=%s)", ip_address, zone_id)
-            raise IpNotAllowed()
-        return ip_address
+        if controls_services.is_ip_allowed(ip_address, zone_id):
+            return ip_address
+
+        if is_private_ip(ip_address):
+            # Bu konfiguratsiya xatosi, hujum emas: xususiy manzilni
+            # ommaviy IP ro'yxati bo'yicha baholab bo'lmaydi.
+            logger.warning(
+                "Manba manzili XUSUSIY (%s, zone=%s) — `AllowedPublicIp` "
+                "ro'yxati unga javob bera olmaydi. Server imtihon "
+                "tarmog'ining ichida yoki client bilan bir mashinada "
+                "bo'lsa, `ALLOW_PRIVATE_SOURCE_IP=true` qo'ying; nginx "
+                "ortida bo'lsa `TRUSTED_PROXY_COUNT` ni to'g'ri sozlang.",
+                ip_address, zone_id,
+            )
+        else:
+            logger.warning(
+                "Ruxsat etilmagan IP: %s (zone=%s). Manzil `AllowedPublicIp` "
+                "ro'yxatida yo'q yoki boshqa binoga biriktirilgan.",
+                ip_address, zone_id,
+            )
+        raise IpNotAllowed()
 
 
 class SessionRequiredView(ClientBaseView):

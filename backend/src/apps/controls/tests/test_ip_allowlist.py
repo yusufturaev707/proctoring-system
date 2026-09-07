@@ -7,6 +7,14 @@ qilsa yoki o'chirsa, "hech kim kira olmaydi" o'rniga "hamma kiraveradi"
 bo'lib qolishi mumkin va buni hech kim sezmaydi.
 
 `REQUIRE_ALLOWED_IP` (standart `true`) aynan shuni hal qiladi.
+
+TESTDAGI MANZILLAR HAQIDA. Bu yerdagi ko'p test `203.0.113.x` ni
+"ommaviy manzil" sifatida ishlatadi va bu `ALLOW_PRIVATE_SOURCE_IP`
+o'chirilgan holatda to'g'ri. Lekin Python `ipaddress` moduli RFC 5737
+hujjat diapazonlarini (`192.0.2.0/24`, `198.51.100.0/24`,
+`203.0.113.0/24`) XUSUSIY deb hisoblaydi. Shuning uchun o'sha
+sozlama yoqilgan testlarda HAQIQIY ommaviy manzil (`8.8.8.8`)
+ishlatiladi — `test_documentation_ranges_count_as_private` ga qarang.
 """
 
 from django.core.cache import cache
@@ -93,6 +101,106 @@ class IsIpAllowedTests(AllowlistTestCase):
         """
         AllowedPublicIp.objects.create(ip_address="203.0.113.10")
         self.assertFalse(services.is_ip_allowed("203.0.113.99"))
+
+    # --- Xususiy manba manzili ---------------------------------------
+    #
+    # `AllowedPublicIp` — binolarning TASHQI manzillari ro'yxati.
+    # 192.168.x.x yoki 127.0.0.1 ni u bo'yicha baholab bo'lmaydi va bu
+    # "ruxsat yo'q" degani EMAS. Server bino ichida turgan o'rnatishda
+    # (yoki dev'da) barcha clientlar aynan shunday ko'rinadi.
+
+    @with_proctoring(ALLOW_PRIVATE_SOURCE_IP=False)
+    def test_private_source_is_denied_by_default(self):
+        """Standart holat: server internetda, NAT orqali ko'radi."""
+        AllowedPublicIp.objects.create(ip_address="203.0.113.10")
+        for private in ("127.0.0.1", "192.168.1.7", "10.0.0.3", "172.16.0.9"):
+            with self.subTest(ip=private):
+                self.assertFalse(services.is_ip_allowed(private))
+
+    @with_proctoring(ALLOW_PRIVATE_SOURCE_IP=True)
+    def test_private_source_is_allowed_when_configured(self):
+        """
+        Server imtihon tarmog'ining ichida — LAN'ning O'ZI perimetr.
+
+        Aynan shu holat ilgari 403 berardi: preflight client aytgan
+        tashqi manzil bo'yicha o'tar, keyingi so'rov esa server ko'rgan
+        LAN manzili bo'yicha rad etilardi.
+        """
+        AllowedPublicIp.objects.create(ip_address="203.0.113.10")
+        for private in ("127.0.0.1", "192.168.1.7", "10.0.0.3"):
+            with self.subTest(ip=private):
+                self.assertTrue(services.is_ip_allowed(private))
+
+    @with_proctoring(ALLOW_PRIVATE_SOURCE_IP=True)
+    def test_public_source_is_still_checked(self):
+        """
+        Yumshatish FAQAT xususiy manzillarga tegishli.
+
+        Internetdan kelgan so'rov avvalgidek ro'yxat bo'yicha
+        tekshiriladi — aks holda sozlama butun cheklovni o'chirardi.
+
+        DIQQAT: bu yerda HAQIQIY ommaviy manzillar ishlatiladi
+        (fayl boshidagi izohga qarang) — `203.0.113.x` bu test uchun
+        yaramaydi.
+        """
+        AllowedPublicIp.objects.create(ip_address="8.8.8.8")
+        self.assertTrue(services.is_ip_allowed("8.8.8.8"))
+        self.assertFalse(services.is_ip_allowed("1.1.1.1"))
+
+    @with_proctoring(ALLOW_PRIVATE_SOURCE_IP=True)
+    def test_documentation_ranges_count_as_private(self):
+        """
+        Python `203.0.113.0/24` ni XUSUSIY deb biladi — bu tuzoq.
+
+        Test uchun tabiiy ravishda tanlanadigan RFC 5737 diapazonlari
+        (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`)
+        `ipaddress.is_private` da `True` beradi. Shu sababli
+        `ALLOW_PRIVATE_SOURCE_IP=True` bilan yozilgan test ular bilan
+        "ommaviy manzil ham o'tib ketdi" degan chalkash natija beradi.
+
+        Xulq to'g'ri (production'da bu manzillar uchramaydi), lekin u
+        oshkora yozib qo'yilishi kerak — aks holda keyingi odam yarim
+        soat sarflaydi.
+        """
+        AllowedPublicIp.objects.create(ip_address="8.8.8.8")
+        for documentation in ("192.0.2.5", "198.51.100.1", "203.0.113.10"):
+            with self.subTest(ip=documentation):
+                self.assertTrue(services.is_ip_allowed(documentation))
+
+    @with_proctoring(ALLOW_PRIVATE_SOURCE_IP=True)
+    def test_private_source_ignores_zone_binding(self):
+        """
+        Xususiy manzilda bino bog'lami tekshirilmaydi.
+
+        U tekshirilishi ham mumkin emas: manzil qaysi binoniki ekanini
+        aytmaydi. Bino qurilmadan aniqlanadi (`device.computer.zone`) —
+        u server tomonidagi ma'lumot va soxtalashtirib bo'lmaydi.
+        """
+        AllowedPublicIp.objects.create(ip_address="203.0.113.10", zone=self.zone)
+        self.assertTrue(services.is_ip_allowed("192.168.1.7", self.other_zone.pk))
+
+    @with_proctoring(ALLOW_PRIVATE_SOURCE_IP=True, REQUIRE_ALLOWED_IP=True)
+    def test_empty_list_still_denies_private_source(self):
+        """
+        Bo'sh ro'yxat qoidasi USTUN.
+
+        "Hali hech kimga ruxsat berilmagan" holati LAN uchun ham amal
+        qiladi: aks holda administrator hech nima sozlamasdan turib
+        butun tarmoq uchun kirish ochilardi.
+        """
+        self.assertFalse(services.is_ip_allowed("192.168.1.7"))
+
+    @with_proctoring(ALLOW_PRIVATE_SOURCE_IP=True)
+    def test_malformed_address_is_treated_as_private(self):
+        """
+        Yaroqsiz satr `is_private_ip` da `True` beradi.
+
+        Bu ongli qaror (`utils/network.py`): noma'lum qiymatga "tashqi
+        manzil" deb ishonish uni bilmaslikdan xavfliroq. Bu yerda esa
+        u ro'yxatga tushmaydi va sozlama bo'yicha hal qilinadi.
+        """
+        AllowedPublicIp.objects.create(ip_address="203.0.113.10")
+        self.assertTrue(services.is_ip_allowed("umuman-ip-emas"))
 
     def test_cache_is_invalidated(self):
         self.assertFalse(services.is_ip_allowed("203.0.113.10"))
