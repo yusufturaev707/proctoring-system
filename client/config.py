@@ -55,6 +55,15 @@ API_TIMEOUT = _env_float("API_TIMEOUT", 30.0)
 
 # TLS: `1`/`0` yoki CA fayl yo'li. Production'da HTTPS + haqiqiy CA shart —
 # `0` qiymati MITM'ga ochiq qoldiradi va faqat lokal dev uchun.
+# WebSocket manzili (sxema + host, yo'lsiz): `ws://host:8001`.
+#
+# Bo'sh qoldirilsa `API_BASE_URL` dan chiqariladi
+# (`services/realtime.py:default_ws_url`) - bu production'da to'g'ri,
+# chunki nginx HTTP va WS ni bitta host ostida beradi. DEV'da esa
+# MAJBURIY: u yerda WebSocket alohida process'da, boshqa portda
+# (`uvicorn config.asgi:application --port 8001`) ishlaydi.
+WS_BASE_URL = os.getenv("WS_BASE_URL", "").strip().rstrip("/")
+
 _ssl_raw = os.getenv("API_SSL_VERIFY", "1").strip()
 API_SSL_VERIFY: bool | str
 if _ssl_raw in ("0", "false", "False", "no"):

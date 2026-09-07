@@ -156,7 +156,9 @@ class ClientConsumer(AsyncJsonWebsocketConsumer):
     """
     PyQt6 desktop client.
 
-    Ulanish: `ws://host/ws/client/?proctoring_session=<opaque>`
+    Ulanish: `ws://host/ws/client/` + `X-Proctoring-Session` header'i
+    (yoki eski yo'l: `?proctoring_session=<opaque>` — `_authenticate`
+    ga qarang).
 
     Client uchun WebSocket (SSE emas) tanlangan, chunki kanal ikki
     tomonlama bo'lishi shart: proktor "ogohlantirish ko'rsat",
@@ -197,13 +199,41 @@ class ClientConsumer(AsyncJsonWebsocketConsumer):
 
     # --- Yordamchilar ---
     async def _authenticate(self) -> dict | None:
-        from urllib.parse import parse_qs
+        """
+        Token avval HEADER'dan, keyin query parametridan o'qiladi.
 
-        query = parse_qs(self.scope.get("query_string", b"").decode())
-        raw_token = (query.get("proctoring_session") or [None])[0]
+        `MonitorConsumer` dan farqi shu va sabab clientning turida:
+        brauzer WebSocket API'si maxsus header qo'shishga imkon
+        bermaydi, PyQt6 dagi `QWebSocket` esa beradi. Query
+        parametridagi opaque sessiya tokeni nginx access log'ida va
+        proksi jurnallarida ochiq qoladi, ya'ni undan qochish
+        mumkin bo'lganda qochish kerak.
+
+        Query parametri qo'llab-quvvatlanishda QOLADI: eski client
+        nusxalari (va qo'lda diagnostika) shu yo'ldan ulanadi.
+        """
+        raw_token = self._header_token()
+        if not raw_token:
+            from urllib.parse import parse_qs
+
+            query = parse_qs(self.scope.get("query_string", b"").decode())
+            raw_token = (query.get("proctoring_session") or [None])[0]
+
         if not raw_token:
             return None
         return await self._resolve_session(raw_token)
+
+    def _header_token(self) -> str:
+        """
+        `X-Proctoring-Session` header'i.
+
+        ASGI `scope["headers"]` — nomi kichik harfda normallashtirilgan
+        `(bytes, bytes)` juftliklari ro'yxati.
+        """
+        for name, value in self.scope.get("headers") or []:
+            if name == b"x-proctoring-session":
+                return value.decode("latin-1").strip()
+        return ""
 
     @database_sync_to_async
     def _resolve_session(self, raw_token: str) -> dict | None:

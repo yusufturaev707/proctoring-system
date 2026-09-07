@@ -1,10 +1,13 @@
 """
 Holat indikatorlari: status pill, busy overlay va xabar qatori.
 
-Uchalasi ham "kutish" holatini ko'rsatadi, lekin har xil miqyosda:
-    StatusPill   - fon jarayoni (model yuklanmoqda), oqimni to'smaydi
-    BusyOverlay  - sahifani to'sadi (API so'rovi ketyapti)
-    MessageBar   - natija/xato matni
+Ular "kutish" holatini har xil miqyosda ko'rsatadi:
+    StatusPill      - fon jarayoni (model yuklanmoqda), oqimni to'smaydi
+    BusyOverlay     - sahifani to'sadi (API so'rovi ketyapti)
+    MessageBar      - natija/xato matni
+
+`WarningOverlay` esa boshqa turkumdan: u kutish emas, ARALASHUV -
+proktorning talabgorga qaratilgan xabari.
 """
 
 from __future__ import annotations
@@ -275,6 +278,106 @@ class BusyOverlay(QWidget):
         painter.drawText(
             QRectF(0, cy + radius + 12, self.width(), 30),
             int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop),
+            self._text,
+        )
+        painter.end()
+
+
+class WarningOverlay(QWidget):
+    """
+    Proktorning ogohlantirishi - talabgor ekranini to'sadi.
+
+    Nima uchun `MessageBar` yetmaydi: u sahifa tepasidagi ingichka
+    qator va imtihon topshirayotgan odam unga qaramaydi.
+    Ogohlantirishning butun ma'nosi - talabgorning DIQQATINI tortish,
+    aks holda proktor chetlashtirishdan boshqa chora qoldirmaydi.
+
+    Nima uchun modal dialog ham emas: `QMessageBox.exec()` hodisa
+    siklini bloklaydi, ya'ni heartbeat, hodisa buferi va skrinshot
+    taymerlari ogohlantirish yopilgunga qadar TO'XTAB TURADI. Aynan
+    talabgor qoida buzgan paytda nazoratni o'chirish - eng noto'g'ri
+    xulq. Overlay esa faqat chizadi.
+
+    O'zi yopiladi (`Setting.warning_timeout`): talabgor uni yopishi
+    uchun tugma bosishi kerak bo'lsa, u ogohlantirishni ochiq
+    qoldirib, ekranni to'sib turishini bahona qila oladi.
+    """
+
+    #: Jiddiylik -> (fon rangi, sarlavha).
+    _LEVELS = {
+        1: ("accent", "Diqqat"),
+        2: ("warning", "Ogohlantirish"),
+        3: ("error", "Jiddiy ogohlantirish"),
+        4: ("error", "Oxirgi ogohlantirish"),
+    }
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._title = "Ogohlantirish"
+        self._text = ""
+        self._color = QColor(COLORS["warning"])
+        # Sichqoncha hodisalari OSTIDAGI sahifaga o'tmaydi: overlay
+        # ko'rinib turganda talabgor tasodifan test tugmasini bosib
+        # yubormasligi kerak.
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        self.hide()
+
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self.hide)
+
+    def show_warning(self, text: str, severity: int = 2, timeout_s: int = 5) -> None:
+        key, title = self._LEVELS.get(int(severity or 2), self._LEVELS[2])
+        self._color = QColor(COLORS[key])
+        self._title = title
+        self._text = text or "Proktor ogohlantirdi"
+
+        if self.parent() is not None:
+            self.setGeometry(self.parent().rect())
+        self.raise_()
+        self.show()
+        self.update()
+        # `0` yoki manfiy - o'zi yopilmaydi (proktor uni qo'lda
+        # olib tashlashi kerak bo'lgan holat uchun).
+        if timeout_s > 0:
+            self._timer.start(int(timeout_s * 1000))
+
+    def dismiss(self) -> None:
+        self._timer.stop()
+        self.hide()
+
+    def paintEvent(self, _event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.fillRect(self.rect(), QColor(15, 23, 42, 170))
+
+        width = min(720, max(360, int(self.width() * 0.6)))
+        height = 220
+        box = QRectF(
+            (self.width() - width) / 2, (self.height() - height) / 2, width, height
+        )
+
+        painter.setPen(QPen(self._color, 3))
+        painter.setBrush(QBrush(QColor(COLORS["surface"])))
+        painter.drawRoundedRect(box, 18, 18)
+
+        painter.setPen(self._color)
+        painter.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
+        painter.drawText(
+            QRectF(box.x() + 28, box.y() + 26, box.width() - 56, 36),
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            self._title,
+        )
+
+        painter.setPen(QColor(COLORS["text"]))
+        painter.setFont(QFont("Segoe UI", 12))
+        painter.drawText(
+            QRectF(box.x() + 28, box.y() + 74, box.width() - 56, box.height() - 100),
+            int(
+                Qt.AlignmentFlag.AlignLeft
+                | Qt.AlignmentFlag.AlignTop
+                | Qt.TextFlag.TextWordWrap
+            ),
             self._text,
         )
         painter.end()

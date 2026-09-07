@@ -168,6 +168,12 @@ yupqa; biznes-mantiq service'da.
   xodim JWT'si ("kim"), `X-Device-ID` ("qaysi kompyuter", **kredensial emas**,
   imzo yo'q), opaque sessiya tokeni ("qaysi sessiya", Redis'da, JWT emas —
   chetlashtirish o'sha soniyada kuchga kirishi uchun).
+* **WebSocket'da ikki xil qoida.** `MonitorConsumer` (brauzer) tokenni
+  query parametrida oladi — brauzer API'si header qo'shishga imkon
+  bermaydi. `ClientConsumer` (PyQt6) esa avval `X-Proctoring-Session`
+  header'ini o'qiydi va faqat u bo'lmasa query'ga tushadi: URL'dagi
+  token nginx access log'ida qoladi, `QWebSocket` esa header qo'ya
+  oladi. Query yo'li eski client'lar uchun saqlangan.
 * Ruxsatlar — `HasRolePermission` (view'da `required_permission = "sessions.view"`)
   + `RegionScopedPermission` (obyekt darajasida IDOR'ga qarshi ikkinchi qatlam;
   asosiy filtrlash har bir viewset'ning `get_queryset()` ida).

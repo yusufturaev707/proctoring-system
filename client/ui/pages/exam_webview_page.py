@@ -43,11 +43,12 @@ from config import PERIODIC_FACE_INTERVAL_MS
 from services.app_state import AppState
 from services.camera_worker import CameraWorker, retire_camera
 from services.monitoring import SessionMonitor
+from services.realtime import ProctorChannel
 from services.repositories import ProctoringRepository
 from services.screen_capture import ScreenshotService
 from services.workers import ApiWorker, WorkerHolder
 from ui.styles import COLORS, badge_style
-from ui.widgets.indicators import BusyOverlay, MessageBar
+from ui.widgets.indicators import BusyOverlay, MessageBar, WarningOverlay
 
 log = logging.getLogger(__name__)
 
@@ -128,6 +129,15 @@ class ExamWebViewPage(QWidget):
         self._screenshots = ScreenshotService(repo, parent=self)
         self._screenshots.sent.connect(self._on_screenshot_sent)
         self._screenshots.failed.connect(self._on_screenshot_failed)
+
+        # Proktor buyruqlari. Bu TEZLIK qatlami: u uzilsa ham imtihon
+        # to'xtamaydi va sessiyaning yakunlangani heartbeat orqali
+        # baribir bilinadi (`services/realtime.py` docstring'iga qarang).
+        self._channel = ProctorChannel(parent=self)
+        self._channel.online.connect(self._on_channel_state)
+        self._channel.warning.connect(self._on_proctor_warning)
+        self._channel.terminated.connect(self._on_proctor_terminate)
+        self._channel.resumed.connect(self._on_proctor_resume)
 
         self._camera: Optional[CameraWorker] = None
         self._last_embedding = None
@@ -210,10 +220,12 @@ class ExamWebViewPage(QWidget):
         root.addWidget(self.web_view, 1)
 
         self.overlay = BusyOverlay(self)
+        self.warning_overlay = WarningOverlay(self)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self.overlay.setGeometry(self.rect())
+        self.warning_overlay.setGeometry(self.rect())
 
     # ------------------------------------------------------------------
     # Ishga tushirish
@@ -229,6 +241,9 @@ class ExamWebViewPage(QWidget):
         # olinayotgan deb o'ylardi.
         self.shot_badge.setText("Skrinshot: -")
         self.shot_badge.setStyleSheet(badge_style("muted"))
+        # Oldingi talabgorga qaratilgan ogohlantirish keyingisining
+        # ekranida qolib ketmasligi kerak.
+        self.warning_overlay.dismiss()
 
         policy = access.get("webview_policy") or {}
         self._configure_profile(policy)
@@ -240,6 +255,9 @@ class ExamWebViewPage(QWidget):
         # Sozlama handshake'dan keladi: interval, sifat, kenglik va
         # dedup chegarasi imtihonga biriktirilgan profilga bog'liq.
         self._screenshots.start(self._state.config)
+
+        session = self._state.session
+        self._channel.start(session.token if session else "")
 
     def _configure_profile(self, policy: dict) -> None:
         """
@@ -403,6 +421,62 @@ class ExamWebViewPage(QWidget):
         self.shot_badge.setStyleSheet(badge_style("error"))
         log.info("Skrinshot xatosi: %s", message)
 
+    # ------------------------------------------------------------------
+    # Proktor buyruqlari (WebSocket)
+    # ------------------------------------------------------------------
+    def _on_channel_state(self, online: bool) -> None:
+        """
+        Kanal holati OPERATORGA ko'rsatilmaydi.
+
+        `network_badge` tarmoq holatini bildiradi va u heartbeat
+        natijasiga tayanadi - haqiqiy kafolat o'sha yerda. WebSocket
+        uzilishi esa ko'pincha o'tkinchi (proksi idle timeout) va uni
+        ekranga chiqarish operatorni bekorga tashvishga soladi.
+        """
+        log.info("Proktor kanali: %s", "ulandi" if online else "uzildi")
+
+    def _on_proctor_warning(self, message: str, severity: int) -> None:
+        timeout = 5
+        try:
+            timeout = int(
+                ((self._state.config or {}).get("face") or {}).get("warning_timeout", 5)
+            )
+        except (TypeError, ValueError):
+            pass
+        self.warning_overlay.show_warning(message, severity, timeout)
+        # Ogohlantirish hodisa oqimida ham qoladi: proktor uni yuborgani
+        # serverda audit'da bor, lekin talabgorning mashinasi uni
+        # HAQIQATDAN ham ko'rsatgani faqat shu yozuvdan bilinadi.
+        self._monitor.push_event(
+            "proctor_warning",
+            severity=2,
+            payload={"message": message[:500], "shown": True},
+        )
+
+    def _on_proctor_terminate(self, reason: str) -> None:
+        """
+        Proktor sessiyani to'xtatdi - DARHOL.
+
+        Heartbeat ham buni `should_stop` orqali aytadi, lekin keyingi
+        tsiklda (30 s gacha). Chetlashtirilgan talabgor shuncha vaqt
+        test ustida ishlab turishi mumkin emas.
+        """
+        log.warning("Proktor sessiyani to'xtatdi: %s", reason or "-")
+        self.warning_overlay.show_warning(
+            reason or "Sessiya proktor tomonidan to'xtatildi", 4, timeout_s=0
+        )
+        self.stop()
+        self.session_lost.emit("terminated")
+
+    def _on_proctor_resume(self, overtime_minutes: int) -> None:
+        self.warning_overlay.dismiss()
+        self.message.show_message(
+            "Imtihon davom ettirildi (+{} daqiqa)".format(overtime_minutes)
+            if overtime_minutes
+            else "Imtihon davom ettirildi",
+            "success",
+        )
+
     def _on_blocked_host(self, host: str) -> None:
         # Interceptor boshqa thread'dan chaqiriladi - bu yerda faqat
         # buferga yozamiz, UI'ga tegmaymiz.
@@ -467,6 +541,9 @@ class ExamWebViewPage(QWidget):
     def stop(self) -> None:
         """Nazoratni to'xtatadi va WebView'ni tozalaydi."""
         self._face_timer.stop()
+        # Kanal BIRINCHI yopiladi: aks holda sessiya yakunlangach
+        # kelgan buyruq allaqachon to'xtagan sahifani qo'zg'atadi.
+        self._channel.stop()
         # Skrinshot xizmati sessiya tokeni bekor qilinishidan OLDIN
         # to'xtatiladi: u yakunda qolgan kadrlarni va commit'larni
         # yuborishga urinadi, tokensiz esa ular 401 oladi.
