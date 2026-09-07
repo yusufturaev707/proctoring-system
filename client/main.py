@@ -32,7 +32,52 @@ sys.modules.setdefault("insightface.app.mask_renderer", _stub)
 log = setup_logging()
 
 
+def _close_other_apps() -> None:
+    """
+    Imtihon mashinasini tozalab, keyin ishga tushamiz.
+
+    Qt'dan OLDIN chaqiriladi va bu ataylab: o'z oynamiz paydo
+    bo'lgandan keyin yopish talabgorga bir necha soniya davomida
+    boshqa dasturlarni ko'rsatib qo'yardi, ustiga o'z oynamiz
+    yopilayotgan dasturlarning dialoglari ostida qolardi.
+
+    Xato butun dasturni TO'XTATMAYDI: bu tozalash bosqichi, imtihonning
+    sharti emas. Yopilmagan dastur `DeviceWatcher` orqali baribir
+    hodisa sifatida qayd etiladi.
+    """
+    from config import (
+        CLOSE_OTHER_APPS,
+        CLOSE_OTHER_APPS_GRACE_S,
+        CLOSE_OTHER_APPS_KEEP,
+    )
+
+    if not CLOSE_OTHER_APPS:
+        log.info("Boshqa dasturlarni yopish o'chirilgan (CLOSE_OTHER_APPS=0)")
+        return
+
+    from services.app_closer import close_other_apps
+
+    try:
+        report = close_other_apps(
+            keep=CLOSE_OTHER_APPS_KEEP, grace_seconds=CLOSE_OTHER_APPS_GRACE_S
+        )
+    except Exception:
+        log.exception("Dasturlarni yopishda kutilmagan xato")
+        return
+
+    if report["failed"]:
+        # Jimgina o'tib ketmasligi kerak: yopilmagan dastur ekranda
+        # qolgan bo'lishi mumkin va operator buni bilishi kerak.
+        log.error(
+            "Quyidagi dasturlar yopilmadi: %s. Ular administrator "
+            "huquqini talab qilishi mumkin.",
+            ", ".join(report["failed"]),
+        )
+
+
 def main() -> int:
+    _close_other_apps()
+
     from PyQt6.QtCore import Qt
     from PyQt6.QtGui import QFont
     from PyQt6.QtWidgets import QApplication

@@ -147,3 +147,29 @@ FULLSCREEN = _env_bool("FULLSCREEN", True)
 # qolishini va oynani yopa olmasligini kutmaydi. Ikkalasini alohida
 # boshqarish kerak bo'lsa, `KIOSK_MODE` ni ochiq yozing.
 KIOSK_MODE = _env_bool("KIOSK_MODE", FULLSCREEN)
+
+# ── Ishga tushishda boshqa dasturlarni yopish ────────────────────────
+# Imtihon mashinasi toza holatda boshlanishi kerak: ochiq brauzer,
+# messenjer yoki masofaviy boshqaruv oynasi - nazoratdan tashqaridagi
+# kanal. Tafsilotlar `services/app_closer.py` da.
+#
+# Standart qiymati KIOSK_MODE dan olinadi: bu funksiya kiosk rejimining
+# bir qismi va uni alohida yoqishni unutish "himoya bor deb o'ylash"
+# holatini yaratardi.
+#
+# DIQQAT: dev mashinasida buni ochiq `false` qiling. `KIOSK_MODE=true`
+# bo'lgan ishlab chiqish muhitida dastur muharrir va terminalni ham
+# yopadi - saqlanmagan ish yo'qoladi.
+CLOSE_OTHER_APPS = _env_bool("CLOSE_OTHER_APPS", KIOSK_MODE)
+
+# Yopilmaydigan qo'shimcha dasturlar (vergul bilan): antivirus, IT
+# agenti, muassasaning o'z dasturi. Tizim jarayonlari va qobiq
+# allaqachon kodda himoyalangan.
+CLOSE_OTHER_APPS_KEEP = [
+    name.strip().lower()
+    for name in os.getenv("CLOSE_OTHER_APPS_KEEP", "").split(",")
+    if name.strip()
+]
+
+# `WM_CLOSE` dan keyin dasturga saqlash uchun beriladigan vaqt.
+CLOSE_OTHER_APPS_GRACE_S = _env_float("CLOSE_OTHER_APPS_GRACE_S", 3.0)

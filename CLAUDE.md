@@ -215,6 +215,18 @@ yupqa; biznes-mantiq service'da.
   `false` bo'lsa ro'yxat bo'shligi "tekshiruv o'chirilgan" degani va
   hamma kiraveradi — ya'ni yagona yozuvni nofaol qilish yoki o'chirish
   butun cheklovni JIMGINA olib tashlaydi. Admin panelga ta'sir qilmaydi.
+* **Ishga tushishda boshqa dasturlar yopiladi** (`CLOSE_OTHER_APPS`,
+  standart = `KIOSK_MODE`; `client/services/app_closer.py`). Yopiladigan
+  narsa — **jarayonlar emas, DASTURLAR**: mezon "ko'rinadigan, sarlavhali,
+  yuqori darajali oynasi bor va joriy foydalanuvchi nomidan ishlaydi".
+  Bu farq hal qiluvchi — tipik mashinada 321 jarayondan atigi ~10 tasi
+  bu ta'rifga tushadi, qolgani tizim xizmatlari va ularni o'ldirish
+  mashinani ishga tushmaydigan holga keltiradi. Ustiga to'rt qatlam:
+  o'z jarayonlar daraxti (QtWebEngine bolalari ham), himoyalangan
+  nomlar, boshqa hisob ostidagilar va avval `WM_CLOSE`, keyin
+  majburiy o'ldirish. **Dev mashinasida `CLOSE_OTHER_APPS=false`
+  qo'ying** — `KIOSK_MODE=true` bo'lsa u muharrir va terminalni ham
+  yopadi.
 * **Kiosk rejimi** (`KIOSK_MODE`, standart = `FULLSCREEN`): ramkasiz +
   doim ustda oyna, `services/lockdown.py` orqali global tezkor tugma
   bloklash va parolsiz yopilmaslik. Tugmalar ro'yxati serverdan
