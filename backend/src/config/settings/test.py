@@ -9,7 +9,19 @@ from .base import REST_FRAMEWORK
 DEBUG = False
 ALLOWED_HOSTS = ["*"]
 
+# `python manage.py test` ni argumentsiz ishlatish uchun
+# (sabab `config/test_runner.py` da).
+TEST_RUNNER = "config.test_runner.ProctoringTestRunner"
+
 PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
+
+# Testlar xato yo'llarini ATAYLAB bosib o'tadi (buzilgan IntegrityError,
+# xavfli fayl yo'li, tashlab yuborilgan hodisa) va ularning har biri
+# `WARNING`/`ERROR` yozadi. Bu yozuvlar test chiqishini to'ldirib,
+# HAQIQIY nosozlikni ko'rinmas qiladi. Yozuv kerak bo'lsa testda
+# `assertLogs` ishlatiladi — u bu sozlamadan qat'i nazar ishlaydi.
+LOGGING["root"]["level"] = "CRITICAL"  # noqa: F405
+LOGGING["loggers"]["apps"]["level"] = "CRITICAL"  # noqa: F405
 
 CACHES = {
     "default": {
@@ -20,6 +32,18 @@ CACHES = {
 SESSION_ENGINE = "django.contrib.sessions.backends.db"
 
 CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}
+
+# Sessiya holati va event stream uchun ALOHIDA Redis bazasi.
+#
+# Xom Redis'ni (cache'dan farqli) soxtalashtirib bo'lmaydi: kod
+# `XADD`, `XAUTOCLAIM` va Lua skriptlariga tayanadi. Shuning uchun
+# testlar haqiqiy Redis'da ishlaydi, LEKIN alohida bazada: `TestCase`
+# DB tranzaksiyasini qaytaradi, Redis esa qaytarmaydi va testlar dev
+# muhitidagi jonli sessiyalarni o'chirib yuborardi.
+#
+# 15-baza faqat testlar uchun; `RedisStateMixin` uni har testdan oldin
+# tozalaydi.
+REDIS_STATE_URL = f"{REDIS_URL}/15"  # noqa: F405
 
 CELERY_TASK_ALWAYS_EAGER = True
 CELERY_TASK_EAGER_PROPAGATES = True

@@ -43,8 +43,25 @@ throttling o'chirilgan).
 
 ### Test
 
-Django `TestCase` to'plami hozircha **yo'q**. Mavjud yagona tekshiruv —
-end-to-end smoke test:
+```bash
+cd backend
+python manage.py test --settings=config.settings.test          # hammasi
+python manage.py test apps.proctoring --settings=config.settings.test
+```
+
+Label berilmasa `apps` paketi qidiriladi (`config/test_runner.py`) —
+standart `DiscoverRunner` `backend/` dan qidirib hech nima topmasdi va
+buni "testlar o'tdi" deb o'qish oson edi.
+
+**PostgreSQL kerak** (test bazasi migratsiyalardan yaratiladi).
+**Redis ixtiyoriy**: unga tayanadigan testlar u yo'q bo'lsa
+`skip` qilinadi (`apps/common/tests/utils.py:RedisStateMixin`). Test
+Redis'i **15-baza** — dev holatiga (2-baza) tegilmaydi.
+
+Testlar joylashuvi: `apps/<app>/tests/test_*.py`. Ma'lumot yasovchilar
+`apps/proctoring/tests/factories.py` da.
+
+Alohida end-to-end smoke test ham bor:
 
 ```bash
 cd backend && python scripts/smoke_test.py
@@ -53,8 +70,6 @@ cd backend && python scripts/smoke_test.py
 **DIQQAT:** u boshida barcha `ExamSession` yozuvlarini va `sess:*` Redis
 kalitlarini o'chiradi — faqat dev bazasida ishlating. Faylda absolyut yo'l
 (`C:\Projects\...`) hardcode qilingan.
-
-Yangi testlar yozilsa: `python manage.py test --settings=config.settings.test`.
 
 `npm run lint` script'i bor, lekin `frontend/` da ESLint konfiguratsiyasi
 YO'Q — konfiguratsiya qo'shilmaguncha u ishlamaydi.
@@ -276,6 +291,14 @@ yarating; `code` React tomonda tarjima kaliti sifatida ishlatiladi.
   o'chirmaydi, `deleted_at` qo'yadi; ro'yxatlarda `.alive()` ishlatiladi.
 * **Redis `maxmemory-policy` `noeviction` bo'lishi kerak** — `allkeys-lru`
   da faol sessiya tokenlari imtihon o'rtasida o'chib ketadi.
+* **(test) client yuzasida `force_authenticate` ISHLATMANG** — DRF uni
+  ko'rganda view'ning butun `authentication_classes` ro'yxatini
+  `ForcedAuthentication` bilan almashtiradi. `DeviceResolution` va
+  `SessionTokenAuthentication` esa yon ta'sirli: ular `None` qaytarib
+  faqat `request.device` / `request.exam_session` ni to'ldiradi. Ular
+  ishga tushmasa, to'g'ri sessiya tokeni bilan kelgan so'rov ham
+  `session_not_found` oladi. Haqiqiy JWT yuboring
+  (`tests/test_client_api.py:bearer`).
 * **(client) `pyqtSignal` ni `event` deb nomlamang.** `QObject.event()` —
   Qt'ning markaziy virtual metodi; uni signal bilan bosib qo'yish
   obyektga birinchi bola qo'shilishi bilan (masalan `parent=self` bilan
