@@ -17,8 +17,9 @@ from typing import Optional
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
-from config import EVENT_BATCH_MAX, EVENT_FLUSH_INTERVAL_MS, HEARTBEAT_INTERVAL_MS
+from config import EVENT_BATCH_MAX
 from core.errors import ClientError
+from services import runtime_settings
 from services.repositories import ProctoringRepository
 from services.workers import ApiWorker, WorkerHolder
 
@@ -49,16 +50,34 @@ class SessionMonitor(QObject):
         # `deque(maxlen=...)` - tarmoq uzoq uzilib qolsa xotira cheksiz
         # o'smaydi: eng eski hodisalar tushib qoladi. Yo'qotish yomon,
         # lekin client'ning xotira yetishmasligidan qulashi battar.
-        self._queue: deque = deque(maxlen=5000)
+        #
+        # Hajm `start()` da imtihon profilidan qayta o'rnatiladi
+        # (`network.offline_buffer_size`); bu yerda - `.env` zaxirasi.
+        self._queue: deque = deque(
+            maxlen=runtime_settings.fallback("network.offline_buffer_size")
+        )
         self._online = True
         self._active = False
+        #: Client bajargan yuz solishtirishlari soni (JAMI).
+        #
+        # Serverga faqat MUVAFFAQIYATSIZ tekshiruvlar yuboriladi
+        # (solishtirish clientda), ya'ni "nechta tekshiruv bo'ldi"
+        # degan savolga faqat client javob bera oladi. Qiymat
+        # heartbeat bilan ketadi va Redis'dagi `face_checks` ga
+        # YOZILADI - egasi bitta bo'lgani uchun ikki marta sanash
+        # ham, poyga ham yo'q.
+        self._face_checks = 0
 
         self._heartbeat_timer = QTimer(self)
-        self._heartbeat_timer.setInterval(HEARTBEAT_INTERVAL_MS)
+        self._heartbeat_timer.setInterval(
+            runtime_settings.fallback("network.heartbeat_interval")
+        )
         self._heartbeat_timer.timeout.connect(self._send_heartbeat)
 
         self._flush_timer = QTimer(self)
-        self._flush_timer.setInterval(EVENT_FLUSH_INTERVAL_MS)
+        self._flush_timer.setInterval(
+            runtime_settings.fallback("network.event_batch_interval")
+        )
         self._flush_timer.timeout.connect(self._flush_events)
 
     # ------------------------------------------------------------------
@@ -70,16 +89,41 @@ class SessionMonitor(QObject):
     def pending_events(self) -> int:
         return len(self._queue)
 
-    def start(self) -> None:
+    def start(self, config: Optional[dict] = None) -> None:
+        """
+        `config` - IMTIHON PROFILI (`AppState.config`).
+
+        Oraliqlar va bufer hajmi SHU YERDA o'qiladi, konstruktorda emas:
+        sahifa bitta, imtihonlar esa ko'p va har birining profili boshqa
+        bo'lishi mumkin. Ilgari client bu uchta qiymatni umuman
+        serverdan olmasdi - panelda "Heartbeat intervali" bor edi,
+        lekin hamma mashina `.env` dagi 30 s bilan ishlardi.
+        """
         if self._active:
             return
+        self._heartbeat_timer.setInterval(
+            runtime_settings.get(config, "network.heartbeat_interval")
+        )
+        self._flush_timer.setInterval(
+            runtime_settings.get(config, "network.event_batch_interval")
+        )
+        size = runtime_settings.get(config, "network.offline_buffer_size")
+        if size != self._queue.maxlen:
+            # Sessiyadan oldin navbatga tushgan hodisalar SAQLANADI
+            # (yangi deque eskisidan to'ldiriladi) - hajm o'zgargani
+            # uchun dalil yo'qolmasligi kerak.
+            self._queue = deque(self._queue, maxlen=size)
         self._active = True
         self._heartbeat_timer.start()
         self._flush_timer.start()
         # Birinchi heartbeat darhol: sessiya ochilgani dashboardda
         # 30 soniya kutmasdan ko'rinishi kerak.
         self._send_heartbeat()
-        log.info("Sessiya nazorati boshlandi")
+        log.info(
+            "Sessiya nazorati boshlandi (heartbeat %s ms, hodisalar %s ms, bufer %s)",
+            self._heartbeat_timer.interval(), self._flush_timer.interval(),
+            self._queue.maxlen,
+        )
 
     def stop(self) -> None:
         if not self._active:
@@ -94,6 +138,13 @@ class SessionMonitor(QObject):
         log.info("Sessiya nazorati to'xtadi")
 
     # ------------------------------------------------------------------
+    def set_face_checks(self, total: int) -> None:
+        """Yuz tekshiruvlari sonini yangilaydi (keyingi heartbeat bilan ketadi)."""
+        try:
+            self._face_checks = max(0, int(total))
+        except (TypeError, ValueError):
+            pass
+
     def push_event(self, event_type: str, *, severity: int = 1, payload: Optional[dict] = None) -> None:
         """
         Hodisani buferga qo'yadi.
@@ -119,6 +170,7 @@ class SessionMonitor(QObject):
         metrics = {
             "network_ok": self._online,
             "queued_events": len(self._queue),
+            "face_checks": self._face_checks,
         }
         metrics.update(self._system_metrics())
         worker = ApiWorker(self._repo.heartbeat, parent=self, **metrics)

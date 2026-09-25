@@ -5,6 +5,8 @@ import { examTypes as examTypesApi } from '../../api/endpoints'
 export default function ExamTypesPage() {
   return (
     <ResourcePage
+      // Barcha viloyatlar uchun bitta yozuv — o'zgartirish respublika darajasida.
+      shared
       title="Imtihon turlari"
       subtitle="Imtihonlarni guruhlaydigan ma’lumotnoma"
       queryKey="exam-types"

@@ -62,6 +62,11 @@ server {
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
 
+        # Panel (`/ws/monitor/`) xodim JWT'sini QUERY'da yuboradi — brauzer
+        # WebSocket'iga sarlavha qo'shib bo'lmaydi. Access log'da u ochiq
+        # qolardi, shuning uchun bu location log yozmaydi.
+        access_log off;
+
         # Imtihon 3-4 soat davom etadi — ulanish uzilmasligi kerak.
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
@@ -98,7 +103,13 @@ server {
         proxy_read_timeout 30s;
     }
 
-    # ---- Skrinshot fayllari (X-Accel-Redirect) ----
+    # ---- Saqlangan fayllar (X-Accel-Redirect) ----
+    #
+    # Ildizda UCHTA shox bor va ularning hammasi shu location orqali
+    # beriladi: skrinshotlar, `evidence/` (hodisa dalili) va
+    # `faceid/` (yuz tekshiruvi kadrlari). Uchalasi ham bitta storage
+    # interfeysidan o'tadi, ya'ni ikkinchi `internal` location kerak
+    # emas - va aynan shuning uchun bu qoidani bo'lib tashlamang.
     #
     # `internal` — bu location'ga TASHQARIDAN kirib bo'lmaydi. Unga
     # faqat Django `X-Accel-Redirect: /protected-screenshots/...`
@@ -110,6 +121,7 @@ server {
     # so'rovi katalogdan tashqariga chiqadi.
     location /protected-screenshots/ {
         internal;
+        # `.env` dagi SCREENSHOT_ROOT bilan AYNAN bir xil katalog (oxirida `/`).
         alias /srv/proctoring/storage/screenshots/;
 
         # Content-Type'ni Django beradi (haqiqiy tur baytlardan
@@ -133,12 +145,33 @@ server {
         include /etc/nginx/proxy_common.conf;
     }
 
+    # ---- IP kamera jonli ko'rish (MJPEG) ----
+    # Javob uzun va uzluksiz: buferlash kadrlarni to'plab, soniyalik
+    # bo'laklarda uzatardi (backend `X-Accel-Buffering: no` ham yuboradi).
+    location ~ ^/api/v1/cameras/\d+/live/$ {
+        proxy_pass http://proctoring_http;
+        include /etc/nginx/proxy_common.conf;
+        proxy_buffering off;
+        proxy_read_timeout 90s;
+    }
+
     # ---- Qolgan API ----
     location /api/ {
         proxy_pass http://proctoring_http;
         include /etc/nginx/proxy_common.conf;
     }
 
+    # ---- Salomatlik (monitoring) ----
+    # Ular `/api/` ostida emas — alohida location bo'lmasa `location /`
+    # (SPA) ularga `index.html` bilan 200 qaytarardi va monitoring DB/Redis
+    # yiqilganda ham "sog'lom" ko'rardi.
+    location ~ ^/(healthz|readyz)/$ {
+        access_log off;
+        proxy_pass http://proctoring_http;
+        include /etc/nginx/proxy_common.conf;
+    }
+
+    # `ADMIN_URL` (.env) o'zgartirilsa — bu yo'l ham o'shanga.
     location /admin/ {
         # Admin panel faqat ichki tarmoqdan.
         allow 10.0.0.0/8;
@@ -154,9 +187,20 @@ server {
     }
 
     # ---- React admin (SPA) ----
+    # Vite build'i fayl nomiga xesh qo'shadi — ular abadiy keshlanadi.
+    location /assets/ {
+        root /srv/proctoring/frontend/dist;
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+    }
+
     location / {
         root /srv/proctoring/frontend/dist;
         try_files $uri $uri/ /index.html;
+        # index.html KESHLANMAYDI: aks holda yangi deploydan keyin brauzer
+        # eski index.html dan endi mavjud bo'lmagan xeshli JS'ni so'rardi.
+        add_header Cache-Control "no-cache" always;
     }
 }
 

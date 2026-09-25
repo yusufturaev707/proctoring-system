@@ -7,13 +7,23 @@ Oqim:
     3. issue_exam_access()   bir martalik tashqi token + WebView konfiguratsiyasi
     4. ... monitoring ...
     5. finish_session() / terminate_session()
+
+YUZ SOLISHTIRISHI BU YERDA EMAS. Ikkala embedding ham clientda
+bo'ladi (etalon - pasport rasmidan yoki kirishdagi kadrdan, jonli
+vektor - hozirgi kadrdan) va cosine o'sha yerda hisoblanadi. Serverga
+BALL keladi, chegara esa imtihonga biriktirilgan sozlamadan olinadi
+(`Setting.faceid_min_score_student` / `faceid_min_score_exam`).
+
+Server nima qiladi: chegarani qo'llaydi, natijani `FaceVerificationLog`
+ga yozadi, jonli kadrni saqlaydi, hisoblagichni yuritadi va
+chetlashtirish qarorini chiqaradi. Ya'ni "ball qanday chiqdi" client
+tomonda, "ball nima bilan tugaydi" server tomonda.
 """
 
 from __future__ import annotations
 
 import logging
-import secrets
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from django.conf import settings
 from django.db import transaction
@@ -69,7 +79,9 @@ def _parse_dt(value):
 # --------------------------------------------------------------------------
 # 1-qadam: JSHSHIR bo'yicha talabgorni aniqlash
 # --------------------------------------------------------------------------
-def lookup_candidate(*, pinfl: str, exam, device=None, zone=None, ip_address: str = "") -> dict:
+def lookup_candidate(
+    *, pinfl: str, exam, device=None, zone=None, ip_address: str = "", mac_address: str = ""
+) -> dict:
     """
     Tashqi platformadan talabgorni oladi va `Candidate` yozuvini yangilaydi.
 
@@ -77,28 +89,39 @@ def lookup_candidate(*, pinfl: str, exam, device=None, zone=None, ip_address: st
     Sabab: FaceID'dan o'tmagan talabgor uchun DB'da sessiya qatorlari
     yaratish keraksiz yozish va noto'g'ri statistika demak.
 
-    Eng birinchi tekshiruv — kirish oynasi. Tashqi API'ga (va JSHSHIR
-    keshiga) oyna yopiq bo'lsa umuman tegilmaydi.
+    Eng birinchi tekshiruv — kirish oynasi. Tashqi API'ga oyna yopiq
+    bo'lsa umuman tegilmaydi.
+
+    SO'ROVNI SERVER YUBORADI. Client platformaga hech qachon o'zi
+    murojaat qilmaydi (`integrations/exam_site.py` docstring'i):
+    manzil (`Exam.site_url`) va kredensial
+    (`Exam.site_header_encrypted`) shu yerda qoladi, client esa
+    faqat tayyor natijani oladi.
     """
-    from apps.integrations.exam_platform import get_client
+    from apps.exams import services as exam_services
+    from apps.integrations import exam_site
+
+    from apps.exams import bookings
 
     schedule = _require_open_schedule(exam, zone)
 
     pinfl = normalize_pinfl(pinfl)
-    data = get_client().lookup_candidate(pinfl, exam.external_code or exam.key)
-    if not data.get("eligible"):
-        raise CandidateNotEligible()
 
-    # Platforma sessiya tokenini bermasa, WebView'ni ochib bo'lmaydi —
-    # buni FaceID'dan keyin emas, HOZIR aytgan ma'qul.
-    if not data.get("session_token"):
-        logger.error(
-            "ntest talabgorga sessiya tokeni bermadi: pinfl=%s exam=%s",
-            mask_pinfl(pinfl), exam.pk,
-        )
-        raise CandidateNotEligible(
-            "Tashqi platforma bu talabgor uchun sessiya ochmadi"
-        )
+    # KOMPYUTER BRONI — TASHQI PLATFORMADAN OLDIN. Tekshiruv mahalliy va
+    # arzon; talabgor noto'g'ri stolda bo'lsa platformaga so'rov
+    # yuborishning ma'nosi yo'q (u yerda ham limit bor). Xato javobida
+    # qaysi kompyuterga borish kerakligi TUZILGAN holda keladi
+    # (`WrongComputer.extra`), client uni matndan ajratmaydi.
+    seat = bookings.resolve_candidate_seat(
+        schedule=schedule, pinfl=pinfl, device=device, mac_address=mac_address
+    )
+    # `CandidateNotFound` / `CandidateNotEligible` shu yerdan ko'tariladi
+    # va ular client uchun BOSHQA-BOSHQA holat (`exam_site._normalize`).
+    data = exam_site.check_candidate(
+        site_url=exam.site_url,
+        site_header=exam_services.get_site_header(exam),
+        pinfl=pinfl,
+    )
 
     # Faol sessiya allaqachon bormi (boshqa kompyuterda)?
     existing = (
@@ -125,21 +148,47 @@ def lookup_candidate(*, pinfl: str, exam, device=None, zone=None, ip_address: st
             "first_name": data.get("first_name", ""),
             "middle_name": data.get("middle_name", ""),
             "external_candidate_id": data.get("external_id", ""),
-            # Tashqi platformaning O'Z sessiyasi — WebView shu bilan ochiladi.
-            "external_session_token": data.get("session_token", ""),
-            "external_status": data.get("status", ""),
-            "external_access_from": data.get("access_from"),
-            "external_access_until": data.get("access_until"),
+            "external_abitur_id": data.get("abitur_id", ""),
+            # Platforma bergan test havolasi — WebView AYNAN shuni
+            # ochadi. Havola SHU YERDA olinadi va sessiyaga
+            # muzlatiladi: uni WebView ochilayotganda qayta so'rash
+            # platformada yangi havola yaratib, eskisini bekor
+            # qilishi mumkin.
+            "external_test_link": data.get("test_link", ""),
+            # Platforma ruxsat bergani uchun status "allowed".
+            #
+            # `is_finished` BU YERGA TUSHMAYDI va bu ataylab: uni
+            # `finished` deb yozish `_CLOSED_PLATFORM_STATUSES` orqali
+            # WebView'ni to'sardi — holbuki platformaning O'Z
+            # namunasida `is_finished: 1` bo'lgani holda `status: true`
+            # va "Testga ruxsat!" qaytadi. Ya'ni bu maydon "test
+            # tugagan" degani EMAS va uni to'siq sifatida talqin
+            # qilish talabgorni imtihonga qo'ymasdi. Qiymatning o'zi
+            # `meta` da dalil sifatida saqlanadi.
+            "external_status": "allowed",
+            "platform_is_finished": bool(data.get("is_finished")),
+            "platform_message": data.get("message", ""),
+            # Test davomiyligi (daqiqa). U sessiyaga MUZLATILADI:
+            # platforma qiymatni keyin o'zgartirsa ham, bayonnomada
+            # talabgorga AYNAN qancha vaqt berilgani qolishi kerak.
+            "duration_minutes": int(data.get("duration_minutes") or 0),
             "exam_id": exam.pk,
             # Qaysi seansga tegishli ekani AYNAN SHU YERDA aniqlangan,
             # aks holda `ExamSession.schedule` NULL qolardi.
             "schedule_id": getattr(schedule, "pk", None),
             "device_id": getattr(device, "pk", None),
             "ip": ip_address,
+            # Bron bo'yicha joy — sessiyaga MUZLATILADI: keyin talabgor
+            # boshqa joyga ko'chirilsa ham bayonnomada qayerda
+            # o'tirgani qoladi.
+            "seat": seat,
         },
     )
 
-    full_name = " ".join(
+    # Platforma to'liq ismni bitta maydonda bergan bo'lsa (`fio`), u
+    # ustun: bo'laklardan yig'ish tartibni buzishi mumkin (ba'zi
+    # platformalarda "Ism Familiya", ba'zilarida teskari).
+    full_name = data.get("full_name", "") or " ".join(
         part
         for part in (
             data.get("last_name", ""), data.get("first_name", ""), data.get("middle_name", "")
@@ -161,6 +210,7 @@ def lookup_candidate(*, pinfl: str, exam, device=None, zone=None, ip_address: st
             "middle_name": data.get("middle_name", ""),
             "masked_pinfl": mask_pinfl(pinfl),
             "external_candidate_id": data.get("external_id", ""),
+            "abitur_id": data.get("abitur_id", ""),
             "photo_key": "",
             # `photo_url` — rasm tashqi manzilda bo'lsa; `photo_base64` —
             # bevosita kelgan bo'lsa. Client qaysi biri bo'lsa shuni oladi.
@@ -172,13 +222,30 @@ def lookup_candidate(*, pinfl: str, exam, device=None, zone=None, ip_address: st
         # bo'yicha tasdiq butunlay operator zimmasida qoladi.
         "has_reference_face": bool(reference_photo or data.get("photo_url")),
         "challenge_expires_in": settings.PROCTORING["PENDING_SESSION_TTL"],
-        # Platforma bergan kirish oynasi va test holati — client buni
-        # ekranda ko'rsatishi va sanoqni shunga qarab yuritishi mumkin.
+        # Bron bo'yicha joy (`None` — bu sessiyada bron yuritilmaydi).
+        # Client uni natija kartasida "joy tasdiqlandi" deb ko'rsatadi.
+        "seat": seat,
+        # Platformaning O'Z javobi. `message` — AYNAN u aytgan matn
+        # ("Testga ruxsat!") va client uni o'zgartirmasdan ko'rsatadi:
+        # sabab platformada, biz esa uni faqat yetkazamiz.
+        #
+        # `test_link` bu yerda YO'Q va bo'lmasligi kerak: u WebView
+        # ochilayotganda, shaxs tasdiqlangandan keyin beriladi
+        # (`exam/access/`). Uni JSHSHIR tekshiruvida berish
+        # FaceID'ni butunlay chetlab o'tish imkonini berardi.
         "platform": {
-            "status": data.get("status", ""),
-            "access_from": data.get("access_from"),
-            "access_until": data.get("access_until"),
+            "message": data.get("message", ""),
+            "is_finished": bool(data.get("is_finished")),
+            "status": "finished" if data.get("is_finished") else "allowed",
         },
+        # Test davomiyligi DAQIQADA va shu birlikda ketadi: "3 soat"
+        # ko'rinishi TAQDIMOT qarori va u client tomonda qabul
+        # qilinadi (`Candidate.duration_label`). Serverda formatlash
+        # matnni tarjima qilib bo'lmaydigan holga keltirardi.
+        #
+        # 0 — "platforma aytmadi": client bunda maydonni umuman
+        # ko'rsatmaydi ("0 daqiqa" yozuvi yolg'on bo'lardi).
+        "duration_minutes": int(data.get("duration_minutes") or 0),
         # Client imtihon tugash vaqtini bilishi kerak (sanoq va avtomatik yopish).
         "schedule": (
             {
@@ -226,6 +293,38 @@ def _require_open_schedule(exam, zone):
     raise ExamNotOpen("Bu imtihon uchun rejalashtirilgan seans topilmadi")
 
 
+def _require_pending_device(pending: dict | None, device) -> dict:
+    """
+    Challenge'ni FAQAT uni olgan qurilma ishlata oladi.
+
+    JSHSHIR tekshiruvidagi hamma qaror (kompyuter broni, "boshqa
+    kompyuterda faol sessiya bor") SHU qurilma uchun chiqarilgan.
+    Ilgari `device_id` pending'ga yozilar, lekin hech qayerda
+    solishtirilmasdi: bron tekshiruvi faqat "JSHSHIR to'g'ri
+    mashinada kiritildi" ni isbotlardi, sessiya esa challenge'ni
+    bilgan istalgan mashinada ochilishi mumkin edi.
+
+    Rad javobi "muddati tugagan" bilan BIR XIL (`SessionNotFound`):
+    "challenge bor, lekin boshqa qurilmaniki" degan alohida javob
+    tirik challenge'larni sanab chiqishga yo'l ochardi.
+
+    Pending'da qurilma yo'q bo'lsa (`REQUIRE_DEVICE_ID=false`, dev)
+    tekshiruv o'tkazib yuboriladi — solishtiradigan narsa yo'q.
+    """
+    if pending is None:
+        raise SessionNotFound("Tekshiruv muddati tugagan, qaytadan urinib ko'ring")
+
+    expected = pending.get("device_id")
+    actual = getattr(device, "pk", None)
+    if expected is not None and actual != expected:
+        logger.warning(
+            "Challenge begona qurilmadan ishlatildi: kutilgan=%s kelgan=%s jshshir=%s",
+            expected, actual, mask_pinfl(pending.get("pinfl", "")),
+        )
+        raise SessionNotFound("Tekshiruv muddati tugagan, qaytadan urinib ko'ring")
+    return pending
+
+
 # --------------------------------------------------------------------------
 # 2-qadam: kirishdagi yuz tekshiruvi -> sessiya yaratish
 # --------------------------------------------------------------------------
@@ -235,6 +334,8 @@ def verify_initial_face(
     challenge: str,
     embedding: list[float] | None,
     score: int | None,
+    image: bytes | None = None,
+    reference_image: bytes | None = None,
     image_key: str = "",
     faces_detected: int = 1,
     device=None,
@@ -244,20 +345,36 @@ def verify_initial_face(
     """
     Sessiyani yaratadi va yuz etalonini qayd etadi.
 
-    Etalon SESSIYAGA tegishli, shuning uchun bu bosqich har doim
-    ro'yxatga olish (enrollment) — solishtiriladigan avvalgi vektor
-    yo'q. Demak bu yerda shaxs TASDIQLANMAYDI:
+    SOLISHTIRISH CLIENTDA bo'lib bo'lgan: pasport rasmidan olingan
+    etalon ham, jonli kadr ham o'sha yerda edi. Bu yerga uning
+    NATIJASI keladi — ball va o'sha paytdagi kadr.
+
+    Ball CHEGARA bilan solishtiriladi (`faceid_min_score_student`,
+    imtihonga biriktirilgan sozlamadan). Bu SHARTNOMA tekshiruvi,
+    xavfsizlik chegarasi emas: ballni client hisoblaydi va uni
+    o'zgartirish mumkin. Haqiqiy chegara avvalgidek operatorning
+    hujjat bo'yicha tasdig'i:
 
         FaceID kafolati    : "sessiya davomida odam almashtirilmadi"
         Shaxs kafolati     : operatorning hujjat bo'yicha tekshiruvi
 
-    Clientdan kelgan `score` ataylab E'TIBORGA OLINMAYDI — solishtirish
-    uchun etalon bo'lmagach, u faqat client aytgan raqam bo'lardi va
-    `score: 100` yuborish orqali tekshiruvni chetlab o'tish mumkin edi.
+    Etalon rasm bo'lmasa (platforma bermagan) client ball YUBORMAYDI —
+    enrollment rejimi. O'shanda chegara ham qo'llanmaydi:
+    solishtiriladigan narsaning o'zi yo'q.
+
+    Jonli kadr DALIL sifatida saqlanadi va u TO'SIQ EMAS: rasmni
+    saqlab bo'lmasa sessiya baribir ochiladi (sabab log'da qoladi),
+    aks holda buzilgan JPEG imtihonni to'xtatardi.
     """
     from apps.common.utils.vectors import normalize
     from apps.controls import services as controls_services
+    from apps.proctoring.services import face_images
 
+    # Avval O'QILADI va qurilma tekshiriladi, keyin sarflanadi: begona
+    # qurilmadan kelgan so'rov haqiqiy egasining challenge'ini yo'q
+    # qilib qo'ymasligi kerak. Sarflash baribir atomik (GET+DEL bitta
+    # MULTI'da) — ikki parallel so'rovdan faqat bittasi sessiya ochadi.
+    _require_pending_device(session_state.peek_pending(challenge), device)
     pending = session_state.consume_pending(challenge)
     if pending is None:
         raise SessionNotFound("Tekshiruv muddati tugagan, qaytadan urinib ko'ring")
@@ -268,6 +385,7 @@ def verify_initial_face(
     # Sozlama AYNAN SHU YERDA olinadi — imtihon endigina ma'lum bo'ldi.
     config = controls_services.get_client_config(exam)
     face_required = bool(config["face"]["enabled_student"])
+    threshold = int(config["face"]["min_score_initial"])
 
     # Etalonni olish uchun aynan bitta yuz ko'rinishi shart.
     if face_required and (not embedding or faces_detected != 1):
@@ -281,6 +399,20 @@ def verify_initial_face(
             f"(topilgani: {faces_detected})"
         )
 
+    # Chegaradan past ball bilan kelgan client SHARTNOMANI buzgan:
+    # bunday urinish `face/attempt/` ga borishi kerak edi. Sessiya
+    # ochilmaydi — aks holda "mos kelmadi" yozuvi bilan ochilgan
+    # sessiya paydo bo'lardi va uni bayonnomada tushuntirib bo'lmasdi.
+    if face_required and score is not None and int(score) < threshold:
+        _log_face_attempt(
+            pinfl=pending.get("pinfl", ""),
+            faces_detected=faces_detected,
+            reason=f"score:{int(score)}<{threshold}",
+        )
+        raise FaceVerificationFailed(
+            f"Yuz mos kelmadi: o'xshashlik {int(score)}%, talab {threshold}%"
+        )
+
     session = _create_session(
         pending=pending,
         exam=exam,
@@ -290,17 +422,49 @@ def verify_initial_face(
         reference_embedding=normalize(embedding) if embedding else None,
     )
 
-    FaceVerificationLog.objects.create(
-        session=session,
-        stage=FaceVerificationLog.Stage.INITIAL,
-        source=FaceVerificationLog.Source.CLIENT,
-        score=0,
-        threshold=int(config["face"]["min_score_initial"]),
-        passed=bool(embedding),
-        faces_detected=faces_detected,
-        image_key=image_key,
-        occurred_at=timezone.now(),
+    # AVVAL FAYL, KEYIN QATOR. Qator yozilmasa fayl darhol o'chiriladi —
+    # aks holda hech kim bilmaydigan yetim fayl qolardi.
+    image_path, image_purge_after = _store_face_image(
+        image, exam_id=exam.pk, session=session, config=config
     )
+    # ETALON HAM SAQLANADI va faqat SHU YERDA (kirish tekshiruvi).
+    # Ballning o'zi hech narsani isbotlamaydi: apellyatsiyada
+    # hujjatdagi odam va kameradagi odam YONMA-YON kerak bo'ladi.
+    reference_path, reference_purge = _store_face_image(
+        reference_image,
+        exam_id=exam.pk,
+        session=session,
+        config=config,
+        kind="reference",
+    )
+    try:
+        FaceVerificationLog.objects.create(
+            session=session,
+            exam=exam,
+            zone=session.zone,
+            pinfl=session.pinfl or "",
+            stage=FaceVerificationLog.Stage.INITIAL,
+            source=FaceVerificationLog.Source.CLIENT,
+            # Ball endi YOZILADI (ilgari 0 edi): u clientdagi
+            # solishtiruvning yagona izi va apellyatsiyada "qanday
+            # o'xshashlik bilan kiritilgan?" degan savolga javob beradi.
+            score=_clamp_score(score),
+            threshold=threshold,
+            passed=bool(embedding),
+            faces_detected=faces_detected,
+            image_key=image_key,
+            image_path=image_path,
+            reference_image_path=reference_path,
+            # Ikkala fayl BIR VAQTDA tozalanadi: ular bitta
+            # tekshiruvning ikki tomoni va bittasini qoldirish
+            # yarim dalil berardi.
+            image_purge_after=image_purge_after or reference_purge,
+            occurred_at=timezone.now(),
+        )
+    except Exception:
+        face_images.discard(image_path)
+        face_images.discard(reference_path)
+        raise
 
     # Shaxs hali tasdiqlanmagan — operator hujjat bilan tasdiqlamaguncha
     # `issue_exam_access` imtihonni ochmaydi. Hodisa YARATILMAYDI: bu holat
@@ -309,6 +473,151 @@ def verify_initial_face(
     session.save(update_fields=["meta", "updated_at"])
 
     return session
+
+
+def record_entry_face_failure(
+    *,
+    challenge: str,
+    score: int | None,
+    faces_detected: int = 1,
+    image: bytes | None = None,
+    reference_image: bytes | None = None,
+    device=None,
+    computer=None,
+) -> dict:
+    """
+    Kirishda MOS KELMAGAN urinish: rasm va ball, SESSIYASIZ.
+
+    NIMA UCHUN ALOHIDA YO'L. Sessiya faqat moslik tasdiqlangach
+    ochiladi, ya'ni "kira olmadi" holatini sessiyaga bog'lab
+    bo'lmaydi. Aynan o'sha holat esa eng qimmatli yozuv: kadrda
+    boshqa odam turgan bo'lishi mumkin va u izsiz yo'qolmasligi
+    kerak.
+
+    CHALLENGE SARFLANMAYDI (`peek_pending`): qayta urinish kutilgan
+    xulq (yorug'lik, ko'zoynak, bosh burilishi). Sarflansa, har bir
+    muvaffaqiyatsiz kadrdan keyin talabgor qaytadan JSHSHIR
+    kiritishga majbur bo'lardi.
+
+    Qaytadi: `{"recorded", "score", "threshold", "attempts"}`.
+    `attempts` operatorga ko'rsatiladi ("3-urinish"): ketma-ket
+    muvaffaqiyatsizlik hujjatni qo'lda tekshirishni boshlash
+    signalidir.
+    """
+    from apps.controls import services as controls_services
+    from apps.proctoring.services import face_images
+
+    pending = session_state.peek_pending(challenge)
+    _require_pending_device(pending, device)
+
+    from apps.exams.models import Exam
+
+    exam = Exam.objects.select_related("setting").get(pk=pending["exam_id"])
+    config = controls_services.get_client_config(exam)
+    threshold = int(config["face"]["min_score_initial"])
+    pinfl = pending.get("pinfl", "")
+    zone = computer.zone if computer is not None else None
+    occurred_at = timezone.now()
+
+    image_path, image_purge_after = _store_face_image(
+        image, exam_id=exam.pk, session=None, config=config
+    )
+    reference_path, reference_purge = _store_face_image(
+        reference_image, exam_id=exam.pk, session=None, config=config, kind="reference"
+    )
+    try:
+        log_row = FaceVerificationLog.objects.create(
+            session=None,
+            exam=exam,
+            zone=zone,
+            pinfl=pinfl,
+            stage=FaceVerificationLog.Stage.INITIAL,
+            source=FaceVerificationLog.Source.CLIENT,
+            score=_clamp_score(score),
+            threshold=threshold,
+            passed=False,
+            faces_detected=faces_detected,
+            image_path=image_path,
+            reference_image_path=reference_path,
+            image_purge_after=image_purge_after or reference_purge,
+            occurred_at=occurred_at,
+        )
+    except Exception:
+        face_images.discard(image_path)
+        face_images.discard(reference_path)
+        raise
+
+    # Urinishlar SUTKA emas, 12 soat oynasida sanaladi: bir kunda
+    # ikkita seans bo'lishi mumkin va ertalabki urinishlar kechki
+    # imtihonda "10-urinish" bo'lib ko'rinishi operatorni chalg'itardi.
+    attempts = FaceVerificationLog.objects.filter(
+        pinfl=pinfl,
+        exam=exam,
+        stage=FaceVerificationLog.Stage.INITIAL,
+        passed=False,
+        occurred_at__gte=occurred_at - timedelta(hours=12),
+    ).count()
+
+    # Qurilma log'da: "qaysi mashinada kira olmayapti?" degan savol
+    # operatorda birinchi bo'lib tug'iladi va unga javob beradigan
+    # boshqa yozuv yo'q (sessiya yaratilmagan).
+    logger.info(
+        "Kirishdagi FaceID mos kelmadi: pinfl=%s ball=%s/%s yuzlar=%s "
+        "urinish=%s qurilma=%s",
+        mask_pinfl(pinfl), _clamp_score(score), threshold, faces_detected,
+        attempts, getattr(device, "device_id", "-"),
+    )
+    return {
+        "recorded": True,
+        "id": log_row.pk,
+        "score": _clamp_score(score),
+        "threshold": threshold,
+        "attempts": attempts,
+    }
+
+
+def _clamp_score(score) -> int:
+    """
+    Ball 0..100 oralig'ida.
+
+    Client uni O'ZI hisoblaydi, ya'ni qiymat ixtiyoriy bo'lishi
+    mumkin. Serializer ham tekshiradi, lekin service to'g'ridan-to'g'ri
+    (testlardan, kelajakdagi boshqa yuzadan) chaqirilishi mumkin —
+    va o'shanda `PositiveSmallIntegerField` ga manfiy qiymat yozish
+    DB darajasida yiqilardi.
+    """
+    try:
+        return max(0, min(100, int(score or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _store_face_image(image, *, exam_id, session, config: dict, kind: str = "live") -> tuple:
+    """
+    Kadrni saqlaydi. Xato TASHLAMAYDI.
+
+    `kind="reference"` - hujjat (pasport) rasmi, `kind="live"` -
+    kameradan olingan kadr.
+
+    Rasm dalil, to'siq emas: uni saqlab bo'lmagani uchun tekshiruvni
+    rad etish buzilgan JPEG tufayli butun imtihonni to'xtatardi.
+    """
+    if not image:
+        return "", None
+
+    from apps.proctoring.services import face_images
+
+    try:
+        return face_images.store(
+            data=image,
+            exam_id=exam_id,
+            session=session,
+            policy=config.get("proctoring") or {},
+            kind=kind,
+        )
+    except Exception:
+        logger.warning("FaceID rasmi saqlanmadi", exc_info=True)
+        return "", None
 
 
 # --------------------------------------------------------------------------
@@ -407,14 +716,47 @@ def _create_session(
     )
 
     zone = computer.zone if computer is not None else None
+    # MANZIL CLIENTDAN. `ip_address` - server ko'rgan manba manzili va
+    # u panelda foydasiz bo'lib chiqdi: bino ichidagi serverda u
+    # LAN manzil, dev'da esa `127.0.0.1` bo'ladi, NAT ortida esa
+    # butun bino uchun bitta. Mashinani aniqlaydigan yagona qiymat -
+    # clientning o'zi aytgan LAN manzili (handshake'da yuboriladi).
+    # U ISHONCHSIZ, lekin bu yerda hech qanday ruxsat qarori
+    # qabul qilinmaydi - faqat yozib qo'yiladi.
+    lan_ip = getattr(device, "reported_lan_ip", None)
     session = ExamSession.objects.create(
         pinfl=pinfl,
         last_name=pending.get("last_name", ""),
         first_name=pending.get("first_name", ""),
         middle_name=pending.get("middle_name", ""),
         external_candidate_id=pending.get("external_candidate_id", ""),
-        external_session_token_enc=encrypt(pending.get("external_session_token", "")) or "",
+        # Test havolasi JSHSHIR tekshiruvida olingan va SHU YERDA
+        # muzlatiladi — `exam/access/` uni qayta so'ramaydi.
+        external_test_link_enc=encrypt(pending.get("external_test_link", "")) or "",
         external_status=(pending.get("external_status") or "")[:32],
+        # Platformaning javobi DALIL sifatida saqlanadi: apellyatsiyada
+        # "nega bu talabgor kiritilgan?" degan savolga javob beradi.
+        meta={
+            "seat": pending.get("seat"),
+            "platform": {
+                "message": pending.get("platform_message", ""),
+                "is_finished": bool(pending.get("platform_is_finished")),
+                "abitur_id": pending.get("external_abitur_id", ""),
+                "duration_minutes": int(pending.get("duration_minutes") or 0),
+            },
+            # UCHTA MANZIL, UCHTA MA'NO va ularni aralashtirmaslik
+            # kerak - bayonnomada har biri boshqa savolga javob
+            # beradi:
+            #   lan     - talabgor qaysi MASHINADA o'tirgan;
+            #   source  - server so'rovni qaysi manzildan ko'rgan
+            #             (NAT ortida butun bino uchun bitta);
+            #   public  - bino qaysi tashqi manzil bilan chiqadi.
+            "network": {
+                "lan_ip": lan_ip or "",
+                "source_ip": ip_address or "",
+                "public_ip": getattr(device, "reported_public_ip", "") or "",
+            },
+        },
         external_access_from=_parse_dt(pending.get("external_access_from")),
         external_access_until=_parse_dt(pending.get("external_access_until")),
         reference_embedding=reference_embedding,
@@ -428,7 +770,7 @@ def _create_session(
         attempt_no=(last_attempt or 0) + 1,
         exam_date=exam_date,
         status=ExamSession.Status.READY,
-        ip_address=ip_address or None,
+        ip_address=lan_ip or ip_address or None,
         mac_address=computer.mac_address if computer is not None else "",
         last_heartbeat_at=timezone.now(),
     )
@@ -480,27 +822,31 @@ def issue_session_token(session: ExamSession) -> str:
 
 def issue_exam_access(session: ExamSession, *, ip_address: str = "") -> dict:
     """
-    Tashqi platformaga kirish uchun bir martalik token.
+    Tashqi platformaga kirish havolasi (`data.test_link`).
 
-    Token URL'ga QO'YILMAYDI — client uni cookie sifatida o'rnatadi yoki
-    POST body'da yuboradi. URL'dagi token brauzer tarixi, `Referer`
-    header'i va nginx access log orqali sizib chiqadi.
+    Havola JSHSHIR tekshiruvida olingan va sessiyaga muzlatilgan;
+    bu yerda u faqat deshifrlanadi. Token havolaning ICHIDA va uni
+    platformaning o'zi shunday bergan — ya'ni uni cookie yoki POST
+    body'ga ko'chirish mumkin emas: platforma uni URL'dan kutadi.
 
     Shaxs tasdig'i AYNAN SHU YERDA to'siladi: bu — qaytib bo'lmaydigan
-    nuqta. Undan keyin talabgor tashqi platformada test topshira boshlaydi.
+    nuqta. Undan keyin talabgor tashqi platformada test topshira
+    boshlaydi va aynan shu sabab havola JSHSHIR tekshiruvida
+    berilmaydi (u yerda berilsa, FaceID'ni chetlab o'tish mumkin
+    bo'lardi).
     """
     if settings.PROCTORING["REQUIRE_IDENTITY_CONFIRMATION"] and not session.identity_verified:
         raise IdentityNotConfirmed()
 
-    platform_token = session.external_session_token
-    if not platform_token:
-        # Lookup paytida token kelmagan bo'lsa sessiya umuman
+    test_link = session.external_test_link
+    if not test_link:
+        # Lookup paytida havola kelmagan bo'lsa sessiya umuman
         # yaratilmasligi kerak edi — bu holat kelib chiqsa, muammo bizda.
         logger.error(
-            "Sessiya %s da tashqi platforma tokeni yo'q", session.public_id
+            "Sessiya %s da test havolasi yo'q", session.public_id
         )
         raise ExternalPlatformError(
-            "Tashqi platforma sessiyasi topilmadi, qaytadan kiring"
+            "Test havolasi topilmadi — talabgorni qaytadan tekshiring"
         )
 
     if not session.external_access_open:
@@ -529,16 +875,43 @@ def issue_exam_access(session: ExamSession, *, ip_address: str = "") -> dict:
         )
 
     return {
-        "login_url": session.exam.site_url,
-        # ATAYLAB "token" emas: bu TASHQI platformaning sessiya tokeni,
-        # bizning `proctoring_session_token` bilan aralashtirilmasin.
-        "platform_session_token": platform_token,
-        # `post` — token form body'da; `cookie` — QWebEngineProfile orqali.
-        "delivery": settings.PROCTORING["EXTERNAL_TOKEN_DELIVERY"],
+        # Platforma bergan to'liq havola — token uning ichida.
+        "login_url": test_link,
+        # `url` — havola tayyor, client uni shunchaki ochadi.
+        # Eski `post`/`cookie` yo'llari bu platformada ishlamaydi:
+        # token URL'da va uni body'ga ko'chirish platformani
+        # tanimaydigan holga keltirardi.
+        "delivery": "url",
         "platform_access_until": session.external_access_until,
         "platform_access_seconds_left": remaining,
-        "allowed_domains": session.exam.get_allowed_domains(),
+        # Allowlist AYNAN OCHILADIGAN havoladan olinadi, `site_url`
+        # dan EMAS: `site_url` endi API manzili (`api.test.uz`), test
+        # esa boshqa domenda ochilishi mumkin (`test.uz`). Eski
+        # manbani qoldirish WebView'da butun sahifani bloklardi.
+        "allowed_domains": _link_domains(test_link, session.exam),
+        # `site_header` client'ga BERILMAYDI. U platforma API'sining
+        # kredensiali va serverda qoladi: 500 mashinaga tarqalgan
+        # token bekor ham qilinmaydi, kuzatilmaydi ham. Platformaga
+        # so'rovni faqat backend yuboradi (`integrations/exam_site.py`).
     }
+
+
+def _link_domains(test_link: str, exam) -> list:
+    """
+    WebView allowlist'i: test havolasining domeni.
+
+    Imtihon manzili (`site_url`) ham qo'shiladi: platforma test
+    sahifasidan o'z API'siga so'rov qilishi mumkin va u bloklansa
+    sahifa yarim ishlagan holda qolardi. Ikkalasi bir xil bo'lsa
+    ro'yxatda bir marta turadi.
+    """
+    from urllib.parse import urlparse
+
+    domains = []
+    for candidate in (urlparse(test_link).hostname, *exam.get_allowed_domains()):
+        if candidate and candidate not in domains:
+            domains.append(candidate)
+    return domains
 
 
 # --------------------------------------------------------------------------
@@ -547,54 +920,97 @@ def issue_exam_access(session: ExamSession, *, ip_address: str = "") -> dict:
 def verify_periodic_face(
     *,
     session: ExamSession,
-    embedding: list[float] | None,
     score: int | None,
     faces_detected: int,
-    image_key: str,
+    image: bytes | None = None,
+    passed_since_last: int = 0,
     config: dict,
     occurred_at=None,
 ) -> dict:
     """
-    Test davomidagi yuz tekshiruvi.
+    Test davomidagi yuz tekshiruvi — FAQAT MUVAFFAQIYATSIZ NATIJA.
 
-    Yuklama nuqtai nazaridan eng muhim qaror shu yerda: embedding CLIENTDA
-    hisoblanadi va serverga 512 float (~2 KB) keladi, rasm emas. Server
-    faqat cosine solishtiradi (~5 µs). Aks holda 10 000 talaba × 10s =
-    1000 GPU inference/sekund kerak bo'lardi.
+    SOLISHTIRISH CLIENTDA. Etalon ham (kirishda olingan vektor), jonli
+    kadr ham o'sha yerda; cosine bir juft 512 o'lchamli vektor uchun
+    ~5 µs va uni tarmoq orqali haydashning ma'nosi yo'q. Ilgari
+    embedding har tekshiruvda serverga kelardi — 10 000 talaba × 6
+    tekshiruv/daqiqa = 1000 so'rov/sekund, ularning 99% i esa "hammasi
+    joyida" degan xabar edi.
 
-    Clientga to'liq ishonib bo'lmagani uchun `audit_rate` ulushidagi
-    tekshiruvlarda rasm ham so'raladi va serverda qayta baholanadi.
+    Endi client faqat MOS KELMAGANDA murojaat qiladi va u bilan birga
+    o'sha paytdagi KADRni yuboradi — "nega mos kelmadi?" degan savolga
+    javob beradigan yagona narsa shu.
+
+    IKKI HISOBLAGICH, IKKI EGASI:
+
+        face_checks  -> CLIENT (heartbeat, `hset`). U barcha
+                        tekshiruvlarni ko'radi, server esa faqat
+                        muvaffaqiyatsizlarini. Server sanaganda toza
+                        sessiyada "0 tekshiruv" chiqib, kuzatuv
+                        ishlamagandek ko'rinardi.
+        face_fails   -> SERVER (`incr`). Chetlashtirish qarori shunga
+                        tayanadi va u atomik bo'lishi shart.
+
+    `passed_since_last` — oxirgi xabardan keyingi MUVAFFAQIYATLI
+    tekshiruvlar soni. Usiz "ketma-ket" qoidasini qo'llab bo'lmasdi:
+    server oradagi muvaffaqiyatlarni ko'rmaydi va ikki soat oralab
+    kelgan uchta xato chegaraga yetib qolardi.
+
+    CHEGARAGA YETISH — CHETLASHTIRISH EMAS. Ilgari `max_fail` ga
+    yetganda sessiya AVTOMATIK tugatilardi va talabgor imtihondan
+    chiqib qolardi. Endi bu faqat XABAR: `high_suspicion_identity`
+    kritik hodisasi tug'iladi va u panelga darhol yetadi (kritik
+    hodisalar write-behind emas). Qarorni PROKTOR qabul qiladi —
+    u kadrni va dalil rasmlarini ko'rib turibdi, client esa faqat
+    ballni biladi. Yorug'lik o'zgarishi yoki ko'zoynak tufayli
+    ketma-ket uchta past ball butun imtihonni bekor qilishi mumkin
+    emas edi.
     """
-    from apps.common.utils.vectors import similarity_score
+    from apps.proctoring.services import face_images
 
     occurred_at = occurred_at or timezone.now()
     threshold = int(config["face"]["min_score_exam"])
+    score = _clamp_score(score)
+    passed_since_last = max(0, int(passed_since_last or 0))
 
-    source = FaceVerificationLog.Source.CLIENT
-    if embedding and session.reference_embedding:
-        # Etalon kirishda shu sessiyaning O'ZIDA olingan — server qayta
-        # hisoblaydi, clientdan kelgan ballga ishonmaymiz.
-        score = similarity_score(embedding, session.reference_embedding)
-        source = FaceVerificationLog.Source.SERVER
-    elif score is None:
-        score = 0
-
+    # Ball CLIENTNIKI (`source=client`). Server uni qayta hisoblay
+    # olmaydi: buning uchun rasmdan embedding olish, ya'ni serverda
+    # ML runtime kerak — arxitektura esa ataylab boshqacha
+    # (`services/face_images.py` docstring'i).
     passed = bool(score >= threshold and faces_detected == 1)
 
-    FaceVerificationLog.objects.create(
-        session=session,
-        stage=FaceVerificationLog.Stage.PERIODIC,
-        source=source,
-        score=score,
-        threshold=threshold,
-        passed=passed,
-        faces_detected=faces_detected,
-        image_key=image_key,
-        occurred_at=occurred_at,
+    # `session.exam_id` — `session.exam` EMAS: ikkinchisi har
+    # muvaffaqiyatsiz tekshiruvda ortiqcha SELECT qilardi.
+    image_path, image_purge_after = _store_face_image(
+        image, exam_id=session.exam_id, session=session, config=config
     )
+    try:
+        log_row = FaceVerificationLog.objects.create(
+            session=session,
+            exam_id=session.exam_id,
+            zone_id=session.zone_id,
+            pinfl=session.pinfl or "",
+            stage=FaceVerificationLog.Stage.PERIODIC,
+            source=FaceVerificationLog.Source.CLIENT,
+            score=score,
+            threshold=threshold,
+            passed=passed,
+            faces_detected=faces_detected,
+            image_path=image_path,
+            image_purge_after=image_purge_after,
+            occurred_at=occurred_at,
+        )
+    except Exception:
+        face_images.discard(image_path)
+        raise
 
-    session_state.increment(session.pk, "face_checks")
     fail_count = 0
+    if passed_since_last:
+        # Oradagi muvaffaqiyatli tekshiruvlar zanjirni UZADI. Bitta
+        # tasodifiy xato (yorug'lik o'zgardi, bosh burildi) talabgorni
+        # chetlashtirmasligi kerak.
+        session_state.reset_counter(session.pk, "face_fails")
+
     if not passed:
         fail_count = session_state.increment(session.pk, "face_fails")
         session_state.bump_risk(session.pk, 8)
@@ -614,21 +1030,36 @@ def verify_periodic_face(
             type=event_type,
             severity=ProctoringEvent.Severity.HIGH,
             occurred_at=occurred_at,
-            payload={"score": score, "threshold": threshold, "faces": faces_detected},
-            screenshot_key=image_key,
+            # `face_log_id` — hodisadan rasmga o'tish uchun yagona
+            # ko'prik. FK QO'YILMAYDI: hodisa jadvali partitsiyalangan
+            # va unga FK `bulk_create` ni buzadi (`EvidenceArtifact`
+            # bilan bir xil sabab).
+            payload={
+                "score": score,
+                "threshold": threshold,
+                "faces": faces_detected,
+                "face_log_id": log_row.pk,
+            },
         )
     else:
-        # Muvaffaqiyatli tekshiruv hisoblagichni tiklaydi — bitta tasodifiy
-        # xato (yorug'lik o'zgardi, bosh burildi) talabgorni chetlashtirmasligi
-        # kerak. Faqat KETMA-KET muvaffaqiyatsizliklar hisobga olinadi.
         session_state.reset_counter(session.pk, "face_fails")
 
     max_fail = int(config["face"]["max_fail"])
-    should_terminate = fail_count >= max_fail
-
-    # Tasodifiy server auditi: client embedding'ini sinovdan o'tkazish.
-    audit_rate = float(config["face"].get("audit_rate", 0))
-    require_audit = secrets.randbelow(1000) < int(audit_rate * 1000)
+    # AYNAN CHEGARAGA YETGANDA bir marta. Undan keyingi har bir
+    # muvaffaqiyatsizlik yana kritik hodisa bergani panelni bir xil
+    # xabar bilan to'ldirardi va proktor uni o'qishni to'xtatardi;
+    # tarkibiy `face_mismatch` hodisalari esa avvalgidek kelaveradi.
+    limit_reached = fail_count == max_fail
+    if limit_reached:
+        _notify_face_limit(
+            session=session,
+            fail_count=fail_count,
+            max_fail=max_fail,
+            score=score,
+            threshold=threshold,
+            occurred_at=occurred_at,
+            log_id=log_row.pk,
+        )
 
     return {
         "passed": passed,
@@ -636,41 +1067,156 @@ def verify_periodic_face(
         "threshold": threshold,
         "fail_count": fail_count,
         "max_fail": max_fail,
-        "should_terminate": should_terminate,
-        "require_server_audit": require_audit,
+        # Client bu qiymatga QARAB HECH NARSA QILMAYDI (imtihon
+        # to'xtamaydi) — u faqat holat qatorida ko'rsatiladi.
+        # Chetlashtirish proktorning ochiq amali bo'lib qoladi.
+        "limit_reached": limit_reached,
     }
+
+
+def _notify_face_limit(
+    *, session, fail_count, max_fail, score, threshold, occurred_at, log_id
+) -> None:
+    """
+    Ketma-ket muvaffaqiyatsizliklar chegarasi — PANELGA xabar.
+
+    `high_suspicion_identity` turi ATAYLAB tanlangan (yangi tur
+    kiritilmadi): u allaqachon "shaxs almashtirilgan" degan xulosani
+    bildiradi va frontendda ham tarjimasi, ham turkumi bor
+    (`utils/labels.js`, `utils/events.js`). Ketma-ket N marta yuz mos
+    kelmasligi aynan shu xulosaga olib keladi — faqat manba boshqa
+    (fusion emas, davriy tekshiruv), va u `payload.source` da yozilgan.
+
+    Kritik jiddiylik SHART: kritik hodisalar write-behind buferidan
+    o'tmasdan darhol DB'ga yoziladi va proktor ekranida bir necha
+    soniyada emas, o'sha zahoti ko'rinadi.
+    """
+    from apps.proctoring.services.ingest import push_event
+
+    push_event(
+        session_id=session.pk,
+        zone_id=session.zone_id,
+        type=ProctoringEvent.Type.HIGH_SUSPICION_IDENTITY,
+        severity=ProctoringEvent.Severity.CRITICAL,
+        occurred_at=occurred_at,
+        payload={
+            "source": "periodic_face",
+            "fail_count": fail_count,
+            "max_fail": max_fail,
+            "score": score,
+            "threshold": threshold,
+            "face_log_id": log_id,
+        },
+    )
+    logger.warning(
+        "FaceID chegarasiga yetildi: session=%s %s/%s (ball %s, talab %s) — "
+        "sessiya TO'XTATILMADI, qaror proktorda",
+        session.public_id, fail_count, max_fail, score, threshold,
+    )
 
 
 # --------------------------------------------------------------------------
 # Yakunlash
 # --------------------------------------------------------------------------
+def _complete_proctoring(session: ExamSession, *, reason: str) -> None:
+    """
+    Sessiya yakunlanganda kuzatuv ham yakunlanadi.
+
+    Alohida chaqiruv, chunki yakunlash uch yo'ldan keladi (operator,
+    proktor chetlashtirishi, `close_stale_sessions`) va uchalasida
+    ham holat `completed` bo'lishi kerak. Aks holda yakunlangan
+    sessiya `active` bo'lib qolar va dalil qabul qilinaverardi.
+
+    Xato YUTILADI: kuzatuv holatini yozib bo'lmagani imtihonni
+    yakunlashni to'xtatmasligi kerak - yakunlanmagan sessiya ancha
+    qimmatroq muammo.
+    """
+    from apps.proctoring.services import proctoring as proctoring_service
+
+    try:
+        proctoring_service.stop(session, reason=reason)
+    except Exception:
+        logger.exception("Kuzatuv holatini yakunlab bo'lmadi: %s", session.public_id)
+
+
 @transaction.atomic
-def finish_session(session: ExamSession, *, reason: str = "") -> ExamSession:
+def finish_session(
+    session: ExamSession, *, reason: str = "", completed: bool = False
+) -> ExamSession:
+    """
+    Imtihonni yakunlaydi.
+
+    `completed` — talabgor testni O'ZI yakunladi (clientdagi «Yakunlash»
+    tugmasi). Faqat shunda kompyuter broni bo'shaydi va joy keyingi
+    talabgorga beriladi; dasturdan chiqishdagi yakun (`completed`
+    yo'q) joyni band qoldiradi (`bookings.release_after_session`).
+
+    Bo'shatish YAKUN BILAN BITTA TRANZAKSIYADA: alohida qadam bo'lsa
+    va u yiqilsa, client qayta urina olmasdi — sessiya tokeni yakunda
+    bekor bo'ladi. Natija `meta.seat_release` ga yoziladi: bayonnomada
+    "joy qachon bo'shatildi" degan savolga javob.
+    """
     if session.status in ExamSession.TERMINAL_STATUSES:
         return session
 
     _flush_counters(session)
     session.status = ExamSession.Status.FINISHED
     session.finished_at = timezone.now()
-    session.save(
-        update_fields=[
-            "status", "finished_at", "event_count", "screenshot_count",
-            "face_fail_count", "face_check_count", "risk_score", "updated_at",
-        ]
-    )
+    update_fields = [
+        "status", "finished_at", "event_count", "screenshot_count",
+        "face_fail_count", "face_check_count", "risk_score", "updated_at",
+    ]
+    if completed and _release_seat(session, by="finish"):
+        update_fields.append("meta")
+    session.save(update_fields=update_fields)
+    _complete_proctoring(session, reason=reason or "finished")
     _release(session)
     _broadcast_status(session)
     _notify_external(session, "finished", {"reason": reason})
     return session
 
 
+def _release_seat(session: ExamSession, *, by: str) -> bool:
+    """
+    Kompyuter bronini bo'shatadi va izini `meta.seat_release` ga yozadi.
+
+    Chaqiruvchi `meta` ni saqlaydi (o'zining `update_fields` i bilan).
+    `True` — joy bo'shatildi.
+    """
+    from apps.exams import bookings
+
+    released = bookings.release_after_session(
+        schedule_id=session.schedule_id, pinfl=session.pinfl
+    )
+    if released is None:
+        return False
+    session.meta = {
+        **(session.meta or {}),
+        "seat_release": {
+            "at": (session.finished_at or timezone.now()).isoformat(),
+            "by": by,
+            "booking_id": released.pk,
+            "seat": bookings.computer_payload(released.computer),
+        },
+    }
+    return True
+
+
 @transaction.atomic
-def terminate_session(session: ExamSession, *, actor=None, reason: str = "") -> ExamSession:
+def terminate_session(
+    session: ExamSession, *, actor=None, reason: str = "", release_seat: bool = False
+) -> ExamSession:
     """
     Chetlashtirish — DARHOL kuchga kiradi.
 
     Token Redis'dan o'chiriladi, shuning uchun keyingi so'rov 401 oladi.
     Bu aynan JWT ishlatmaslik sababi.
+
+    `release_seat` — ADMINISTRATOR chetlashtirdi (panel): kompyuter
+    broni ham shu tranzaksiyada bo'shaydi. Imtihondagi talabgorning
+    joyini panelda qo'lda bo'shatib bo'lmaydi (`SeatInUse`), ya'ni
+    chetlashtirish uning YAGONA yo'li. Client'dagi "shaxs rad etildi"
+    (`reject_identity`) uni bermaydi — u administrator qarori emas.
     """
     if session.status in ExamSession.TERMINAL_STATUSES:
         return session
@@ -680,13 +1226,14 @@ def terminate_session(session: ExamSession, *, actor=None, reason: str = "") -> 
     session.finished_at = timezone.now()
     session.terminated_by = actor
     session.termination_reason = reason[:500]
-    session.save(
-        update_fields=[
-            "status", "finished_at", "terminated_by", "termination_reason",
-            "event_count", "screenshot_count", "face_fail_count",
-            "face_check_count", "risk_score", "updated_at",
-        ]
-    )
+    update_fields = [
+        "status", "finished_at", "terminated_by", "termination_reason",
+        "event_count", "screenshot_count", "face_fail_count",
+        "face_check_count", "risk_score", "updated_at",
+    ]
+    if release_seat and _release_seat(session, by="terminate"):
+        update_fields.append("meta")
+    session.save(update_fields=update_fields)
 
     ProctoringEvent.objects.create(
         session=session,
@@ -696,6 +1243,7 @@ def terminate_session(session: ExamSession, *, actor=None, reason: str = "") -> 
         payload={"reason": reason, "actor": getattr(actor, "username", "system")},
     )
 
+    _complete_proctoring(session, reason=reason or "terminated")
     _release(session)
     _broadcast_status(session, reason=reason)
     _notify_external(session, "terminated", {"reason": reason})
@@ -713,6 +1261,7 @@ def expire_session(session: ExamSession) -> ExamSession:
             "face_fail_count", "face_check_count", "risk_score", "updated_at",
         ]
     )
+    _complete_proctoring(session, reason="expired")
     _release(session)
     _broadcast_status(session)
     return session

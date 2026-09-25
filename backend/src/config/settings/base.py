@@ -244,6 +244,7 @@ CELERY_TASK_ROUTES = {
     "proctoring.close_stale_sessions": {"queue": "maintenance"},
     "proctoring.rotate_event_partitions": {"queue": "maintenance"},
     "proctoring.purge_expired_screenshots": {"queue": "maintenance"},
+    "proctoring.purge_expired_evidence": {"queue": "maintenance"},
     "devices.*": {"queue": "maintenance"},
 }
 
@@ -251,18 +252,68 @@ CELERY_TASK_ROUTES = {
 # --------------------------------------------------------------------------
 # Channels (WebSocket)
 # --------------------------------------------------------------------------
+def _channel_layer_host(address: str) -> dict:
+    """
+    Channel layer'ning Redis ulanishi — O'LIK ULANISHGA CHIDAMLI.
+
+    redis-py 8 standarti `Retry(NoBackoff(), 0)`, ya'ni NOL qayta urinish
+    va `health_check_interval=0`. channels_redis esa ulanishlarni pool'da
+    soatlab ushlab turadi: `group_add` faqat panel obuna bo'lganda
+    ishlatiladi va oradagi vaqtda uning ulanishi bo'sh yotadi. Bo'sh
+    ulanishni yo'lda turgan har qanday qatlam (NAT, firewall, dev'da WSL2
+    `mirrored` loopback) jimgina tashlab yuboradi va keyingi buyruq
+    `WinError 121 semaphore timeout` / `ConnectionError` bilan to'g'ridan
+    to'g'ri consumer'ga chiqardi — panelning jonli kuzatuvi "ulandi,
+    keyin uzildi" sikliga tushardi.
+
+    Uch qatlam, har biri boshqa holatni yopadi:
+
+    * keepalive — ulanishni yo'ldagi qatlam oldida "tirik" tutadi
+      (30 s bo'sh turgach tekshiruv, 3 javobsizdan keyin OS uni yopadi);
+    * `health_check_interval` — 15 s dan ko'p bo'sh turgan ulanish
+      ishlatishdan OLDIN PING bilan tekshiriladi;
+    * `retry` — baribir o'lik chiqsa, ulanish yopiladi va buyruq YANGI
+      ulanishda qaytariladi. `zadd`/`zrem` idempotent; `send` ning
+      takrori faqat javob yo'lda yo'qolganda mumkin va panel uchun
+      zararsiz.
+    """
+    import socket
+
+    from redis.asyncio.retry import Retry
+    from redis.backoff import ExponentialBackoff
+    from redis.exceptions import ConnectionError as RedisConnectionError
+    from redis.exceptions import TimeoutError as RedisTimeoutError
+
+    keepalive = {
+        getattr(socket, name): value
+        for name, value in (("TCP_KEEPIDLE", 30), ("TCP_KEEPINTVL", 10), ("TCP_KEEPCNT", 3))
+        if hasattr(socket, name)
+    }
+    return {
+        "address": address,
+        # `socket_timeout` MAJBURIY va u channels_redis'ning
+        # `brpop_timeout` (5s) dan katta bo'lishi SHART.
+        #
+        # redis-py 8 da `DEFAULT_SOCKET_TIMEOUT = 5` paydo bo'ldi. U
+        # channels_redis'ning BZPOPMIN kutish vaqti bilan aynan teng,
+        # natijada har bir bo'sh kutish klientda TimeoutError beradi va
+        # WebSocket consumer'i o'sha zahoti yiqiladi.
+        "socket_timeout": 30,
+        "socket_connect_timeout": 5,
+        "socket_keepalive": True,
+        "socket_keepalive_options": keepalive,
+        "health_check_interval": 15,
+        "retry": Retry(ExponentialBackoff(cap=1.0, base=0.05), retries=2),
+        "retry_on_error": [RedisConnectionError, RedisTimeoutError],
+    }
+
+
 CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            # `socket_timeout` MAJBURIY va u channels_redis'ning
-            # `brpop_timeout` (5s) dan katta bo'lishi SHART.
-            #
-            # redis-py 8 da `DEFAULT_SOCKET_TIMEOUT = 5` paydo bo'ldi. U
-            # channels_redis'ning BZPOPMIN kutish vaqti bilan aynan teng,
-            # natijada har bir bo'sh kutish klientda TimeoutError beradi va
-            # WebSocket consumer'i o'sha zahoti yiqiladi.
-            "hosts": [{"address": f"{REDIS_URL}/5", "socket_timeout": 30}],
+            # Ulanish parametrlari va ularning sababi `_channel_layer_host` da.
+            "hosts": [_channel_layer_host(f"{REDIS_URL}/5")],
             "capacity": 2000,
             "expiry": 20,
         },
@@ -335,6 +386,10 @@ SPECTACULAR_SETTINGS = {
 # --------------------------------------------------------------------------
 CORS_ALLOWED_ORIGINS = env_list("CORS_ALLOWED_ORIGINS", ["http://localhost:5173"])
 CORS_ALLOW_CREDENTIALS = False
+# Brauzer JS'ga ko'rinadigan javob sarlavhalari. `X-Frame-Taken-At` -
+# kamera kadrining olingan vaqti (`cameras/{id}/snapshot/`): usiz panel
+# to'xtab qolgan oqimning eski kadrini "jonli" deb ko'rsatardi.
+CORS_EXPOSE_HEADERS = ["x-frame-taken-at", "x-request-id"]
 CORS_ALLOW_HEADERS = [
     "accept", "authorization", "content-type", "origin", "user-agent",
     "x-requested-with", "x-device-id", "x-proctoring-session", "x-request-id",
@@ -384,12 +439,10 @@ PROCTORING = {
     "HEARTBEAT_TIMEOUT": env_int("HEARTBEAT_TIMEOUT", 90),
     "STALE_SESSION_AFTER": env_int("STALE_SESSION_AFTER", 15 * 60),
 
-    # --- Tashqi platforma sessiyasi ---
-    # Token WebView'ga qanday uzatiladi: `post` — form body'da,
-    # `cookie` — `QWebEngineProfile.cookieStore()` orqali.
-    # URL'ga HECH QACHON qo'yilmaydi: u brauzer tarixi, `Referer`
-    # header'i va nginx access log orqali sizib chiqadi.
-    "EXTERNAL_TOKEN_DELIVERY": env("EXTERNAL_TOKEN_DELIVERY", "post"),
+    # `EXTERNAL_TOKEN_DELIVERY` OLIB TASHLANDI: tashqi platforma
+    # endi tayyor havola beradi (`data.test_link`) va token uning
+    # ichida. Tokenni cookie yoki POST body'ga ko'chirish
+    # platformani uni tanimaydigan holga keltirardi.
 
     # --- Operator tasdig'i ---
     # `true` (standart): operator hujjat bo'yicha shaxsni tasdiqlamaguncha
@@ -404,6 +457,13 @@ PROCTORING = {
     # hisoblanadi (dastlabki o'rnatish bosqichi bloklanmasligi uchun).
     # Production'da `true` qo'yish tavsiya etiladi.
     "REQUIRE_EXAM_SCHEDULE": env_bool("REQUIRE_EXAM_SCHEDULE", False),
+
+    # --- Kompyuter broni (`exams.ComputerBooking`) ---
+    # `false` (standart): bron faqat test sessiyasida kamida bitta
+    # talabgor biriktirilgan bo'lsa tekshiriladi — bron yuritilmaydigan
+    # sessiyalar avvalgidek ishlaydi. `true`: har bir sessiyada
+    # talabgor o'z kompyuterida bo'lishi SHART.
+    "REQUIRE_COMPUTER_BOOKING": env_bool("REQUIRE_COMPUTER_BOOKING", False),
 
     # --- Ruxsat etilgan tashqi IP'lar ---
     # `AllowedPublicIp` da FAOL yozuv qolmaganda nima bo'ladi:
@@ -456,6 +516,25 @@ PROCTORING = {
     # ishlab chiqishda (Postman/curl) o'chiriladi.
     "REQUIRE_DEVICE_ID": env_bool("REQUIRE_DEVICE_ID", True),
 
+    # --- Mashina tekshiruvi (MAC) ---
+    # `X-Device-ID` client NUSXASINI belgilaydi, mashinani emas: u
+    # diskda fayl bo'lib yotadi va mashina obrazi ko'chirilganda u
+    # ham ko'chadi. `true` (standart) bo'lsa, client aytgan MAC
+    # `Computer.mac_address` bilan mos kelmaguncha imtihon
+    # boshlanmaydi - ya'ni obrazi ko'chirilgan mashina o'zini
+    # boshqa kompyuter deb ko'rsata olmaydi.
+    #
+    # `false` - nomuvofiqlik OGOHLANTIRISH darajasiga tushadi
+    # (panelda ko'rinadi, oqimni to'xtatmaydi). Dastlabki
+    # joylashtirishda inventarizatsiya hali to'liq bo'lmasligi
+    # mumkin va u paytda majburiy tekshiruv butun markazni
+    # to'xtatardi.
+    #
+    # MAC ni client YUBORADI, ya'ni u o'zgartirilishi mumkin - bu
+    # KREDENSIAL EMAS, inventarizatsiya intizomi. Haqiqiy chegara
+    # avvalgidek qurilma tasdig'i va xodim JWT'sida.
+    "REQUIRE_MAC_MATCH": env_bool("REQUIRE_MAC_MATCH", True),
+
     # --- Avtomatik inventarizatsiya ---
     # `true` bo'lsa, ro'yxatda yo'q kompyuter avtomatik yaratiladi -
     # LEKIN faqat binoning tashqi IP'si `AllowedPublicIp` da qayd
@@ -493,6 +572,74 @@ PROCTORING = {
 
     # --- Realtime ---
     "MONITOR_MIN_SEVERITY": env_int("MONITOR_MIN_SEVERITY", 2),
+
+    # --- Dalil (kadr va video klip) ---
+    #
+    # Skrinshotlardan ALOHIDA chegaralar: klip ~10 barobar katta va
+    # uni skrinshot chegarasi (5 MB) bilan o'lchash 5 soniyalik
+    # 720p yozuvni rad etardi.
+    "EVIDENCE": {
+        "MAX_FRAME_BYTES": env_int("EVIDENCE_MAX_FRAME_BYTES", 5 * 1024 * 1024),
+        "MAX_CLIP_BYTES": env_int("EVIDENCE_MAX_CLIP_BYTES", 12 * 1024 * 1024),
+        # Siyosatda ko'rsatilmagan bo'lsa ishlatiladigan muddatlar.
+        # 500 mashinali bino kuniga ~5 GB klip yig'adi - 90 kunlik
+        # saqlash 450 GB degani, shuning uchun klip qisqaroq.
+        "CLIP_RETENTION_DAYS": env_int("EVIDENCE_CLIP_RETENTION_DAYS", 30),
+        "FRAME_RETENTION_DAYS": env_int("EVIDENCE_FRAME_RETENTION_DAYS", 90),
+    },
+
+    # --- Kamera tekshiruvi ---
+    #
+    # `true` (standart): siyosat kamerani TALAB qilgan bo'lsa,
+    # tekshiruvsiz imtihon boshlanmaydi. `false` — tekshiruv
+    # tavsiya darajasiga tushadi.
+    #
+    # Bu ikkinchi qatlam: birinchisi siyosatning o'zi
+    # (`primary_required`). Sozlama esa butun o'rnatish uchun:
+    # dastlabki joylashtirishda kameralar hali ulanmagan bo'lishi
+    # mumkin va u paytda tekshiruvni majburiy qilish sinovni
+    # butunlay to'xtatardi.
+    "REQUIRE_CAMERA_CHECK": env_bool("REQUIRE_CAMERA_CHECK", True),
+
+    # --- Yakundan keyingi yozuv qaydi ---
+    #
+    # Sessiya tokeni client bilmagan holda bekor bo'lishi mumkin:
+    # proktor chetlashtirdi yoki server sessiyani o'zi yopdi. Ekran
+    # yozuvi esa AYNAN o'shanda yakunlanadi va uning manzilini
+    # tokensiz yuborishga to'g'ri keladi. `client/recordings/` bunday
+    # so'rovni sessiyaning `public_id` si va O'SHA qurilma bo'yicha
+    # qabul qiladi - lekin faqat yakundan keyin shuncha soniya ichida.
+    #
+    # Oyna ataylab qisqa: client manzilni yakundan bir necha soniya
+    # keyin yuboradi, cheksiz oyna esa har qanday eski sessiyaga
+    # istalgan paytda "yozuv" qo'shishga yo'l ochardi.
+    "RECORDING_LATE_REGISTER_SECONDS": env_int("RECORDING_LATE_REGISTER_SECONDS", 30 * 60),
+
+    # Tekshiruv chegaralari. Siyosatda (`ProctoringPolicy`) BO'LMAGAN
+    # qiymatlar shu yerda: ular kameraning o'ziga emas, jismoniy
+    # muhitga tegishli va imtihondan imtihonga o'zgarmaydi.
+    "CAMERA_CHECK": {
+        # Suratcha shuncha soniya amal qiladi. Kamera tekshiruvi
+        # kun boshida bir marta o'tadi, imtihon esa bir necha soatdan
+        # keyin boshlanishi mumkin — shuning uchun oyna keng.
+        "SNAPSHOT_TTL": env_int("CAMERA_CHECK_TTL", 4 * 60 * 60),
+        # Kadr kechikishi. Yuqori qiymat kuzatuvni buzmaydi, faqat
+        # hodisa vaqtini siljitadi — shuning uchun OGOHLANTIRISH.
+        "MAX_FRAME_LATENCY_MS": env_int("CAMERA_MAX_LATENCY_MS", 400),
+        # Yuz bbox kengligi. Client'dagi `MIN_FACE_WIDTH_PX` bilan
+        # BIR XIL sabab: ArcFace yuzni 112x112 ga tekislaydi va
+        # kichikroq kadr upscale bo'lib o'xshashlikni pasaytiradi.
+        "MIN_FACE_WIDTH_PX": env_int("CAMERA_MIN_FACE_WIDTH", 110),
+        # O'rtacha yorqinlik (0-255). Chegaradan tashqarida yuz
+        # aniqlanishi keskin yomonlashadi.
+        "MIN_BRIGHTNESS": env_int("CAMERA_MIN_BRIGHTNESS", 45),
+        "MAX_BRIGHTNESS": env_int("CAMERA_MAX_BRIGHTNESS", 215),
+        # Yuzning kadr markazidan chetlashishi (0..1). Burchakni
+        # to'g'ridan-to'g'ri o'lchash uchun bosh holatini baholash
+        # kerak — u AI pipeline'ning ishi va tekshiruv bosqichida
+        # hali ishlamaydi.
+        "MAX_FACE_OFFSET": env_float("CAMERA_MAX_FACE_OFFSET", 0.35),
+    },
 }
 
 # Object storage — skrinshotlar DB'da EMAS, shu yerda.
@@ -550,6 +697,16 @@ SCREENSHOT_STORAGE = {
     # yopiq. Skrinshot — talabgorning ekrani, ya'ni shaxsiy ma'lumot.
     "DIR_MODE": 0o750,
     "FILE_MODE": 0o640,
+}
+
+# FaceID tizimi — kompyuterlarni nomzodlarga biriktiradi va Face ID'dan
+# o'tgan nomzodni bron qiladi (`apps/integrations/api/v1/faceid_views.py`).
+# Kirish `X-API-Key` bilan; kalit xodim JWT'si o'rnini bosadi va
+# `USER` nomidagi servis xodimi nomidan ishlaydi — bron auditida "kim
+# biriktirdi" savoliga javob shu hisob. Kalit bo'sh — integratsiya o'chiq.
+FACEID_INTEGRATION = {
+    "API_KEY": env("FACEID_API_KEY", ""),
+    "USER": env("FACEID_API_USER", "faceid"),
 }
 
 # Tashqi test platformasi (ntest)
@@ -633,3 +790,20 @@ LOGGING = {
         },
     },
 }
+
+# --- IP kamera holati (admin panel) ---
+#
+# Server har daqiqada kameralarga RTSP `DESCRIBE` yuboradi
+# (`devices.probe_cameras`). `false` - server kameralar tarmog'iga
+# yetib bormaydigan o'rnatishda (markazlashgan server, NAT): aks holda
+# ishlab turgan kamera ham "offline" ko'rinardi.
+CAMERA_PROBE_ENABLED = env_bool("CAMERA_PROBE_ENABLED", True)
+CAMERA_PROBE_TIMEOUT = float(env_int("CAMERA_PROBE_TIMEOUT", 3))
+
+# Paneldagi jonli ko'rish (`cameras/{id}/live/`) - bitta uzun HTTP javob
+# gunicorn'ning BITTA thread'ini band qiladi (`gthread`, 8 thread).
+# Chegara jarayon uchun: ko'ruvchilar oddiy API'ni to'sib qo'ymasligi
+# kerak. Bitta javob shuncha soniyadan keyin tugaydi va panel darhol
+# qayta ulanadi (o'quvchi issiq qoladi, uzilish sezilmaydi).
+CAMERA_LIVE_MAX_STREAMS = env_int("CAMERA_LIVE_MAX_STREAMS", 2)
+CAMERA_LIVE_STREAM_SECONDS = env_int("CAMERA_LIVE_STREAM_SECONDS", 60)

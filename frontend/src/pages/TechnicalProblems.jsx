@@ -9,7 +9,7 @@ import {
 import CheckIcon from '@mui/icons-material/CheckCircleOutline'
 
 import ResourcePage from '../components/data/ResourcePage'
-import { useZoneOptions } from './crud/shared'
+import { regionZoneFilters, useRegionOptions, useZoneOptions } from './crud/shared'
 import { technicalProblems as tpApi } from '../api/endpoints'
 import { useUi } from '../context/UiContext'
 import { TP_KIND_LABEL, formatDateTime, fromNow } from '../utils/labels'
@@ -23,6 +23,7 @@ export default function TechnicalProblems() {
   const navigate = useNavigate()
   const { notify, notifyError } = useUi()
   const { options: zoneOptions } = useZoneOptions()
+  const { options: regionOptions } = useRegionOptions()
 
   const [scope, setScope] = useState('unresolved')
   const [resolving, setResolving] = useState(null)
@@ -125,7 +126,9 @@ export default function TechnicalProblems() {
         }
         filters={[
           { name: 'kind', label: 'Turi', type: 'select', options: KIND_OPTIONS },
-          { name: 'session__zone', label: 'Bino', type: 'select', options: zoneOptions },
+          ...regionZoneFilters({
+            region: 'session__zone__region', zone: 'session__zone', regionOptions, zoneOptions,
+          }),
         ]}
         emptyDescription={
           scope === 'unresolved'

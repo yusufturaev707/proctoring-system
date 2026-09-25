@@ -28,56 +28,68 @@ from __future__ import annotations
 import logging
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QFont, QFontMetrics
 from PyQt6.QtWidgets import (
-    QDialog,
-    QFrame,
-    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
     QSizePolicy,
-    QVBoxLayout,
 )
 
 from services.repositories import ProctoringRepository
 from services.workers import ApiWorker, WorkerHolder
-from ui.styles import COLORS, outlined_button_style
+from ui.dialogs.base import CardDialog, apply_font as _apply_font
+from ui.styles import COLORS, outlined_button_style, tonal_button_style
 from ui.widgets.indicators import MessageBar, StateBadge
 
 log = logging.getLogger(__name__)
 
 
-def _apply_font(widget, size: int, *, bold: bool = False, extra: str = "") -> None:
+class ExitDialog(CardDialog):
     """
-    Shrift ikki joyda: uslubda (chizish) va `setFont` da (o'lcham).
+    Chiqishni tasdiqlaydi va parolni SERVERDA tekshiradi.
 
-    `GLOBAL_STYLESHEET` da `QWidget { font-size: 15px }` qoidasi bor va
-    Qt'da uslub `setFont` dan ustun turadi; uslubdagi `font-size` esa
-    `sizeHint` ga har doim ham yetib bormaydi va matn kesiladi.
-    Ikkalasi ham kerak (`ui/pages/preflight_page.py` dagi bilan bir xil).
+    IKKI CHIQISH YO'LI. Ctrl+Q ni bosgan operator ko'pincha dasturdan
+    chiqmoqchi EMAS - u noto'g'ri sahifaga o'tib qolgan va orqaga
+    qaytmoqchi. Ilgari dialogda faqat parol maydoni bor edi va
+    yagona yo'l "Bekor qilish" bo'lardi; sahifada orqaga qaytish
+    tugmasi bo'lmasa (masalan imtihon tanlash ekranida), operator
+    tuzoqqa tushardi.
+
+    Shuning uchun `back_label` berilganda dialog ikkita yo'l
+    taklif qiladi:
+
+        Orqaga qaytish  - xavfsiz, tez-tez kerak bo'ladigan amal;
+                          parol SO'RALMAYDI, chunki dastur ochiq
+                          qoladi va kiosk buzilmaydi.
+        Chiqish         - dasturni yopadi, parol MAJBURIY.
+
+    Birinchisi tepada va tonal (MD3 "filled tonal") - u tavsiya
+    etiladigan amal. Ikkinchisi pastda, parol maydonining ostida:
+    shakl o'zi "bu boshqa, jiddiyroq yo'l" deb turadi.
     """
-    font = QFont()
-    font.setFamilies(["Segoe UI", "Inter", "Roboto"])
-    font.setPixelSize(size)
-    font.setWeight(QFont.Weight.Bold if bold else QFont.Weight.Normal)
-    widget.setFont(font)
-    widget.setStyleSheet(
-        "font-size: {}px; font-weight: {}; background: transparent; {}".format(
-            size, 700 if bold else 400, extra
-        )
-    )
-    widget.setMinimumHeight(QFontMetrics(font).height() + 2)
 
-
-class ExitDialog(QDialog):
-    """Chiqishni tasdiqlaydi va parolni SERVERDA tekshiradi."""
+    #: `exec()` qaytaradigan uchinchi natija.
+    #:
+    #: `Accepted`/`Rejected` ikkitasi yetmaydi: "chiqishga ruxsat
+    #: berildi" va "bekor qilindi" dan tashqari uchinchi ma'no bor -
+    #: "chiqmayman, lekin oldingi sahifaga o't". Uni `Rejected` ga
+    #: qo'shib yuborish chaqiruvchidan qo'shimcha bayroq o'qishni
+    #: talab qilardi va u albatta unutilardi.
+    BACK = 2
 
     def __init__(self, parent=None, *, staff_name: str = "",
-                 repo: ProctoringRepository | None = None) -> None:
-        super().__init__(parent)
+                 repo: ProctoringRepository | None = None,
+                 back_label: str = "", warning: str = "") -> None:
+        # Kenglik 560, 440 emas: "orqaga qaytish" tugmasi to'liq
+        # kenglikda turadi va uning matni chaqiruvchidan keladi
+        # ("Talabgor ma'lumotlariga qaytish" — 484 px). Tor kartada
+        # Qt uni siqib, matnni kesib qo'yardi va ustundagi
+        # maydonlarni ham buzardi (`CardDialog.refit` izohi).
+        super().__init__(parent, title="Chiqish", card_width=560)
         self._staff_name = staff_name
+        self._back_label = back_label
+        self._warning = warning
         self._repo = repo or ProctoringRepository()
         self._workers = WorkerHolder()
         self._busy = False
@@ -85,48 +97,13 @@ class ExitDialog(QDialog):
         #: tasdiqlash rejimiga o'tadi.
         self._unconfigured = False
 
-        self.setWindowTitle("Chiqish")
-        self.setWindowModality(Qt.WindowModality.ApplicationModal)
-        # Ramkasiz + doim ustda: asosiy oyna ham shunday va dialog
-        # undan ORQADA qolib ketmasligi kerak - operator "dastur
-        # osilib qoldi" deb o'ylardi.
-        self.setWindowFlags(
-            Qt.WindowType.Dialog
-            | Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.WindowStaysOnTopHint
-        )
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setFixedWidth(440)
         self._setup_ui()
 
     # ------------------------------------------------------------------
     def _setup_ui(self) -> None:
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-
-        card = QFrame()
-        card.setObjectName("exitCard")
-        # MD3 shape scale: dialog uchun "extra large" (28 px).
-        card.setStyleSheet(
-            """
-            QFrame#exitCard {
-                background-color: %s;
-                border-radius: 28px;
-                border: 1px solid %s;
-            }
-            """
-            % (COLORS["surface"], COLORS["border"])
-        )
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(56)
-        shadow.setOffset(0, 16)
-        shadow.setColor(QColor(0, 0, 0, 120))
-        card.setGraphicsEffect(shadow)
-        outer.addWidget(card)
-
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(34, 28, 34, 24)
-        layout.setSpacing(0)
+        # Qobiq (karta, soya, chetlar) `CardDialog` da — bu yerda
+        # faqat mazmun.
+        layout = self.body
 
         # --- MD3 tonal nishon ------------------------------------------
         badge_row = QHBoxLayout()
@@ -158,7 +135,42 @@ class ExitDialog(QDialog):
         _apply_font(subtitle, 14, extra="color: {};".format(COLORS["text_secondary"]))
         self._subtitle = subtitle
         layout.addWidget(subtitle)
-        layout.addSpacing(20)
+
+        # Chiqishning OQIBATI oldindan aytiladi: imtihon sahifasida u
+        # talabgorning sessiyasini yakunlaydi va buni parol kiritib
+        # bo'lgandan keyin bilish kech.
+        if self._warning:
+            layout.addSpacing(14)
+            warning = QLabel(self._warning)
+            warning.setWordWrap(True)
+            warning.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            _apply_font(
+                warning, 13, bold=True,
+                extra="color: {}; background: {}; border-radius: 12px; padding: 10px 14px;".format(
+                    COLORS["error"], COLORS["error_soft"]
+                ),
+            )
+            layout.addWidget(warning)
+
+        # --- Xavfsiz yo'l: orqaga qaytish ------------------------------
+        if self._back_label:
+            layout.addSpacing(20)
+            self.back_btn = QPushButton(self._back_label)
+            self.back_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.back_btn.setStyleSheet(tonal_button_style(46))
+            self.back_btn.clicked.connect(lambda: self.done(self.BACK))
+            layout.addWidget(self.back_btn)
+
+            hint = QLabel("yoki dasturdan butunlay chiqish uchun parolni kiriting")
+            hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            hint.setWordWrap(True)
+            _apply_font(hint, 13, extra="color: {};".format(COLORS["text_muted"]))
+            layout.addSpacing(14)
+            layout.addWidget(hint)
+            layout.addSpacing(10)
+        else:
+            self.back_btn = None
+            layout.addSpacing(20)
 
         self.password_input = QLineEdit()
         self.password_input.setPlaceholderText("Parol")
@@ -196,6 +208,7 @@ class ExitDialog(QDialog):
         buttons.addWidget(self.confirm_btn, 1)
 
         layout.addLayout(buttons)
+        self.refit()
 
     # ------------------------------------------------------------------
     def _on_confirm(self) -> None:
@@ -212,6 +225,7 @@ class ExitDialog(QDialog):
         password = self.password_input.text()
         if not password:
             self.message.show_message("Parolni kiriting")
+            self.refit()
             return
 
         # Tekshiruv SERVERDA: parol client'da na saqlanadi, na
@@ -244,6 +258,7 @@ class ExitDialog(QDialog):
             )
             self.message.show_message("Parolsiz chiqishga ruxsat berildi", "warning")
             self.confirm_btn.setText("Baribir chiqish")
+            self.refit()
             log.error("Viloyat uchun chiqish paroli sozlanmagan")
             return
 
@@ -251,12 +266,21 @@ class ExitDialog(QDialog):
         self.password_input.clear()
         self.password_input.setFocus()
         self.message.show_message(message or "Parol noto'g'ri")
+        # Server xabari uzun bo'lishi mumkin (ikki-uch qator) —
+        # dialog o'sishi kerak, aks holda matn tugmalar ustiga
+        # chiqib qolardi.
+        self.refit()
         log.warning("Chiqish rad etildi (%s): %s", code or "-", message)
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
         self.confirm_btn.setEnabled(not busy)
         self.cancel_btn.setEnabled(not busy)
+        if self.back_btn is not None:
+            # Parol tekshirilayotganda orqaga qaytish ham bloklanadi:
+            # dialog yopilsa, javob kelganda u allaqachon yo'q
+            # obyektga signal yuborardi.
+            self.back_btn.setEnabled(not busy)
         self.password_input.setEnabled(not busy)
         self.confirm_btn.setText(
             "Tekshirilmoqda..." if busy

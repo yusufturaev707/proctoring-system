@@ -9,6 +9,10 @@ def main():
     BASE_DIR = Path(__file__).resolve().parent
     sys.path.insert(0, str(BASE_DIR / "src"))
     """Run administrative tasks."""
+    from config.env import load_env
+
+    # `.env` dagi DJANGO_SETTINGS_MODULE shu yerda ko'rinishi uchun (`config/env.py`).
+    load_env()
     os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings.local')
     try:
         from django.core.management import execute_from_command_line

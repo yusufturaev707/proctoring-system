@@ -90,7 +90,10 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
         blank=True,
         null=True,
         related_name="users",
-        help_text=_("Bo'sh bo'lsa — barcha viloyatlarni ko'radi"),
+        help_text=_(
+            "Viloyat darajasidagi rol uchun MAJBURIY — bo'sh bo'lsa xodim "
+            "admin panelda hech narsa ko'rmaydi. Butun respublika: rolda"
+        ),
     )
     zone = models.ForeignKey(
         "regions.Zone",
@@ -167,9 +170,32 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
             return False
         if self.role_id and self.role.is_active and self.role.is_global:
             return False
-        # Viloyat biriktirilmagan xodim ham cheklanmaydi - bu tarixiy
-        # xulq (`region` maydonining `help_text` iga qarang).
+        # Viloyat biriktirilmagan xodim bu yerda `False` beradi, lekin u
+        # hamma narsani KO'RMAYDI: admin yuzasida uni `lacks_region`
+        # to'xtatadi (`common.permissions.HasRegionAssignment`). Qoida
+        # shu yerda "bo'sh viloyat = cheklov yo'q" bo'lib qolgani
+        # ataylab — o'nlab `filter(region_id=user.region_id)` None bilan
+        # ishlasa `NULL` qatorlarni (bino biriktirilmagan sessiya,
+        # viloyatsiz xodim) OCHIB qo'yardi.
         return self.region_id is not None
+
+    @property
+    def lacks_region(self) -> bool:
+        """
+        Viloyat darajasidagi rol, lekin viloyat biriktirilmagan.
+
+        Ilgari bunday xodim BARCHA viloyatlarni ko'rardi (tarixiy xulq):
+        yangi hisob yaratib viloyatni tanlashni unutish yoki viloyatni
+        o'chirish jimgina butun respublika ma'lumotini ochib qo'yardi.
+        Endi xato YOPIQ tomonga: admin panelda bunday xodim hech narsa
+        ko'rmaydi va ekranda sababi aytiladi. Butun respublikani ko'rish
+        — ochiq qaror, u rolda (`Role.is_global`).
+        """
+        if self.is_superuser:
+            return False
+        if self.role_id and self.role.is_active and self.role.is_global:
+            return False
+        return self.region_id is None
 
     def has_role_permission(self, code: str) -> bool:
         if self.is_superuser:

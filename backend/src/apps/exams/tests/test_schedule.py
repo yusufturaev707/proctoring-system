@@ -17,6 +17,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from apps.exams import selectors
+from apps.exams import services as exam_services
 from apps.exams.models import Exam, ExamSchedule
 from apps.regions.models import Region, Zone
 
@@ -170,11 +171,11 @@ class NextScheduleTests(ScheduleTestCase):
 
 
 class ExamModelTests(TestCase):
-    def test_allowed_domains_fall_back_to_site_url_host(self):
+    def test_allowed_domain_comes_from_site_url(self):
         """
-        Ro'yxat bo'sh bo'lsa `site_url` domeni ishlatiladi.
+        Domen `site_url` dan olinadi — YAGONA manba.
 
-        Bu ro'yxat client'da `QWebEngineUrlRequestInterceptor`
+        Ro'yxat client'da `QWebEngineUrlRequestInterceptor`
         allowlist'iga aylanadi; bo'sh qaytsa WebView'da hech nima
         bloklanmasdi.
         """
@@ -183,10 +184,84 @@ class ExamModelTests(TestCase):
         )
         self.assertEqual(exam.get_allowed_domains(), ["ntest.uzbmb.uz"])
 
-    def test_explicit_domains_win(self):
+    def test_port_and_path_are_stripped(self):
+        """
+        Faqat HOST qoladi.
+
+        Interceptor host bo'yicha solishtiradi, ya'ni ro'yxatda port
+        yoki yo'l qolsa hech bir so'rov mos kelmasdi va butun
+        platforma bloklanardi.
+        """
         exam = Exam.objects.create(
-            name="Kimyo",
-            site_url="https://ntest.uzbmb.uz/login",
-            allowed_domains=["a.uz", "b.uz"],
+            name="Kimyo", site_url="https://test.example.uz:8443/exam/login"
         )
-        self.assertEqual(exam.get_allowed_domains(), ["a.uz", "b.uz"])
+        self.assertEqual(exam.get_allowed_domains(), ["test.example.uz"])
+
+
+class ExamSiteHeaderTests(TestCase):
+    """
+    Platforma sarlavhasi: "Authorization: Bearer <token>".
+
+    Qiymat KREDENSIAL, shuning uchun u bazada shifrlangan holda
+    yotadi va admin API'sida faqat niqob bo'lib qaytadi. Ilgari bu
+    o'rinda `allowed_domains` ro'yxati bor edi va u boshqa savolga
+    javob berardi ("qaysi domenlar ochiq"); yangi maydon esa
+    platformaga KIRISHNI ta'minlaydi.
+    """
+
+    def setUp(self):
+        self.exam = Exam.objects.create(
+            name="Ingliz tili", site_url="https://ntest.uzbmb.uz/login"
+        )
+
+    def test_round_trip(self):
+        header = "Authorization: Bearer Sccpeeiruieruierei3434u"
+        exam_services.set_site_header(self.exam, header)
+        self.exam.save(update_fields=["site_header_encrypted"])
+
+        self.exam.refresh_from_db()
+        self.assertEqual(exam_services.get_site_header(self.exam), header)
+
+    def test_value_is_not_stored_in_clear_text(self):
+        """
+        Bazani o'qish tokenni bermasligi kerak.
+
+        Bu `Camera.password_encrypted` bilan bir xil qoida: bitta
+        SQL dump tashqi platformaning API'siga to'liq kirish
+        berardi.
+        """
+        exam_services.set_site_header(
+            self.exam, "Authorization: Bearer Sccpeeiruieruierei3434u"
+        )
+        self.assertNotIn("Sccpeeiruieruierei3434u", self.exam.site_header_encrypted)
+        self.assertTrue(self.exam.site_header_encrypted)
+
+    def test_empty_value_clears_the_header(self):
+        exam_services.set_site_header(self.exam, "Authorization: Bearer x")
+        exam_services.set_site_header(self.exam, "")
+
+        self.assertEqual(self.exam.site_header_encrypted, "")
+        self.assertEqual(exam_services.get_site_header(self.exam), "")
+
+    def test_mask_keeps_the_name_and_hides_the_value(self):
+        exam_services.set_site_header(
+            self.exam, "Authorization: Bearer Sccpeeiruieruierei3434u"
+        )
+        masked = exam_services.mask_site_header(self.exam)
+
+        self.assertTrue(masked.startswith("Authorization: "))
+        self.assertNotIn("Sccpeeiruieruierei3434u", masked)
+        # Administrator "to'g'ri token turibdimi?" degan savolga javob
+        # topishi uchun boshi va oxiri qoladi.
+        self.assertIn("Bear", masked)
+        self.assertIn("434u", masked)
+
+    def test_mask_is_empty_when_no_header(self):
+        self.assertEqual(exam_services.mask_site_header(self.exam), "")
+
+    def test_header_without_colon_is_fully_masked(self):
+        """Nomi ajratilmagan qiymatning qaysi qismi sir ekani noma'lum."""
+        exam_services.set_site_header(self.exam, "SccpeeiruieruiereiXYZ")
+        masked = exam_services.mask_site_header(self.exam)
+
+        self.assertNotIn("eeiruieruierei", masked)

@@ -49,26 +49,28 @@ export default function Login() {
         display: 'grid',
         placeItems: 'center',
         p: 2,
+        // Fon TEMADAN: ilgari qattiq yozilgan ko'k gradient edi va
+        // yashil sxemada kirish sahifasi boshqa mahsulotdek ko'rinardi.
         background: (theme) =>
-          theme.palette.mode === 'light'
-            ? 'linear-gradient(135deg, #E3F2FD 0%, #F4F6F8 55%, #E0F2F1 100%)'
-            : 'linear-gradient(135deg, #0A1929 0%, #132F4C 100%)',
+          `radial-gradient(1200px 600px at 10% -10%, ${theme.palette.m3.primaryContainer} 0%, transparent 60%),
+           radial-gradient(900px 500px at 110% 110%, ${theme.palette.m3.secondaryContainer} 0%, transparent 55%),
+           ${theme.palette.background.default}`,
       }}
     >
-      <Card sx={{ width: '100%', maxWidth: 420 }}>
-        <CardContent sx={{ p: 4 }}>
-          <Stack spacing={1} alignItems="center" sx={{ mb: 3 }}>
+      <Card sx={{ width: '100%', maxWidth: 420, borderRadius: '28px', bgcolor: 'm3.surfaceContainerLowest' }}>
+        <CardContent sx={{ p: { xs: 3, sm: 4.5 }, '&:last-child': { pb: { xs: 3, sm: 4.5 } } }}>
+          <Stack spacing={1} alignItems="center" sx={{ mb: 3.5 }}>
             <Box
               sx={{
-                width: 56, height: 56, borderRadius: 3, display: 'grid', placeItems: 'center',
+                width: 56, height: 56, borderRadius: '16px', display: 'grid', placeItems: 'center', mb: 1,
                 bgcolor: 'primary.main', color: 'primary.contrastText',
               }}
             >
               <ShieldIcon fontSize="large" />
             </Box>
-            <Typography variant="h5">Proctoring</Typography>
+            <Typography variant="h5" component="h1">Proctoring</Typography>
             <Typography variant="body2" color="text.secondary">
-              Boshqaruv paneliga kirish
+              Imtihon nazorati tizimiga kirish
             </Typography>
           </Stack>
 

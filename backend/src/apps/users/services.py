@@ -69,6 +69,12 @@ DEFAULT_PERMISSIONS: list[tuple[str, str, str]] = [
     ("regions.manage", "Hududlarni boshqarish", "regions"),
     ("exams.view", "Imtihonlarni ko'rish", "exams"),
     ("exams.manage", "Imtihonlarni boshqarish", "exams"),
+    # Kompyuter broni — imtihon SOZLAMASIDAN alohida ruxsat. Bronni
+    # binodagi administrator yoki tashqi taqsimlash tizimi (JWT bilan)
+    # yuritadi; ularga platforma kredensiali va imtihon vaqtini
+    # o'zgartirish huquqi (`exams.manage`) kerak emas.
+    ("bookings.view", "Kompyuter bronlarini ko'rish", "exams"),
+    ("bookings.manage", "Kompyuter bronlarini boshqarish", "exams"),
     ("controls.view", "Sozlamalarni ko'rish", "controls"),
     ("controls.manage", "Sozlamalarni boshqarish", "controls"),
     # Tarmoq chegarasi — client siyosatidan ALOHIDA ruxsat.
@@ -88,6 +94,23 @@ DEFAULT_PERMISSIONS: list[tuple[str, str, str]] = [
     # huquqi bilan birga kiosk kalitini ham berib qo'yardik.
     ("controls.exit_password_view", "Chiqish parollarini ko'rish", "controls"),
     ("controls.exit_password_manage", "Chiqish parollarini boshqarish", "controls"),
+    # AI kuzatuv siyosati - yana bir ALOHIDA ruxsat.
+    #
+    # Bu yerdagi qiymatlar chetlashtirish statistikasiga bevosita
+    # ta'sir qiladi: xavf chegarasini pasaytirish ko'proq talabgorni
+    # "yuqori xavf" ro'yxatiga chiqaradi, dalil to'plashni o'chirish
+    # esa keyinchalik hech narsani tekshirib bo'lmaydigan qiladi.
+    # Skrinshot oralig'ini o'zgartirish bilan bir xil ruxsatga
+    # qo'shib bo'lmaydi.
+    ("controls.proctoring_view", "Kuzatuv siyosatini ko'rish", "controls"),
+    ("controls.proctoring_manage", "Kuzatuv siyosatini boshqarish", "controls"),
+    # Dalil (kadr va video klip) - talabgorning tasviri.
+    #
+    # `sessions.view` dan ALOHIDA: sessiyalar ro'yxatini ko'rish
+    # statistik ish, talabgorning videosini ochish esa shaxsiy
+    # ma'lumotga kirish. Ikkinchisi tor doiraga beriladi va har bir
+    # ochish audit izida qoladi.
+    ("evidence.view", "Dalillarni ko'rish", "sessions"),
     ("audit.view", "Audit yozuvlarini ko'rish", "audit"),
     # Desktop client (operator ish o'rni)
     ("client.operate", "Desktop client'da ishlash", "client"),

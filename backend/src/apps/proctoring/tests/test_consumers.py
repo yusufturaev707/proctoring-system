@@ -15,13 +15,18 @@ tashqaridagi binoga obuna bo'la olmaydi (WebSocket orqali ma'lumot
 sizib chiqishining oldini oladi).
 """
 
+from unittest import mock
+
+from channels.layers import InMemoryChannelLayer
 from django.test import TransactionTestCase
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from apps.common.tests.utils import redis_available
 from apps.common.tests.ws import WebsocketCommunicator
 from apps.common.utils.crypto import hash_token
 from apps.proctoring.consumers import (
     CLOSE_FORBIDDEN,
+    CLOSE_LAYER_UNAVAILABLE,
     CLOSE_UNAUTHORIZED,
     ClientConsumer,
     MonitorConsumer,
@@ -237,3 +242,103 @@ class MonitorConsumerTests(TransactionTestCase):
         message = await communicator.receive_json_from()
         self.assertEqual(message["groups"], [])
         await communicator.disconnect()
+
+    async def test_resubscribe_does_not_duplicate_groups(self):
+        """Panel zonalar o'zgarganda qayta obuna bo'ladi — ro'yxat o'smasligi kerak."""
+        from asgiref.sync import sync_to_async
+
+        communicator = await self._connect(
+            await sync_to_async(access_token)(self.proctor)
+        )
+        await communicator.connect()
+        await communicator.receive_json_from()
+
+        for _ in range(2):
+            await communicator.send_json_to(
+                {"action": "subscribe", "zones": [self.zone.pk]}
+            )
+            message = await communicator.receive_json_from()
+        self.assertEqual(message["groups"], [f"zone.{self.zone.pk}"])
+        await communicator.disconnect()
+
+
+class _BrokenLayer(InMemoryChannelLayer):
+    """Redis'i ishlamay qolgan channel layer: qayta urinishlar ham tugagan."""
+
+    async def group_add(self, group, channel):
+        raise RedisConnectionError(
+            "Error 22 while writing to socket. The semaphore timeout period has expired."
+        )
+
+    async def group_discard(self, group, channel):
+        raise RedisConnectionError("Connection closed by server.")
+
+
+class ConsumerLayerFailureTests(TransactionTestCase):
+    """
+    Channel layer xatosi consumer'ni YIQITMAYDI — ulanish 1011 bilan
+    toza yopiladi va client backoff bilan qayta ulanadi.
+
+    Ilgari istisno to'g'ridan-to'g'ri ASGI'ga chiqardi ("Exception in
+    ASGI application") va panel "ulangan" ko'rinib turib hodisa
+    olmasdi.
+    """
+
+    def setUp(self):
+        self.region = factories.make_region()
+        self.zone = factories.make_zone(region=self.region)
+        self.proctor = factories.make_user(
+            permissions=["sessions.view"], region=self.region
+        )
+        patcher = mock.patch(
+            "channels.consumer.get_channel_layer", return_value=_BrokenLayer()
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    async def test_monitor_subscribe_failure_closes_with_1011(self):
+        from asgiref.sync import sync_to_async
+
+        token = await sync_to_async(access_token)(self.proctor)
+        communicator = WebsocketCommunicator(
+            MonitorConsumer.as_asgi(), f"/ws/monitor/?token={token}"
+        )
+        connected, _ = await communicator.connect()
+        self.assertTrue(connected)
+        await communicator.receive_json_from()  # "connected"
+
+        await communicator.send_json_to({"action": "subscribe", "zones": [self.zone.pk]})
+        message = await communicator.receive_output()
+        self.assertEqual(message["type"], "websocket.close")
+        self.assertEqual(message["code"], CLOSE_LAYER_UNAVAILABLE)
+        # `disconnect` dagi `group_discard` xatosi ham yutiladi.
+        await communicator.disconnect()
+
+    async def test_client_connect_failure_closes_with_1011(self):
+        if not redis_available():
+            self.skipTest("Redis mavjud emas")
+        from asgiref.sync import sync_to_async
+
+        session = await sync_to_async(factories.make_session)()
+        raw_token = f"layer-failure-{session.pk}"
+        await sync_to_async(session_state.store_session_token)(
+            token_hash=hash_token(raw_token),
+            payload={
+                "session_id": session.pk,
+                "public_id": str(session.public_id),
+                "exam_id": session.exam_id,
+                "device_id": None,
+                "zone_id": session.zone_id,
+                "status": session.status,
+            },
+        )
+        self.addCleanup(session_state.revoke_session_token, hash_token(raw_token))
+
+        communicator = WebsocketCommunicator(
+            ClientConsumer.as_asgi(),
+            "/ws/client/",
+            headers=[(b"x-proctoring-session", raw_token.encode())],
+        )
+        connected, code = await communicator.connect()
+        self.assertFalse(connected)
+        self.assertEqual(code, CLOSE_LAYER_UNAVAILABLE)

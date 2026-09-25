@@ -17,18 +17,22 @@ import { RiskBar, StatusChip } from '../components/StatusChip'
 import { useResource } from '../components/data/useResource'
 import { useAuth } from '../context/AuthContext'
 import { exportCsv } from '../utils/exportCsv'
-import { useExamOptions, useZoneOptions } from './crud/shared'
+import { useExamOptions, useRegionOptions, useZoneOptions, zonesOfRegion } from './crud/shared'
 import { sessions as sessionsApi } from '../api/endpoints'
 import { STATUS_LABEL } from '../theme'
-import { formatDateTime } from '../utils/labels'
+import { computerLabel } from '../utils/labels'
+import { filterFieldSx } from '../components/data/responsive'
 
-const URL_FILTERS = ['status', 'zone', 'exam', 'exam_date']
+const URL_FILTERS = ['status', 'zone__region', 'zone', 'exam', 'exam_date']
 
 export default function Sessions() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
-  const { can } = useAuth()
+  const { can, user } = useAuth()
   const { options: zoneOptions } = useZoneOptions()
+  const { options: regionOptions } = useRegionOptions()
+  // Viloyat xodimi faqat o'z viloyatini ko'radi — viloyat tanlovi ma'nosiz.
+  const showRegion = !user?.is_region_scoped
   const { options: examOptions } = useExamOptions()
 
   const resource = useResource({
@@ -52,15 +56,28 @@ export default function Sessions() {
     if (Object.keys(fromUrl).length > 0) setFilters(fromUrl)
   }, [searchParams, setFilters])
 
-  const setFilter = (name) => (event) => {
+  /**
+   * `resets` — bog'liq filtrlar: viloyat almashsa eski bino tozalanadi,
+   * aks holda so'rov "Andijon + Toshkentdagi bino" bo'lib, jadval
+   * sababsiz bo'sh chiqardi.
+   */
+  const setFilter = (name, resets = []) => (event) => {
     const value = event.target.value
-    resource.setFilter(name, value)
+    resource.setFilters((prev) => {
+      const nextFilters = { ...prev, [name]: value }
+      resets.forEach((child) => { nextFilters[child] = '' })
+      return nextFilters
+    })
     // URL'ni ham yangilaymiz — havolani ulashsa, filtr saqlanadi.
     const next = new URLSearchParams(searchParams)
     if (value) next.set(name, value)
     else next.delete(name)
+    resets.forEach((child) => next.delete(child))
     setSearchParams(next, { replace: true })
   }
+
+  const regionFilter = resource.filters.zone__region
+  const zoneChoices = regionFilter ? zonesOfRegion(zoneOptions, regionFilter) : zoneOptions
 
   const clearAll = () => {
     resource.resetFilters()
@@ -75,11 +92,15 @@ export default function Sessions() {
   const columns = useMemo(
     () => [
       { field: 'candidate_name', headerName: 'Talabgor', flex: 1.4, minWidth: 190, sortable: false },
-      { field: 'masked_pinfl', headerName: 'JSHSHIR', width: 145, sortable: false },
+      { field: 'pinfl', headerName: 'JSHSHIR', width: 165, sortable: false },
       { field: 'exam_name', headerName: 'Imtihon', flex: 1, minWidth: 150, sortable: false },
-      { field: 'region_name', headerName: 'Viloyat', width: 145, sortable: false },
+      // Viloyat xodimida hamma qator bir xil viloyat — ustun joy yeydi, xolos.
+      ...(showRegion ? [{ field: 'region_name', headerName: 'Viloyat', width: 145, sortable: false }] : []),
       { field: 'zone_name', headerName: 'Bino', width: 125, sortable: false },
-      { field: 'computer_code', headerName: 'Kompyuter', width: 125, sortable: false },
+      {
+        field: 'computer_code', headerName: 'Kompyuter', width: 140, sortable: false,
+        valueGetter: (value, row) => computerLabel(row.computer_number, value),
+      },
       {
         field: 'attempt_no', headerName: 'Urinish', width: 85,
         align: 'center', headerAlign: 'center', sortable: false,
@@ -100,26 +121,30 @@ export default function Sessions() {
         field: 'event_count', headerName: 'Hodisa', width: 95,
         align: 'right', headerAlign: 'right', sortable: false,
       },
-      {
-        field: 'started_at', headerName: 'Boshlangan', width: 170,
-        valueGetter: (value) => formatDateTime(value),
-      },
-      {
-        field: 'finished_at', headerName: 'Tugagan', width: 170,
-        valueGetter: (value) => formatDateTime(value),
-      },
+      // «Boshlangan»/«Tugagan» ro'yxatda YO'Q: ikkita 170 px li ustun
+      // jadvalni gorizontal skrollga majbur qilardi va proktor ro'yxatda
+      // ularni izlamaydi — vaqt savoli bitta sessiyaga qaralganda
+      // tug'iladi va tafsilot sahifasida bor.
     ],
-    [],
+    [showRegion],
   )
 
   const toolbar = (
     <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
-      <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" useFlexGap sx={{ p: 2 }}>
+      <Stack
+        direction="row"
+        columnGap={1.5}
+        rowGap={1.25}
+        alignItems="center"
+        flexWrap="wrap"
+        useFlexGap
+        sx={{ p: { xs: 1.5, sm: 2 } }}
+      >
         <TextField
           value={resource.search}
           onChange={(event) => resource.setSearch(event.target.value)}
           placeholder="IP, MAC yoki tashqi ID…"
-          sx={{ maxWidth: 250 }}
+          sx={{ flex: { xs: '1 1 100%', sm: '0 1 250px' }, maxWidth: { sm: 250 } }}
           InputProps={{
             startAdornment: (
               <InputAdornment position="start"><SearchIcon fontSize="small" color="disabled" /></InputAdornment>
@@ -129,7 +154,7 @@ export default function Sessions() {
 
         <TextField
           select label="Holat" value={resource.filters.status ?? ''}
-          onChange={setFilter('status')} sx={{ minWidth: 180, maxWidth: 200 }}
+          onChange={setFilter('status')} sx={filterFieldSx(180, 200, { half: true })}
         >
           <MenuItem value="">Barchasi</MenuItem>
           {Object.entries(STATUS_LABEL).map(([value, label]) => (
@@ -137,19 +162,32 @@ export default function Sessions() {
           ))}
         </TextField>
 
+        {showRegion && (
+          <TextField
+            select label="Viloyat" value={regionFilter ?? ''}
+            onChange={setFilter('zone__region', ['zone'])} sx={filterFieldSx(180, 220, { half: true })}
+          >
+            <MenuItem value="">Barchasi</MenuItem>
+            {regionOptions.map((option) => (
+              <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
+            ))}
+          </TextField>
+        )}
+
         <TextField
           select label="Bino" value={resource.filters.zone ?? ''}
-          onChange={setFilter('zone')} sx={{ minWidth: 190, maxWidth: 230 }}
+          onChange={setFilter('zone')} sx={filterFieldSx(190, 240, { half: true })}
+          SelectProps={{ MenuProps: { PaperProps: { sx: { maxHeight: 420 } } } }}
         >
           <MenuItem value="">Barchasi</MenuItem>
-          {zoneOptions.map((option) => (
+          {zoneChoices.map((option) => (
             <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
           ))}
         </TextField>
 
         <TextField
           select label="Imtihon" value={resource.filters.exam ?? ''}
-          onChange={setFilter('exam')} sx={{ minWidth: 180, maxWidth: 220 }}
+          onChange={setFilter('exam')} sx={filterFieldSx(180, 220, { half: true })}
         >
           <MenuItem value="">Barchasi</MenuItem>
           {examOptions.map((option) => (
@@ -160,7 +198,7 @@ export default function Sessions() {
         <TextField
           type="date" label="Sana" value={resource.filters.exam_date ?? ''}
           onChange={setFilter('exam_date')} InputLabelProps={{ shrink: true }}
-          sx={{ minWidth: 165, maxWidth: 180 }}
+          sx={filterFieldSx(165, 180, { half: true })}
         />
 
         {activeCount > 0 && (

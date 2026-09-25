@@ -5,7 +5,9 @@ import { cocoGroups as cocoGroupsApi } from '../../api/endpoints'
 export default function CocoGroupsPage() {
   return (
     <ResourcePage
-      title="COCO guruhlari"
+      // Barcha viloyatlar uchun bitta yozuv — o'zgartirish respublika darajasida.
+      shared
+      title="Obyekt guruhlari"
       subtitle="Aniqlanadigan obyektlarni guruhlash uchun ma’lumotnoma"
       queryKey="coco-groups"
       api={cocoGroupsApi}

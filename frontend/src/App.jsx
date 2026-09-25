@@ -4,8 +4,8 @@ import { Box, CircularProgress } from '@mui/material'
 
 import AppLayout from './layout/AppLayout'
 import Login from './pages/Login'
-import { ROUTE_LOADERS } from './layout/navigation'
-import { ForbiddenState } from './components/feedback/States'
+import { NAVIGATION, ROUTE_LOADERS } from './layout/navigation'
+import { ForbiddenState, RegionMissingState } from './components/feedback/States'
 import { useAuth } from './context/AuthContext'
 
 // Sahifalar `ROUTE_LOADERS` dan olinadi — bir joyda saqlangani menyu
@@ -23,6 +23,7 @@ const DeviceTokens = lazy(ROUTE_LOADERS['/device-tokens'])
 const ExamTypesPage = lazy(ROUTE_LOADERS['/exam-types'])
 const ExamsPage = lazy(ROUTE_LOADERS['/exams'])
 const ExamSchedulesPage = lazy(ROUTE_LOADERS['/exam-schedules'])
+const ComputerBookings = lazy(ROUTE_LOADERS['/computer-bookings'])
 const Users = lazy(ROUTE_LOADERS['/users'])
 const Roles = lazy(ROUTE_LOADERS['/roles'])
 const Settings = lazy(ROUTE_LOADERS['/settings'])
@@ -33,6 +34,8 @@ const HotkeysPage = lazy(ROUTE_LOADERS['/hotkeys'])
 const CocoObjectsPage = lazy(ROUTE_LOADERS['/coco-objects'])
 const CocoGroupsPage = lazy(ROUTE_LOADERS['/coco-groups'])
 const ModelVersionsPage = lazy(ROUTE_LOADERS['/model-versions'])
+const ProctoringPoliciesPage = lazy(ROUTE_LOADERS['/proctoring-policies'])
+const RiskWeightsPage = lazy(ROUTE_LOADERS['/risk-weights'])
 const AuditLogs = lazy(ROUTE_LOADERS['/audit'])
 const Profile = lazy(ROUTE_LOADERS['/profile'])
 
@@ -56,12 +59,32 @@ function RequireAuth({ children }) {
  * Bu komponentni chetlab o'tish DevTools'da bir necha soniyalik ish.
  */
 function Guard({ permission, children }) {
-  const { can } = useAuth()
+  const { can, lacksRegion } = useAuth()
+  // Viloyatsiz viloyat xodimi — sabab ruxsatda emas, hisobda. Server
+  // baribir hech narsa bermaydi (`region_not_assigned`), bo'sh jadval va
+  // qizil xatolar o'rniga bitta tushunarli ekran.
+  if (lacksRegion) return <RegionMissingState />
   return can(permission) ? children : <ForbiddenState permission={permission} />
 }
 
+/**
+ * Bosh sahifa — ruxsatga qarab.
+ *
+ * `/` Boshqaruv paneli (`dashboard.view`). Operator va Kuzatuvchi kabi
+ * rollarda u yo'q va ilgari login'dan keyin birinchi ko'rinadigan narsa
+ * «Ruxsat yo'q» ekrani edi. Endi — menyudagi birinchi ruxsat berilgan
+ * sahifa (menyu tartibi — ish tartibi).
+ */
+function Home() {
+  const { can, lacksRegion } = useAuth()
+  if (lacksRegion) return <RegionMissingState />
+  if (can('dashboard.view')) return <Dashboard />
+  const first = NAVIGATION.flatMap((group) => group.items).find((item) => can(item.permission))
+  return first ? <Navigate to={first.path} replace /> : <ForbiddenState />
+}
+
 const ROUTES = [
-  { path: '/', element: <Dashboard />, permission: 'dashboard.view' },
+  { path: '/', element: <Home />, permission: null },
   { path: '/live', element: <LiveMonitor />, permission: 'sessions.view' },
   { path: '/sessions', element: <Sessions />, permission: 'sessions.view' },
   { path: '/sessions/:id', element: <SessionDetail />, permission: 'sessions.view' },
@@ -74,6 +97,7 @@ const ROUTES = [
   { path: '/exam-types', element: <ExamTypesPage />, permission: 'exams.view' },
   { path: '/exams', element: <ExamsPage />, permission: 'exams.view' },
   { path: '/exam-schedules', element: <ExamSchedulesPage />, permission: 'exams.view' },
+  { path: '/computer-bookings', element: <ComputerBookings />, permission: 'bookings.view' },
   { path: '/users', element: <Users />, permission: 'users.view' },
   { path: '/roles', element: <Roles />, permission: 'users.view' },
   { path: '/settings', element: <Settings />, permission: 'controls.view' },
@@ -84,6 +108,12 @@ const ROUTES = [
   { path: '/coco-objects', element: <CocoObjectsPage />, permission: 'controls.view' },
   { path: '/coco-groups', element: <CocoGroupsPage />, permission: 'controls.view' },
   { path: '/model-versions', element: <ModelVersionsPage />, permission: 'controls.view' },
+  {
+    path: '/proctoring-policies',
+    element: <ProctoringPoliciesPage />,
+    permission: 'controls.proctoring_view',
+  },
+  { path: '/risk-weights', element: <RiskWeightsPage />, permission: 'controls.proctoring_view' },
   { path: '/audit', element: <AuditLogs />, permission: 'audit.view' },
   { path: '/profile', element: <Profile />, permission: null },
 ]

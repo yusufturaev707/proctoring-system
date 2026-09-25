@@ -14,7 +14,7 @@ from apps.proctoring.models import (
 @admin.register(ExamSession)
 class ExamSessionAdmin(admin.ModelAdmin):
     list_display = (
-        "id", "public_id", "masked_pinfl", "full_name", "exam", "zone",
+        "id", "public_id", "pinfl", "full_name", "exam", "zone",
         "status", "risk_score", "started_at", "finished_at",
     )
     list_filter = ("status", "exam_date", "exam", "zone__region", "is_anonymized")
@@ -46,9 +46,16 @@ class ProctoringEventAdmin(admin.ModelAdmin):
 
 @admin.register(FaceVerificationLog)
 class FaceVerificationLogAdmin(admin.ModelAdmin):
-    list_display = ("id", "session", "stage", "source", "score", "passed", "occurred_at")
-    list_filter = ("stage", "source", "passed")
-    raw_id_fields = ("session",)
+    # `session` BO'SH bo'lishi mumkin (kirishda rad etilgan urinish),
+    # shuning uchun ro'yxatda `pinfl` va `exam` ham turadi - aks holda
+    # aynan shu qatorlarni bir-biridan ajratib bo'lmasdi.
+    list_display = (
+        "id", "session", "pinfl", "exam", "stage", "source",
+        "score", "threshold", "passed", "occurred_at",
+    )
+    list_filter = ("stage", "source", "passed", "exam")
+    search_fields = ("pinfl",)
+    raw_id_fields = ("session", "exam", "zone")
     show_full_result_count = False
 
 

@@ -31,10 +31,19 @@ class ApiWorker(QThread):
 
     succeeded(object) - natija (dict, list yoki None)
     failed(str, str)  - (foydalanuvchiga xabar, backend `code`)
+    failed_details(str, str, object)
+                      - xuddi shu, ustiga serverning TUZILGAN
+                        `error.details` qismi (bo'lmasa `None`).
+
+    Uchinchi signal ALOHIDA, `failed` ning imzosi o'zgartirilmadi:
+    unga o'nlab joy ulangan va tafsilot faqat bir nechtasiga kerak
+    (masalan JSHSHIR sahifasi — "talabgor qaysi kompyuterga borishi
+    kerak"). Ikkala signal ham HAR xatoda chiqadi.
     """
 
     succeeded = pyqtSignal(object)
     failed = pyqtSignal(str, str)
+    failed_details = pyqtSignal(str, str, object)
 
     def __init__(self, func: Callable[..., Any], *args, parent=None, **kwargs) -> None:
         super().__init__(parent)
@@ -48,10 +57,13 @@ class ApiWorker(QThread):
         except ClientError as exc:
             # Kutilgan xato - xabar allaqachon foydalanuvchi tilida
             # (`ApiClient._unwrap` uni `core.errors` orqali tarjima qilgan).
+            self.failed_details.emit(exc.message, exc.code, exc.details)
             self.failed.emit(exc.message, exc.code)
         except Exception as exc:
             log.exception("Fon vazifasida kutilmagan xato")
-            self.failed.emit("Kutilmagan xato: {}".format(str(exc)[:120]), "internal")
+            message = "Kutilmagan xato: {}".format(str(exc)[:120])
+            self.failed_details.emit(message, "internal", None)
+            self.failed.emit(message, "internal")
         else:
             self.succeeded.emit(result)
 

@@ -353,9 +353,21 @@ check("noto'g'ri JSHSHIR rad etildi", resp.status_code == 400, str(resp.status_c
 
 dim = settings.PROCTORING["FACE_EMBEDDING_DIM"]
 embedding = [0.05] * dim
-path = "/api/v1/client/face/verify/"
-resp = client.post(path, data=json.dumps({"challenge": challenge, "embedding": embedding,
+
+# Avval MOS KELMAGAN urinish: sessiya yaratilmaydi va `challenge`
+# sarflanmaydi - talabgor qayta urinib ko'radi.
+path = "/api/v1/client/face/attempt/"
+resp = client.post(path, data=json.dumps({"challenge": challenge, "score": 21,
                                           "faces_detected": 1}),
+                   content_type="application/json", **signed(path))
+data = body(resp)
+check("face attempt 201", resp.status_code == 201, f"{resp.status_code} {data}")
+check("urinish sanaldi", data.get("data", {}).get("attempts", 0) >= 1, str(data))
+
+path = "/api/v1/client/face/verify/"
+# Ball ham yuboriladi: solishtirishni client bajargan.
+resp = client.post(path, data=json.dumps({"challenge": challenge, "embedding": embedding,
+                                          "score": 92, "faces_detected": 1}),
                    content_type="application/json", **signed(path))
 data = body(resp)
 check("face verify 201", resp.status_code == 201, f"{resp.status_code} {data}")
@@ -428,19 +440,27 @@ check("events 202", resp.status_code == 202, f"{resp.status_code} {data}")
 check("6 ta hodisa qabul qilindi", data.get("data", {}).get("accepted") == 6)
 
 path = "/api/v1/client/heartbeat/"
-resp = client.post(path, data=json.dumps({"monitors": 1, "network_ok": True}),
+# `face_checks` — client bajargan solishtirishlar soni. Serverga faqat
+# xatolar boradi, ya'ni jami sonni faqat client aytadi.
+resp = client.post(path, data=json.dumps({"monitors": 1, "network_ok": True,
+                                          "face_checks": 7}),
                    content_type="application/json", **signed(path, session_token))
 data = body(resp)
 check("heartbeat 200", resp.status_code == 200, f"{resp.status_code} {data}")
 risk = data.get("data", {}).get("risk_score", 0)
 check("risk_score hisoblandi", risk > 0, f"risk={risk}")
 
+# Davriy FaceID: SOLISHTIRISH CLIENTDA bo'lgan, serverga faqat
+# MUVAFFAQIYATSIZ natija keladi (ball + oradagi muvaffaqiyatlar soni).
 path = "/api/v1/client/face/periodic/"
-resp = client.post(path, data=json.dumps({"embedding": embedding, "faces_detected": 1}),
+resp = client.post(path, data=json.dumps({"score": 12, "faces_detected": 1,
+                                          "passed_since_last": 3}),
                    content_type="application/json", **signed(path, session_token))
 data = body(resp)
 check("periodic face 200", resp.status_code == 200, f"{resp.status_code} {data}")
-check("server qayta hisobladi", data.get("data", {}).get("score", 0) > 0)
+check("chegara qo'llandi", data.get("data", {}).get("passed") is False, str(data))
+check("muvaffaqiyatsizlik sanaldi",
+      data.get("data", {}).get("fail_count", 0) == 1, str(data))
 
 print("\n=== 4. Celery buffer -> PostgreSQL ===")
 from apps.proctoring.models import ExamSession, ProctoringEvent  # noqa: E402

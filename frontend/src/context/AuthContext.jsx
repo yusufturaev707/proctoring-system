@@ -54,9 +54,32 @@ export function AuthProvider({ children }) {
     [user],
   )
 
+  /**
+   * UMUMIY ma'lumotni (rol, sozlama, imtihon, viloyatlar ro'yxati)
+   * o'zgartirish — ruxsat kodi YETARLI EMAS, respublika darajasi ham
+   * kerak (backend: `RepublicLevelWrite`). Viloyat xodimi bunday
+   * sahifalarni o'qiydi, lekin «Qo'shish»/«Tahrirlash» ko'rmaydi —
+   * aks holda har bir urinish 403 bilan qaytardi.
+   */
+  const canShared = useCallback(
+    (code) => can(code) && !user?.is_region_scoped,
+    [can, user],
+  )
+
   const value = useMemo(
-    () => ({ user, loading, login, logout, can, isAuthenticated: Boolean(user) }),
-    [user, loading, login, logout, can],
+    () => ({
+      user,
+      loading,
+      login,
+      logout,
+      can,
+      canShared,
+      // Viloyat darajasidagi rol, lekin viloyat biriktirilmagan — server
+      // bunday xodimga admin panelda hech narsa bermaydi.
+      lacksRegion: Boolean(user?.lacks_region),
+      isAuthenticated: Boolean(user),
+    }),
+    [user, loading, login, logout, can, canShared],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

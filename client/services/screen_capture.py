@@ -38,9 +38,20 @@ Muqobili - diskka yozish, lekin u imtihon mashinasida talabgor
 ekranining nusxasini qoldiradi va bu skrinshotni umuman yubormaslikdan
 battar.
 
-Veb-kamera kadrlari BU YERDA yuborilmaydi: ularning o'z kanali bor
-(davriy FaceID, `image_key`), fayl tizimi yo'li esa `kind` maydonini
-umuman qabul qilmaydi - `ProctoringScreenshot` da bunday ustun yo'q.
+Kamera kadri ALOHIDA RASM bo'lib yuborilmaydi: fayl tizimi yo'li
+`kind` maydonini umuman qabul qilmaydi (`ProctoringScreenshot` da
+bunday ustun yo'q). U skrinshotning O'ZIGA, pastki burchakdagi kichik
+ramkaga qo'shiladi (`services/camera_overlay.py`) - bitta rasm "ekranda
+nima bo'ldi" va "oldida kim o'tirgan edi" degan ikkala savolga javob
+beradi. Ramkalar ekran USTIGA emas, uning OSTIGA qo'shilgan tasmaga
+chiziladi - test sahifasining hech bir qismi yopilmaydi.
+
+DEDUP RAMKASIZ ekran bo'yicha hisoblanadi: ramka fon thread'ida,
+kodlashdan oldin qo'yiladi. Aks holda talabgorning har bir harakati
+"ekran o'zgardi" deb o'qilib, dedup amalda o'chib qolardi va trafik
+~10 barobar oshardi. Odamning almashishi bundan qochib qolmaydi:
+`_FORCE_SEND_AFTER_SKIPS` kamida daqiqada bitta kadrni majburiy
+yuboradi, davriy FaceID esa uni alohida tekshiradi.
 """
 
 from __future__ import annotations
@@ -54,11 +65,12 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from PyQt6.QtCore import QBuffer, QIODevice, QObject, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QImage, QPainter
+from PyQt6.QtGui import QImage, QImageWriter, QPainter
 from PyQt6.QtWidgets import QApplication
 
 from config import SCREENSHOT_ENABLED, SCREENSHOT_RETRY_QUEUE
 from core.errors import ClientError
+from services import local_archive, runtime_settings
 from services.api_client import ApiClient
 from services.repositories import ProctoringRepository
 from services.workers import ApiWorker, WorkerHolder
@@ -72,8 +84,8 @@ log = logging.getLogger(__name__)
 #: ishlaydi va farqni tushuntirish qiyin bo'ladi.
 _FALLBACK = {
     "screenshot_interval": 10,
-    "quality": 65,
-    "max_width": 960,
+    "quality": 80,
+    "max_width": 1920,
     "dedup_threshold": 6,
 }
 
@@ -120,6 +132,12 @@ class CaptureConfig:
     quality: int
     max_width: int
     dedup_threshold: int
+    #: Skrinshot ostiga kamera tasmasi qo'shiladimi va ramka ulushi
+    #: (0..1). Imtihon profilidan (`capture.camera_overlay*`), zaxira -
+    #: `.env`: tasma har kadrni ~24% og'irlashtiradi, ya'ni bu trafik
+    #: bilan kelishuv va uni imtihon egasi hal qiladi.
+    camera_overlay: bool = True
+    camera_overlay_ratio: float = 0.16
 
     @classmethod
     def from_server(cls, config: Optional[dict]) -> "CaptureConfig":
@@ -146,6 +164,10 @@ class CaptureConfig:
             max_width=max(320, value("max_width")),
             # `0` - dedup butunlay o'chirilgan, har kadr yuboriladi.
             dedup_threshold=max(0, min(64, dedup)),
+            camera_overlay=runtime_settings.get(config, "capture.camera_overlay"),
+            camera_overlay_ratio=runtime_settings.get(
+                config, "capture.camera_overlay_percent"
+            ),
         )
 
 
@@ -262,23 +284,39 @@ def hamming(left: int, right: int) -> int:
 # --------------------------------------------------------------------------
 # Kodlash
 # --------------------------------------------------------------------------
-def encode_jpeg(image: QImage, *, max_width: int, quality: int) -> Optional[Frame]:
+def encode_jpeg(image: QImage, *, max_width: int, quality: int,
+                cameras=None, overlay_ratio: float = 0.16) -> Optional[Frame]:
     """
-    Kadrni miqyoslaydi va JPEG'ga kodlaydi.
+    Kadrni miqyoslaydi, kamera ramkasini qo'yadi va JPEG'ga kodlaydi.
 
     Fon thread'ida bajariladi - `QImage` (`QPixmap` dan farqli) GUI
     thread'iga bog'lanmagan.
+
+    Ramka MIQYOSLASHDAN KEYIN qo'yiladi: uning o'lchami yakuniy rasmga
+    nisbatan hisoblanadi (4K ekranda ham, 1366 da ham bir xil ulush)
+    va kichik rasmga chizish arzonroq.
     """
     if image.width() > max_width:
         image = image.scaledToWidth(
             max_width, Qt.TransformationMode.SmoothTransformation
         )
+    if cameras:
+        from services.camera_overlay import overlay_cameras
+
+        image = overlay_cameras(image, cameras, ratio=overlay_ratio)
 
     buffer = QBuffer()
     if not buffer.open(QIODevice.OpenModeFlag.WriteOnly):
         return None
     try:
-        if not image.save(buffer, "JPEG", quality):
+        # Optimallashtirilgan Huffman + progressiv yozuv — bir xil
+        # sifatda ~15% kichik fayl (1920/80 da 185 -> 157 KB, o'lchangan),
+        # narxi ~25 ms kodlash, u esa fon thread'ida.
+        writer = QImageWriter(buffer, b"jpeg")
+        writer.setQuality(quality)
+        writer.setOptimizedWrite(True)
+        writer.setProgressiveScanWrite(True)
+        if not writer.write(image):
             return None
         data = bytes(buffer.data())
     finally:
@@ -332,6 +370,10 @@ class ScreenshotService(QObject):
         self._commits: list[dict] = []
         #: `None` - hali aniqlanmagan; keyin `"s3"` yoki `"filesystem"`.
         self._mode: Optional[str] = None
+        #: Skrinshotga qo'yiladigan kamera kadrlari manbai
+        #: (`[(rol, kadr | None)]`). Sahifa beradi: kamera qayerda
+        #: ekanini (supervisor yoki FaceID ishchisi) faqat u biladi.
+        self._camera_provider = None
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
@@ -350,14 +392,18 @@ class ScreenshotService(QObject):
         return self._total_sent
 
     # ------------------------------------------------------------------
-    def start(self, config: Optional[dict]) -> None:
+    def start(self, config: Optional[dict], *, camera_provider=None) -> None:
         if self._active:
             return
         if not SCREENSHOT_ENABLED:
+            # Lokal VETO (dev bayrog'i) - server nima desa ham ustun.
             log.info("Skrinshot olish o'chirilgan (SCREENSHOT_ENABLED=0)")
             return
 
         self._config = CaptureConfig.from_server(config)
+        # Tasma yoqilganmi - IMTIHON PROFILIDAN, shuning uchun provayder
+        # sozlama o'qilgandan KEYIN qo'yiladi.
+        self._camera_provider = camera_provider if self._config.camera_overlay else None
         self._active = True
         self._last_hash = None
         self._skipped = 0
@@ -425,11 +471,26 @@ class ScreenshotService(QObject):
         if self._is_duplicate(image):
             return
 
+        # Kamera kadri UI THREAD'IDA va aynan shu lahzada olinadi:
+        # ekran bilan bir vaqtdagi odam kerak, kodlash paytidagisi
+        # emas.
+        cameras = self._camera_slots()
+
         self._inflight = True
-        worker = ApiWorker(self._encode_and_send, image, parent=self)
+        worker = ApiWorker(self._encode_and_send, image, cameras, parent=self)
         worker.succeeded.connect(self._on_sent)
         worker.failed.connect(self._on_failed)
         self._workers.run(worker)
+
+    def _camera_slots(self) -> list:
+        """Kamera kadrlari. Xato skrinshotni HECH QACHON to'xtatmaydi."""
+        if self._camera_provider is None:
+            return []
+        try:
+            return list(self._camera_provider() or [])
+        except Exception:
+            log.debug("Kamera kadrini olib bo'lmadi", exc_info=True)
+            return []
 
     def _is_duplicate(self, image: QImage) -> bool:
         """
@@ -480,7 +541,7 @@ class ScreenshotService(QObject):
     # ------------------------------------------------------------------
     # Fon thread'i
     # ------------------------------------------------------------------
-    def _encode_and_send(self, image: QImage) -> dict:
+    def _encode_and_send(self, image: QImage, cameras=None) -> dict:
         """
         Kodlaydi, navbatga qo'yadi va navbatni to'liq bo'shatishga urinadi.
 
@@ -489,10 +550,20 @@ class ScreenshotService(QObject):
         bayonnomani o'qishni qiyinlashtiradi.
         """
         frame = encode_jpeg(
-            image, max_width=self._config.max_width, quality=self._config.quality
+            image,
+            max_width=self._config.max_width,
+            quality=self._config.quality,
+            cameras=cameras,
+            overlay_ratio=self._config.camera_overlay_ratio,
         )
         if frame is None:
             raise ClientError("Skrinshotni kodlab bo'lmadi", code="encode_failed")
+
+        # MAHALLIY ARXIV — YUBORISHDAN OLDIN. Navbat to'lib kadr
+        # tashlansa yoki tarmoq uzilsa ham nusxa mashinada qoladi
+        # (`services/local_archive.py` izohi). Yozish xatosi
+        # yutiladi: arxiv qulaylik, kuzatuvning sharti emas.
+        local_archive.save_frame(frame.data, extension="jpg", prefix="shot")
 
         if len(self._queue) == self._queue.maxlen:
             log.warning("Skrinshot navbati to'ldi - eng eski kadr tashlandi")

@@ -11,6 +11,7 @@ from django.db.models import Count, Q
 from django.utils import timezone
 
 from apps.proctoring.models import (
+    EvidenceArtifact,
     AuditLog,
     ExamSession,
     FaceVerificationLog,
@@ -104,6 +105,63 @@ def stored_screenshot_for_user(screenshot_id: int, user):
     if user.is_region_scoped:
         queryset = queryset.filter(session__zone__region_id=user.region_id)
     return queryset.filter(pk=screenshot_id).first()
+
+
+def session_evidence(session_id: int, *, kind: str | None = None,
+                     event_type: str | None = None):
+    """
+    Sessiyaning dalillari.
+
+    `kind` va `event_type` bo'yicha filtr — proktor odatda bitta
+    hodisaning dalilini qidiradi ("telefon qachon ko'rindi?"), butun
+    ro'yxatni varaqlamaydi.
+    """
+    queryset = EvidenceArtifact.objects.filter(session_id=session_id)
+    if kind:
+        queryset = queryset.filter(kind=kind)
+    if event_type:
+        queryset = queryset.filter(event_type=event_type)
+    return queryset.order_by("-captured_at", "-id")
+
+
+def face_log_for_user(log_id: int, user):
+    """
+    Bitta yuz tekshiruvi qatori — hudud bo'yicha cheklangan holda.
+
+    Hudud filtri IKKI YO'LDAN: sessiya bor bo'lsa uning binosidan,
+    yo'q bo'lsa (kirishda rad etilgan urinish) qatordagi `zone` dan.
+    Ikkinchisisiz sessiyasiz qatorlar HECH KIMGA ko'rinmasdi yoki
+    HAMMAGA ko'rinardi - ikkalasi ham noto'g'ri.
+
+    `evidence_for_user` bilan bir xil sabab: fayl beruvchi endpoint
+    `get_object()` zanjiridan o'tmaydi, ya'ni `RegionScopedPermission`
+    unga qo'llanmaydi (IDOR).
+    """
+    queryset = FaceVerificationLog.objects.select_related(
+        "session", "session__zone", "zone"
+    )
+    if user.is_region_scoped:
+        queryset = queryset.filter(
+            Q(session__zone__region_id=user.region_id)
+            | Q(session__isnull=True, zone__region_id=user.region_id)
+        )
+    return queryset.filter(pk=log_id).first()
+
+
+def evidence_for_user(evidence_id: int, user):
+    """
+    Bitta dalil — foydalanuvchining hududi bo'yicha cheklangan holda.
+
+    Hudud filtri AYNAN shu yerda va sabab `stored_screenshot_for_user`
+    dagi bilan bir xil: fayl beruvchi endpoint `get_object()`
+    zanjiridan o'tmaydi, ya'ni `RegionScopedPermission` unga
+    qo'llanmaydi. Filtrsiz boshqa viloyat proktori id'ni tanlab
+    begona talabgorning videosini ko'ra olardi (IDOR).
+    """
+    queryset = EvidenceArtifact.objects.select_related("session", "session__zone")
+    if user.is_region_scoped:
+        queryset = queryset.filter(session__zone__region_id=user.region_id)
+    return queryset.filter(pk=evidence_id).first()
 
 
 def technical_problems(*, unresolved_only: bool = False, region_id=None):

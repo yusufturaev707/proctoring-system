@@ -4,10 +4,13 @@ Holat indikatorlari: status pill, busy overlay va xabar qatori.
 Ular "kutish" holatini har xil miqyosda ko'rsatadi:
     StatusPill      - fon jarayoni (model yuklanmoqda), oqimni to'smaydi
     BusyOverlay     - sahifani to'sadi (API so'rovi ketyapti)
-    MessageBar      - natija/xato matni
+    MessageBar      - natija/xato matni (LAYOUTDA turadi)
+    Snackbar        - o'tkinchi xabar, layoutga tegmaydi va o'zi yo'qoladi
 
-`WarningOverlay` esa boshqa turkumdan: u kutish emas, ARALASHUV -
-proktorning talabgorga qaratilgan xabari.
+Proktorning ARALASHUVI bu yerda emas: u alohida oyna
+(`ui/dialogs/warning_dialog.py`). Sabab o'sha faylning izohida -
+sahifaning bolasi bo'lgan qoplama `QWebEngineView` ustida
+ko'rinmay qolishi mumkin edi.
 """
 
 from __future__ import annotations
@@ -122,6 +125,8 @@ class StateBadge(QWidget):
         "ready": (COLORS["primary"], COLORS["success_soft"], "check"),
         "error": (COLORS["error"], COLORS["error_soft"], "block"),
         "warning": (COLORS["warning"], COLORS["warning_soft"], "alert"),
+        # Eng past jiddiylik: "xato" emas, "e'tibor bering".
+        "info": (COLORS["accent"], COLORS["info_soft"], "alert"),
     }
 
     def __init__(self, parent=None, size: int = 76) -> None:
@@ -283,106 +288,6 @@ class BusyOverlay(QWidget):
         painter.end()
 
 
-class WarningOverlay(QWidget):
-    """
-    Proktorning ogohlantirishi - talabgor ekranini to'sadi.
-
-    Nima uchun `MessageBar` yetmaydi: u sahifa tepasidagi ingichka
-    qator va imtihon topshirayotgan odam unga qaramaydi.
-    Ogohlantirishning butun ma'nosi - talabgorning DIQQATINI tortish,
-    aks holda proktor chetlashtirishdan boshqa chora qoldirmaydi.
-
-    Nima uchun modal dialog ham emas: `QMessageBox.exec()` hodisa
-    siklini bloklaydi, ya'ni heartbeat, hodisa buferi va skrinshot
-    taymerlari ogohlantirish yopilgunga qadar TO'XTAB TURADI. Aynan
-    talabgor qoida buzgan paytda nazoratni o'chirish - eng noto'g'ri
-    xulq. Overlay esa faqat chizadi.
-
-    O'zi yopiladi (`Setting.warning_timeout`): talabgor uni yopishi
-    uchun tugma bosishi kerak bo'lsa, u ogohlantirishni ochiq
-    qoldirib, ekranni to'sib turishini bahona qila oladi.
-    """
-
-    #: Jiddiylik -> (fon rangi, sarlavha).
-    _LEVELS = {
-        1: ("accent", "Diqqat"),
-        2: ("warning", "Ogohlantirish"),
-        3: ("error", "Jiddiy ogohlantirish"),
-        4: ("error", "Oxirgi ogohlantirish"),
-    }
-
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self._title = "Ogohlantirish"
-        self._text = ""
-        self._color = QColor(COLORS["warning"])
-        # Sichqoncha hodisalari OSTIDAGI sahifaga o'tmaydi: overlay
-        # ko'rinib turganda talabgor tasodifan test tugmasini bosib
-        # yubormasligi kerak.
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
-        self.hide()
-
-        self._timer = QTimer(self)
-        self._timer.setSingleShot(True)
-        self._timer.timeout.connect(self.hide)
-
-    def show_warning(self, text: str, severity: int = 2, timeout_s: int = 5) -> None:
-        key, title = self._LEVELS.get(int(severity or 2), self._LEVELS[2])
-        self._color = QColor(COLORS[key])
-        self._title = title
-        self._text = text or "Proktor ogohlantirdi"
-
-        if self.parent() is not None:
-            self.setGeometry(self.parent().rect())
-        self.raise_()
-        self.show()
-        self.update()
-        # `0` yoki manfiy - o'zi yopilmaydi (proktor uni qo'lda
-        # olib tashlashi kerak bo'lgan holat uchun).
-        if timeout_s > 0:
-            self._timer.start(int(timeout_s * 1000))
-
-    def dismiss(self) -> None:
-        self._timer.stop()
-        self.hide()
-
-    def paintEvent(self, _event) -> None:
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.fillRect(self.rect(), QColor(15, 23, 42, 170))
-
-        width = min(720, max(360, int(self.width() * 0.6)))
-        height = 220
-        box = QRectF(
-            (self.width() - width) / 2, (self.height() - height) / 2, width, height
-        )
-
-        painter.setPen(QPen(self._color, 3))
-        painter.setBrush(QBrush(QColor(COLORS["surface"])))
-        painter.drawRoundedRect(box, 18, 18)
-
-        painter.setPen(self._color)
-        painter.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
-        painter.drawText(
-            QRectF(box.x() + 28, box.y() + 26, box.width() - 56, 36),
-            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
-            self._title,
-        )
-
-        painter.setPen(QColor(COLORS["text"]))
-        painter.setFont(QFont("Segoe UI", 12))
-        painter.drawText(
-            QRectF(box.x() + 28, box.y() + 74, box.width() - 56, box.height() - 100),
-            int(
-                Qt.AlignmentFlag.AlignLeft
-                | Qt.AlignmentFlag.AlignTop
-                | Qt.TextFlag.TextWordWrap
-            ),
-            self._text,
-        )
-        painter.end()
-
-
 class MessageBar(QLabel):
     """Xato/muvaffaqiyat xabari. Bo'sh bo'lsa joy egallamaydi."""
 
@@ -403,6 +308,119 @@ class MessageBar(QLabel):
     def clear_message(self) -> None:
         self.setText("")
         self.hide()
+
+
+#: Snackbar ranglari - `message_style` bilan BIR XIL jadval.
+#:
+#: Alohida turadi, chunki bu yerda uslub ikki vidjetga bo'linadi
+#: (konteyner va yorliq), `message_style` esa bitta satr qaytaradi.
+SNACKBAR_COLORS = {
+    "error": (COLORS["error_soft"], COLORS["error"], "#FCA5A5"),
+    "success": (COLORS["success_soft"], COLORS["primary_dark"], "#86EFAC"),
+    "warning": (COLORS["warning_soft"], COLORS["warning"], "#FCD34D"),
+    "info": (COLORS["info_soft"], "#0369A1", "#7DD3FC"),
+}
+
+
+class Snackbar(QFrame):
+    """
+    Suzuvchi o'tkinchi xabar (MD3 snackbar). LAYOUTGA TEGMAYDI.
+
+    NIMA UCHUN `MessageBar` YETMAYDI. U layoutning qismi, ya'ni
+    ko'ringanda ostidagi hamma narsani PASTGA suradi. Imtihon
+    sahifasida ostida `QWebEngineView` turadi va natija ko'rinadigan
+    nosozlik edi: "Muammo qayd etildi" degan xabar butun test
+    sahifasini pastga surar, xabar esa hech qachon yo'qolmasdi
+    (uni hech kim tozalamasdi) — talabgor test oxirigacha siljigan
+    sahifa bilan ishlardi.
+
+    Shuning uchun ikki qoida:
+
+      * vidjet ota vidjetning BEVOSITA bolasi va `reposition()` bilan
+        joylashtiriladi (layoutda emas);
+      * xabar O'ZI yo'qoladi. Muddat jiddiylikka qarab: muvaffaqiyat
+        tez, xato uzoq — lekin baribir chekli, chunki ekranda abadiy
+        qoladigan xabar birinchi daqiqadan keyin ko'rinmas bo'lib
+        qoladi.
+    """
+
+    #: Jiddiylik -> qancha ko'rinadi (ms). `0` - o'zi yopilmaydi.
+    TIMEOUTS = {"success": 4000, "info": 5000, "warning": 8000, "error": 12000}
+
+    #: Ota vidjet chetidan masofa.
+    MARGIN = 18
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setObjectName("snackbar")
+        self._label = QLabel(self)
+        self._label.setWordWrap(True)
+        box = QVBoxLayout(self)
+        box.setContentsMargins(18, 12, 18, 12)
+        box.addWidget(self._label)
+
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self.clear_message)
+        self.hide()
+
+    def show_message(self, text: str, kind: str = "error") -> None:
+        if not text:
+            self.clear_message()
+            return
+        self._label.setText(text)
+        background, color, border = SNACKBAR_COLORS.get(kind, SNACKBAR_COLORS["error"])
+        # Fon KONTEYNERDA, matn rangi YORLIQDA: `QFrame#snackbar`
+        # selektori bolalarga tushmaydi va yorliq rangsiz qolardi.
+        self.setStyleSheet(
+            """
+            QFrame#snackbar {{
+                background-color: {bg};
+                border: 1px solid {bd};
+                border-radius: 16px;
+            }}
+            """.format(bg=background, bd=border)
+        )
+        self._label.setStyleSheet(
+            "color: {}; font-size: 14px; font-weight: 600; "
+            "background: transparent; border: none;".format(color)
+        )
+        self.reposition()
+        self.raise_()
+        self.show()
+        timeout = self.TIMEOUTS.get(kind, 8000)
+        self._timer.stop()
+        if timeout:
+            self._timer.start(timeout)
+
+    def clear_message(self) -> None:
+        self._timer.stop()
+        self._label.setText("")
+        self.hide()
+
+    def mousePressEvent(self, event) -> None:
+        """Bosilganda yopiladi - kutish shart emas."""
+        self.clear_message()
+        event.accept()
+
+    def reposition(self) -> None:
+        """
+        Ota vidjetning PASTKI-CHAP burchagiga qo'yadi.
+
+        Pastda: tepa qism test platformasining o'z sarlavhasi uchun
+        ochiq qolishi kerak. Chapda: pastki o'ng burchakda suzuvchi
+        boshqaruv paneli turadi (`exam_webview_page`) va ular
+        bir-birining ustiga tushmasligi kerak.
+        """
+        parent = self.parentWidget()
+        if parent is None:
+            return
+        width = min(560, max(320, int(parent.width() * 0.5)))
+        self.setFixedWidth(width)
+        self.adjustSize()
+        self.move(
+            self.MARGIN, max(self.MARGIN, parent.height() - self.height() - self.MARGIN)
+        )
 
 
 class Card(QFrame):

@@ -1,6 +1,6 @@
 import { Chip, Typography } from '@mui/material'
 import ResourcePage from '../../components/data/ResourcePage'
-import { useRegionOptions, useZoneOptions, zonesOfRegion } from './shared'
+import { regionZoneFilters, useRegionOptions, useZoneOptions, zonesOfRegion } from './shared'
 import { allowedIps as allowedIpsApi } from '../../api/endpoints'
 
 /**
@@ -68,8 +68,7 @@ export default function AllowedIpsPage() {
       toggleField="is_active"
       exportName="ruxsat-etilgan-ip"
       filters={[
-        { name: 'zone__region', label: 'Viloyat', type: 'select', options: regionOptions },
-        { name: 'zone', label: 'Bino', type: 'select', options: zoneOptions },
+        ...regionZoneFilters({ regionOptions, zoneOptions }),
         {
           name: 'is_active', label: 'Holat', type: 'select',
           options: [{ value: 'true', label: 'Faol' }, { value: 'false', label: 'Nofaol' }],

@@ -100,7 +100,7 @@ export default function AuditLogs() {
   return (
     <>
       <ResourcePage
-        title="Audit yozuvlari"
+        title="Audit jurnali"
         subtitle="«Kim, kimni, qachon, qaysi IP dan» — apellyatsiya va sud uchun"
         queryKey="audit-logs"
         api={auditApi}

@@ -3,18 +3,30 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from apps.common.exceptions import DomainError
-from apps.common.permissions import HasRolePermission
+from apps.common.permissions import HasRegionAssignment, HasRolePermission, RepublicLevelWrite
 
 
 class PermissionRequiredMixin:
-    """`required_permission` atributini `HasRolePermission` bilan bog'laydi."""
+    """
+    Admin yuzasi: `required_permission` + viloyat biriktiruvi.
+
+    `HasRegionAssignment` HAR DOIM qo'shiladi — bu mixin faqat admin
+    panel viewset'larida ishlatiladi va viloyati yo'q viloyat xodimi
+    ulardan birortasini ham ochmasligi kerak.
+    """
 
     required_permission: str | None = None
+    #: Yozuv barcha viloyatlar uchun BITTA (rol, sozlama, imtihon) —
+    #: o'zgartirish faqat respublika darajasida (`RepublicLevelWrite`).
+    republic_write_only: bool = False
 
     def get_permissions(self):
         permissions = super().get_permissions()
+        permissions.append(HasRegionAssignment())
         if self.required_permission:
             permissions.append(HasRolePermission())
+        if self.republic_write_only:
+            permissions.append(RepublicLevelWrite())
         return permissions
 
 

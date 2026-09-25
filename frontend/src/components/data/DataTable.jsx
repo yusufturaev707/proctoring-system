@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import {
   Box, Card, IconButton, LinearProgress, MenuItem, Pagination, Stack, TextField,
-  Tooltip, Typography,
+  Tooltip, Typography, useMediaQuery, useTheme,
 } from '@mui/material'
 import { DataGrid } from '@mui/x-data-grid'
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft'
@@ -104,6 +104,16 @@ export default function DataTable({
   const serverSide = typeof rowCount === 'number'
   const resolveId = getRowId || ((row) => row.id)
 
+  // TOR EKRANDA JADVAL QAT'IY BALANDLIKDA EMAS (`autoHeight`): qatorlar
+  // sahifa bilan birga suriladi. Qat'iy balandlik telefonda ikki xil
+  // xato berardi — bitta qatorli jadval ostida ~550 px bo'sh maydon, va
+  // sahifa ichida ikkinchi vertikal skroll (barmoq bilan surganda
+  // jadval yoki sahifa suriladimi — oldindan bilib bo'lmaydi).
+  // Gorizontal skroll qoladi: ustunlar telefonga sig'maydi va ularni
+  // yashirish ma'lumotni yo'qotish bo'lardi.
+  const theme = useTheme()
+  const compact = useMediaQuery(theme.breakpoints.down('md'))
+
   // Sahifalash boshqarilmagan bo'lsa (jonli kuzatuv kabi mijoz tomonda
   // ishlaydigan jadvallar) — uni shu yerda o'zimiz yuritamiz. Aks holda
   // DataGrid'ning standart futerini yashirganimizdan keyin bunday
@@ -175,8 +185,9 @@ export default function DataTable({
         {fetching && !loading && <LinearProgress sx={{ height: 3 }} />}
       </Box>
 
-      <Box sx={{ height, width: '100%' }}>
+      <Box sx={{ height: compact ? 'auto' : height, width: '100%' }}>
         <DataGrid
+          autoHeight={compact}
           rows={rows}
           columns={gridColumns}
           loading={loading}
@@ -202,15 +213,17 @@ export default function DataTable({
             // "bo'sh ekran" o'rniga uzluksizlik hissi.
             opacity: fetching && !loading ? 0.55 : 1,
             transition: (theme) => theme.transitions.create('opacity', { duration: 140 }),
-            '& .MuiDataGrid-columnHeaders': { bgcolor: 'surface.subtle' },
+            '& .MuiDataGrid-columnHeaders': { bgcolor: 'm3.surfaceContainerLow' },
+            // Sarlavhalar ODDIY registrda: katta harfli qisqa sarlavhalar
+            // o'zbekcha uzun so'zlarda ("OXIRGI FAOLLIK") ustunni kengaytirib,
+            // o'qishni sekinlashtirardi.
             '& .MuiDataGrid-columnHeaderTitle': {
-              fontWeight: 700, fontSize: '0.76rem', letterSpacing: '0.03em',
-              textTransform: 'uppercase', color: 'text.secondary',
+              fontWeight: 650, fontSize: '0.8rem', color: 'text.secondary',
             },
             '& .MuiDataGrid-cell:focus, & .MuiDataGrid-cell:focus-within': { outline: 'none' },
             // `№` ustuni ma'lumot emas, yo'naltirgich — u past kontrastda
             // turishi kerak, aks holda ko'z birinchi navbatda unga tushadi.
-            '& .MuiDataGrid-cell[data-field="__rownum"]': { bgcolor: 'surface.subtle' },
+            '& .MuiDataGrid-cell[data-field="__rownum"]': { bgcolor: 'm3.surfaceContainerLow' },
             '& .MuiDataGrid-row': {
               cursor: onRowClick ? 'pointer' : 'default',
               transition: (theme) => theme.transitions.create('background-color', { duration: 120 }),
@@ -253,6 +266,9 @@ export default function DataTable({
  * olib boradigan kursor faqat ketma-ket o'tish orqali topiladi, shuning
  * uchun u yerda faqat oldinga/orqaga bor. Ikkalasi bir xil joyda va bir
  * xil uslubda turadi, ya'ni farq faqat imkoniyatda, ko'rinishda emas.
+ *
+ * `TablePager` nomi bilan eksport qilinadi: DataGrid'siz ro'yxatlar
+ * (sessiya tab'lari, dashboard jadvali) ham AYNAN shu futerni ishlatadi.
  */
 function TableFooter({
   cursorNav, rowCount, rowsOnPage, paginationModel, onPaginationModelChange, fetching,
@@ -271,11 +287,16 @@ function TableFooter({
   const cursorFrom = (cursorNav?.pageIndex || 0) * pageSize + 1
 
   return (
+    // Telefonda ham BITTA qatorda (o'raladi): ustunga yig'ilganda futer
+    // ~150 px bo'lib, "Sahifada" maydoni butun kenglikka cho'zilardi.
     <Stack
-      direction={{ xs: 'column', sm: 'row' }}
-      spacing={1.5}
-      alignItems={{ xs: 'stretch', sm: 'center' }}
-      sx={{ px: 2, py: 1.25, borderTop: 1, borderColor: 'divider', bgcolor: 'surface.subtle' }}
+      direction="row"
+      flexWrap="wrap"
+      useFlexGap
+      columnGap={1.5}
+      rowGap={1}
+      alignItems="center"
+      sx={{ px: { xs: 1.5, sm: 2 }, py: 1.25, borderTop: 1, borderColor: 'divider', bgcolor: 'm3.surfaceContainerLow' }}
     >
       <TextField
         select
@@ -308,6 +329,7 @@ function TableFooter({
                 size="small"
                 disabled={!cursorNav.hasPrevious || fetching}
                 onClick={cursorNav.onPrevious}
+                aria-label="Oldingi sahifa"
               >
                 <ChevronLeftIcon />
               </IconButton>
@@ -319,6 +341,7 @@ function TableFooter({
                 size="small"
                 disabled={!cursorNav.hasNext || fetching}
                 onClick={cursorNav.onNext}
+                aria-label="Keyingi sahifa"
               >
                 <ChevronRightIcon />
               </IconButton>
@@ -345,3 +368,5 @@ function TableFooter({
     </Stack>
   )
 }
+
+export { TableFooter as TablePager }

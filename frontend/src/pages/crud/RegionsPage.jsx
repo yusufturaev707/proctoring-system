@@ -4,6 +4,8 @@ import { regions as regionsApi } from '../../api/endpoints'
 export default function RegionsPage() {
   return (
     <ResourcePage
+      // Barcha viloyatlar uchun bitta yozuv — o'zgartirish respublika darajasida.
+      shared
       title="Viloyatlar"
       subtitle="Hududiy bo‘linish — barcha bino va foydalanuvchilar shunga bog‘lanadi"
       queryKey="regions"

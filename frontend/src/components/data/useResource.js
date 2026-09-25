@@ -116,6 +116,16 @@ export function useResource({
   syncUrl = true,
   /** Bir sahifada bir nechta jadval bo'lsa — URL kalitlarini ajratadi. */
   urlNamespace = '',
+  /**
+   * Ro'yxatni O'ZI yangilash oralig'i (ms). `false` — yangilamaydi.
+   *
+   * Konfiguratsiya jadvallari uchun kerak emas (ularni odam
+   * o'zgartiradi), lekin "hozir nima bo'lyapti" degan savolga javob
+   * beradigan ro'yxatlar bor: qurilma onlayn holati 45 soniyada
+   * o'zgaradi va operatordan sahifani qo'lda yangilashni kutish
+   * mumkin emas.
+   */
+  refetchInterval = false,
 }) {
   const queryClient = useQueryClient()
   const { notify, notifyError } = useUi()
@@ -126,10 +136,31 @@ export function useResource({
   // "sakrab" o'zgarmaydi.
   const initial = useRef(url.read()).current
 
-  const [paginationModel, setPaginationModel] = useState({
-    page: initial?.page || 0,
-    pageSize,
+  // «Sahifada» tanlovi HAR JADVAL uchun eslab qolinadi (brauzerda):
+  // proktor sessiyalarni 100 tadan ko'radi, administrator kompyuterlarni
+  // 25 tadan — va har safar sahifa ochilganda qaytadan tanlamasligi
+  // kerak. URL'ga yozilmaydi: havola ulashilganda qabul qiluvchining
+  // o'z tanlovi ustun bo'lishi kerak.
+  const pageSizeKey = `proctoring.pageSize.${key}`
+  const [paginationModel, setPaginationModel] = useState(() => {
+    let remembered = null
+    try {
+      remembered = Number(localStorage.getItem(pageSizeKey)) || null
+    } catch {
+      remembered = null
+    }
+    return {
+      page: initial?.page || 0,
+      pageSize: [25, 50, 100].includes(remembered) ? remembered : pageSize,
+    }
   })
+  useEffect(() => {
+    try {
+      localStorage.setItem(pageSizeKey, String(paginationModel.pageSize))
+    } catch {
+      // Maxfiy rejim yoki to'lgan xotira — tanlov shu sahifada qoladi.
+    }
+  }, [pageSizeKey, paginationModel.pageSize])
   const [sortModel, setSortModel] = useState(
     initial?.sort || (defaultSort ? [defaultSort] : []),
   )
@@ -216,6 +247,7 @@ export function useResource({
     queryKey,
     queryFn: () => api.list(buildParams(paginationModel.page, cursor)),
     placeholderData: keepPreviousData,
+    refetchInterval,
   })
 
   // Backend ikki xil sahifalashni ishlatadi:
@@ -462,6 +494,17 @@ export function useOptions(key, api, mapper, params = {}) {
     isLoading: query.isLoading,
     truncated: Boolean(query.data?.truncated),
   }
+}
+
+/**
+ * Barcha sahifalarni yig'ib `{ results }` qaytaradi — `list()` javobi
+ * shaklida, ya'ni `results` ga tayangan mavjud kod o'zgarmaydi.
+ * Filtr variantlari uchun (jonli kuzatuv): bitta `page_size: 200`
+ * so'rovi 200 dan ortiq binoni jimgina kesib tashlardi.
+ */
+export async function listAll(api, params = {}) {
+  const { items } = await fetchAllPages(api, params)
+  return { results: items }
 }
 
 async function fetchAllPages(api, params) {

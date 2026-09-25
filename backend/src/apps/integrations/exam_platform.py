@@ -13,6 +13,14 @@ Nima uchun bu shuncha muhim: Django sync worker'da bloklanuvchi chaqiruv
 butun worker'ni band qiladi. 1000 talaba bir vaqtda "Kirish" bossa va
 ntest 3 soniya javob bersa, 32 worker'li server 30 soniyada to'lib qoladi
 va imtihon umuman boshlanmaydi.
+
+DIQQAT: TALABGORNI TEKSHIRISH BU YERDA EMAS. U `exam_site.py` ga
+ko'chirildi, chunki so'rov endi HAR IMTIHONNING o'z manzili va o'z
+sarlavhasi bilan ketadi (`Exam.site_url` + `Exam.site_header_encrypted`),
+bu yerda esa bitta markazlashgan `BASE_URL` va global kalit bor.
+Ikkita tekshiruvni saqlab qolish ikkita talqinga olib kelardi va
+ular albatta ajralib ketardi. Bu modulda natijani qaytarish
+(`report_result`) va salomatlik (`platform_health`) qoldi.
 """
 
 from __future__ import annotations
@@ -24,7 +32,6 @@ import time
 
 import requests
 from django.conf import settings
-from django.core.cache import cache
 from requests.adapters import HTTPAdapter
 
 from apps.common.circuit_breaker import CircuitBreaker, CircuitOpenError
@@ -33,7 +40,6 @@ from apps.common.exceptions import (
     ExternalPlatformError,
     ExternalPlatformUnavailable,
 )
-from apps.common.utils.crypto import opaque_key
 
 logger = logging.getLogger(__name__)
 
@@ -157,39 +163,6 @@ class ExamPlatformClient:
     # ------------------------------------------------------------------
     # Domen metodlari
     # ------------------------------------------------------------------
-    def lookup_candidate(self, pinfl: str, exam_key: str = "") -> dict:
-        """
-        JSHSHIR bo'yicha talabgorni tekshiradi.
-
-        Javob endi JONLI holat olib keladi: platformaning sessiya tokeni,
-        test statusi va kirish oynasi. Shuning uchun kesh QISQA
-        (`BASE_CACHE_TTL`, standart 60s) — u faqat ikki marta bosish va
-        qayta urinishlarni yutish uchun. Uzoq kesh eskirgan token yoki
-        "allaqachon tugatilgan" statusni berib, talabgorni kirita olmay
-        qo'yardi.
-
-        Kesh kaliti — JSHSHIR'ning qaytarilmaydigan hosilasi, ochiq raqam
-        emas: kesh kalitlari `SCAN` bilan ro'yxatlanadi.
-        """
-        if self.conf["MOCK"]:
-            return self._mock_candidate(pinfl, exam_key)
-
-        cache_key = f"ntest:cand:{opaque_key(pinfl)}:{exam_key}"
-        cached = cache.get(cache_key)
-        if cached is not None:
-            return cached
-
-        data = self._call_protected(
-            "POST", "/api/v1/candidate/check", json={"pinfl": pinfl, "exam": exam_key}
-        )
-        normalized = self._normalize_candidate(data)
-
-        # Faqat muvaffaqiyatli natijani keshlaymiz. "Topilmadi" ni keshlash
-        # ro'yxatga endigina qo'shilgan talabgorni bloklab qo'yishi mumkin.
-        if normalized.get("eligible"):
-            cache.set(cache_key, normalized, self.conf["CACHE_TTL"])
-        return normalized
-
     def report_result(self, *, session_id: str, status: str, meta: dict) -> bool:
         """
         Sessiya yakunini tashqi platformaga xabar qiladi.
@@ -209,94 +182,6 @@ class ExamPlatformClient:
         except (ExternalPlatformError, ExternalPlatformUnavailable) as exc:
             logger.warning("Natijani yuborib bo'lmadi (%s): %s", session_id, exc)
             return False
-
-    # ------------------------------------------------------------------
-    #: Tashqi API maydon nomlari uchun muqobillar.
-    #
-    #: DIQQAT: bu xarita ntest hujjatiga qarab ANIQLANISHI kerak. Hozircha
-    #: eng ehtimolli nomlar sinaladi — noto'g'ri nom jimgina bo'sh qiymat
-    #: beradi, shuning uchun integratsiya paytida `lookup_candidate`
-    #: javobini bir marta log'ga chiqarib tekshiring.
-    _FIELD_ALIASES = {
-        "session_token": ("session_token", "token", "access_token"),
-        "status": ("status", "test_status", "exam_status"),
-        "access_from": ("access_from", "start_time", "started_at", "begin_at"),
-        "access_until": ("access_until", "end_time", "finished_at", "expire_at"),
-        # Pasport/hujjat rasmi. Ba'zi o'rnatishlarda URL, ba'zilarida
-        # bevosita base64 keladi — ikkalasi ham qo'llab-quvvatlanadi.
-        "photo_base64": ("photo_base64", "photo", "image", "image_base64"),
-    }
-
-    @classmethod
-    def _pick(cls, payload: dict, key: str):
-        for alias in cls._FIELD_ALIASES[key]:
-            value = payload.get(alias)
-            if value not in (None, ""):
-                return value
-        return None
-
-    def _normalize_candidate(self, raw: dict) -> dict:
-        """
-        Tashqi API sxemasini ichki shaklga keltiradi.
-
-        Eng muhim maydon — `session_token`. Bu TASHQI platformaning o'z
-        sessiya tokeni; WebView aynan shu bilan ochiladi. U bizning
-        proktorlik tokenimiz bilan hech qanday aloqasi yo'q va ular
-        bir-birini almashtira olmaydi.
-        """
-        payload = raw.get("data", raw) or {}
-        return {
-            "eligible": bool(payload.get("is_have_perm", payload.get("eligible", False))),
-            "external_id": str(payload.get("id", "")),
-            "last_name": payload.get("last_name", ""),
-            "first_name": payload.get("first_name", ""),
-            "middle_name": payload.get("middle_name", ""),
-            "photo_url": payload.get("photo_url", ""),
-            # Etalon rasm client'ga o'tadi (kirishdagi FaceID uni kameradagi
-            # yuz bilan solishtiradi), shuning uchun `data:` prefiksi
-            # olib tashlanadi — client toza base64 kutadi.
-            "photo_base64": _strip_data_uri(self._pick(payload, "photo_base64") or ""),
-            # --- Tashqi platformadagi sessiya ---
-            "session_token": self._pick(payload, "session_token") or "",
-            "status": self._pick(payload, "status") or "",
-            "access_from": self._pick(payload, "access_from"),
-            "access_until": self._pick(payload, "access_until"),
-            "login_url": payload.get("login_url", ""),
-        }
-
-    @staticmethod
-    def _mock_candidate(pinfl: str, exam_key: str) -> dict:
-        """Dev/test rejimi — tashqi API'siz to'liq oqimni sinash uchun."""
-        from datetime import timedelta
-
-        from django.utils import timezone
-
-        now = timezone.now()
-        return {
-            "eligible": True,
-            "external_id": f"mock-{pinfl[-6:]}",
-            "last_name": "Testov",
-            "first_name": "Test",
-            "middle_name": "Testovich",
-            "photo_url": "",
-            # Mock'da etalon rasm YO'Q — client bu holatda "enrollment"
-            # rejimiga tushadi (solishtirmaydi, faqat yuzni qayd etadi).
-            "photo_base64": "",
-            "session_token": f"ntest-sess-{pinfl[-6:]}",
-            "status": "not_started",
-            "access_from": (now - timedelta(minutes=30)).isoformat(),
-            "access_until": (now + timedelta(hours=3)).isoformat(),
-            "login_url": "",
-        }
-
-
-def _strip_data_uri(value: str) -> str:
-    """`data:image/jpeg;base64,XXXX` -> `XXXX`."""
-    text = str(value or "")
-    if text.startswith("data:") and "," in text:
-        return text.split(",", 1)[1]
-    return text
-
 
 def get_client() -> ExamPlatformClient:
     return ExamPlatformClient()

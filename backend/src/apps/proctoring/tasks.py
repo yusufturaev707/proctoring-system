@@ -23,9 +23,11 @@ from django.utils import timezone
 from apps.common.redis_client import get_redis
 from apps.proctoring.models import (
     ExamSession,
+    FaceVerificationLog,
     ProctoringEvent,
     ScreenshotMeta,
 )
+from apps.proctoring.services import risk as risk_service
 from apps.proctoring.services import state as session_state
 from apps.proctoring.services import stream as stream_service
 
@@ -166,7 +168,13 @@ def flush_session_state():
         return {"updated": 0}
 
     states = session_state.get_states(session_ids)
-    sessions = list(ExamSession.objects.filter(pk__in=session_ids))
+    # `select_related("exam")` MAJBURIY: har bir sessiya uchun
+    # siyosat o'qiladi (`_policy_for`) va u `session.exam` ga
+    # murojaat qiladi. Usiz bu 5000 sessiyali flush'da 5000 ta
+    # qo'shimcha so'rov degani - har 10 soniyada.
+    sessions = list(
+        ExamSession.objects.select_related("exam").filter(pk__in=session_ids)
+    )
     if not sessions:
         return {"updated": 0}
 
@@ -187,7 +195,14 @@ def flush_session_state():
         session.screenshot_count = int(state.get("shots", session.screenshot_count) or 0)
         session.face_fail_count = int(state.get("face_fails", session.face_fail_count) or 0)
         session.face_check_count = int(state.get("face_checks", session.face_check_count) or 0)
-        session.risk_score = min(100, int(state.get("risk", session.risk_score) or 0))
+        # Ball PASAYISH bilan o'qiladi: Redis'dagi xom qiymat oxirgi
+        # hodisadan beri o'zgarmagan, vaqt esa o'tgan
+        # (`services/risk.py` - lazy pasayish).
+        session.risk_score = risk_service.current(
+            session_id=session.pk,
+            config=risk_service.resolve_config(_policy_for(session)),
+        )
+        session.risk_breakdown = risk_service.breakdown(session.pk)
         session.updated_at = now
         to_update.append(session)
 
@@ -196,11 +211,29 @@ def flush_session_state():
             to_update,
             [
                 "last_heartbeat_at", "event_count", "screenshot_count",
-                "face_fail_count", "face_check_count", "risk_score", "updated_at",
+                "face_fail_count", "face_check_count", "risk_score",
+                "risk_breakdown", "updated_at",
             ],
             batch_size=500,
         )
     return {"updated": len(to_update)}
+
+
+def _policy_for(session) -> dict:
+    """
+    Sessiya imtihonining kuzatuv siyosati.
+
+    Keshlangan (`controls.services.get_client_config`), shuning uchun
+    har bir sessiya uchun chaqirish xavfsiz: bir xil imtihondagi
+    500 sessiya bitta kesh yozuvini o'qiydi.
+    """
+    from apps.controls.services import get_client_config
+
+    try:
+        return (get_client_config(session.exam) or {}).get("proctoring") or {}
+    except Exception:
+        logger.warning("Siyosatni o'qib bo'lmadi: %s", session.pk, exc_info=True)
+        return {}
 
 
 # --------------------------------------------------------------------------
@@ -414,12 +447,131 @@ def purge_expired_artifacts(batch_size: int = 5000):
             updated_at=now,
         )
 
+    if ids:
+        # Yuz tekshiruvi qatorlaridagi JSHSHIR ham bo'shatiladi:
+        # anonimlashtirilgan sessiya yonida ochiq PII qolsa,
+        # anonimlashtirishning o'zi ma'nosiz bo'lardi. Qator
+        # o'chirilmaydi — ball va vaqt statistikaga kerak.
+        FaceVerificationLog.objects.filter(session_id__in=ids).exclude(pinfl="").update(
+            pinfl=""
+        )
+
     return {"screenshots_purged": deleted_objects, "sessions_anonymized": anonymized}
 
 
 def _parse(value) -> datetime:
     parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     return parsed if timezone.is_aware(parsed) else timezone.make_aware(parsed)
+
+
+@shared_task(name="proctoring.purge_expired_evidence")
+def purge_expired_evidence(batch_size: int = 1000, max_batches: int = 50):
+    """
+    Muddati o'tgan dalillarni o'chiradi.
+
+    SKRINSHOT TOZALASHIDAN ALOHIDA va bu ataylab: dalilning muddati
+    QATORDA yozilgan (`purge_after`), skrinshotniki esa sanadan
+    hisoblanadi. Ularni birlashtirish dalil uchun siyosatdagi
+    muddatni e'tiborsiz qoldirardi.
+
+    Tartib SKRINSHOTNIKI bilan bir xil: avval FAYL, keyin qator.
+    Teskarisida hech kim biladigan yetim fayl qolardi.
+
+    Kichik partiyalar: 500 mashinali bino kuniga ~4000 dalil
+    yig'adi va bitta yurishda ularning hammasini o'chirish
+    imtihon paytidagi diskni band qilardi.
+    """
+    from apps.proctoring.models import EvidenceArtifact
+    from apps.proctoring.services import evidence as evidence_service
+
+    now = timezone.now()
+    removed = files = 0
+
+    for _ in range(max_batches):
+        batch = list(
+            EvidenceArtifact.objects.filter(purge_after__lt=now)
+            .order_by("purge_after")[:batch_size]
+        )
+        if not batch:
+            break
+
+        for artifact in batch:
+            try:
+                if evidence_service.delete(artifact):
+                    files += 1
+                removed += 1
+            except Exception:
+                # Bitta fayl o'chmagani qolganlarini to'xtatmasligi
+                # kerak: sabab odatda huquqlarda va u keyingi
+                # yurishda takrorlanadi.
+                logger.exception("Dalilni o'chirib bo'lmadi: %s", artifact.pk)
+
+    if removed:
+        logger.info("Dalillar tozalandi: %s qator, %s fayl", removed, files)
+    return {"removed": removed, "files": files}
+
+
+@shared_task(name="proctoring.purge_expired_face_images")
+def purge_expired_face_images(batch_size: int = 2000, max_batches: int = 20):
+    """
+    Muddati o'tgan FaceID kadrlari: FAYL o'chiriladi, QATOR QOLADI.
+
+    DALIL TOZALASHIDAN FARQI SHU. `EvidenceArtifact` butunlay
+    o'chiriladi - u faqat fayl haqidagi yozuv. Yuz tekshiruvi qatori
+    esa fayldan ANCHA ko'proq narsani saqlaydi: ball, chegara, vaqt
+    va natija. Ular bayonnomaning bir qismi va rasm muddati
+    tugagani uchun yo'qolmasligi kerak - "80 ball bilan kiritilgan"
+    degan yozuv rasmsiz ham dalil bo'lib qoladi.
+
+    Tartib: avval FAYL, keyin qatordagi yo'l. Teskarisida jarayon
+    o'rtada yiqilsa, diskda hech kim biladigan yetim fayl qolardi.
+
+    Kichik partiyalar: retention bir kunda minglab faylni o'chirishi
+    mumkin va bu imtihon paytidagi diskni band qilardi.
+    """
+    from apps.proctoring.services import face_images
+
+    now = timezone.now()
+    removed = files = 0
+
+    for _ in range(max_batches):
+        batch = list(
+            FaceVerificationLog.objects.filter(image_purge_after__lt=now)
+            .exclude(image_path="", reference_image_path="")
+            .order_by("image_purge_after")
+            .values_list("id", "image_path", "reference_image_path")[:batch_size]
+        )
+        if not batch:
+            break
+
+        cleared = []
+        for log_id, path, reference_path in batch:
+            # IKKALA FAYL BIRGA ketadi: jonli kadr va hujjat rasmi
+            # bitta tekshiruvning ikki tomoni, bittasini qoldirish
+            # yarim dalil berardi.
+            try:
+                for candidate in (path, reference_path):
+                    if candidate and face_images.discard(candidate):
+                        files += 1
+            except Exception:
+                # Bitta fayl o'chmagani qolganlarini to'xtatmasligi
+                # kerak: sabab odatda huquqlarda va u keyingi
+                # yurishda takrorlanadi.
+                logger.exception("FaceID rasmini o'chirib bo'lmadi: %s", path)
+                continue
+            cleared.append(log_id)
+
+        if cleared:
+            removed += FaceVerificationLog.objects.filter(id__in=cleared).update(
+                image_path="", reference_image_path="", image_purge_after=None
+            )
+
+        if len(batch) < batch_size:
+            break
+
+    if removed:
+        logger.info("FaceID kadrlari tozalandi: %s qator, %s fayl", removed, files)
+    return {"cleared": removed, "files": files}
 
 
 @shared_task(name="proctoring.purge_expired_screenshots")

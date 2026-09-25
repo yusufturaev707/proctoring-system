@@ -65,7 +65,19 @@ ERROR_MESSAGES = {
     "public_ip_unknown": (
         "Internetga chiqish manzili aniqlanmadi. Tarmoq ulanishini tekshiring."
     ),
-    "candidate_not_eligible": "Test topshirish mumkin emas — talabgor ro'yxatda topilmadi.",
+    # `candidate_not_found` — platforma JSHSHIR'ni UMUMAN topmadi.
+    # Birinchi harakat: raqamni tekshirish, shuning uchun matn ham
+    # shu haqda (server matni "Not found" — operatorga hech nima
+    # aytmaydi).
+    "candidate_not_found": (
+        "Bu JSHSHIR test platformasida topilmadi. Raqamni tekshirib "
+        "qaytadan kiriting."
+    ),
+    # `candidate_not_eligible` ATAYLAB RO'YXATDA YO'Q: bu holatda
+    # talabgor TOPILGAN, lekin ruxsat yo'q va sababni platformaning
+    # o'zi aytadi ("Imtihon kuni emas", "Test allaqachon
+    # topshirilgan"). Bizning umumiy matnimiz o'sha aniq sababni
+    # bosib qo'yardi — `humanize` server matnini o'tkazadi.
     "session_already_active": "Bu talabgorning boshqa kompyuterda ochiq sessiyasi bor.",
     "exam_not_open": "Imtihon kirish oynasi hozir yopiq.",
     "face_verification_failed": "Yuz mos kelmadi. Qaytadan urinib ko'ring.",

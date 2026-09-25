@@ -1,5 +1,7 @@
 """Admin / proktor uchun monitoring API."""
 
+import logging
+
 from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema
@@ -17,9 +19,15 @@ from apps.common.pagination import (
     ScreenshotCursorPagination,
     SessionCursorPagination,
 )
-from apps.common.permissions import HasRolePermission, RegionScopedPermission
+from apps.common.permissions import (
+    HasRegionAssignment,
+    HasRolePermission,
+    RegionScopedPermission,
+    scope_region_id,
+)
 from apps.proctoring import selectors
 from apps.proctoring.api.v1.serializers import (
+    EvidenceArtifactSerializer,
     AuditLogSerializer,
     FaceVerificationLogSerializer,
     ProctoringEventSerializer,
@@ -34,10 +42,14 @@ from apps.proctoring.api.v1.serializers import (
     TechnicalProblemSerializer,
 )
 from apps.proctoring.models import ExamSession, ProctoringEvent, TechnicalProblem
+from apps.proctoring.services import evidence as evidence_service
+from apps.proctoring.services import face_images as face_images_service
 from apps.proctoring.services import screenshots as screenshot_service
 from apps.proctoring.services import session as session_service
 from apps.proctoring.services.audit import record_audit
 from apps.proctoring.services.realtime import send_client_command
+
+logger = logging.getLogger(__name__)
 
 
 class ExamSessionViewSet(PermissionRequiredMixin, viewsets.ReadOnlyModelViewSet):
@@ -68,6 +80,12 @@ class ExamSessionViewSet(PermissionRequiredMixin, viewsets.ReadOnlyModelViewSet)
         user = self.request.user
         if user.is_region_scoped:
             queryset = queryset.filter(zone__region_id=user.region_id)
+        if self.action == "retrieve":
+            # FAQAT TAFSILOTDA. Ro'yxatda sessiyalar yuzlab bo'ladi
+            # va har biriga yozuvlarni tortish `prefetch` ni foydali
+            # qiluvchi N+1 dan ham qimmatroq so'rovga aylanardi -
+            # ro'yxat ularni ko'rsatmaydi ham.
+            queryset = queryset.prefetch_related("local_recordings")
         return queryset.order_by("-created_at")
 
     @extend_schema(responses=SessionListSerializer(many=True))
@@ -84,11 +102,12 @@ class ExamSessionViewSet(PermissionRequiredMixin, viewsets.ReadOnlyModelViewSet)
         # Viloyat: foydalanuvchi o'z viloyatiga biriktirilgan bo'lsa,
         # so'rovdagi qiymat E'TIBORGA OLINMAYDI — aks holda filtr
         # maydoni hudud chegarasini chetlab o'tish vositasiga aylanadi.
-        # Faqat global ko'ruvchi (superuser) viloyat tanlay oladi.
-        if user.is_superuser:
+        # Viloyatni faqat respublika darajasidagi ko'ruvchi tanlaydi
+        # (superuser YOKI `Role.is_global` — ilgari faqat superuser edi
+        # va Administrator roli o'z viloyatiga qamalib qolardi).
+        region_id = scope_region_id(user)
+        if region_id is None:
             region_id = request.query_params.get("region") or None
-        else:
-            region_id = user.region_id
 
         queryset = selectors.sessions_for_monitoring(
             region_id=region_id,
@@ -175,6 +194,29 @@ class ExamSessionViewSet(PermissionRequiredMixin, viewsets.ReadOnlyModelViewSet)
         serializer = ScreenshotMetaSerializer(page, many=True, context={"request": request})
         return self.get_paginated_response(serializer.data)
 
+    @extend_schema(responses=EvidenceArtifactSerializer(many=True))
+    @action(detail=True, methods=["get"], pagination_class=ScreenshotCursorPagination)
+    def evidence(self, request, pk=None):
+        """
+        Sessiyaning dalillari.
+
+        `ScreenshotCursorPagination` ishlatiladi (`EventCursorPagination`
+        EMAS): uning tartibi `captured_at`, hodisalarniki esa
+        `occurred_at` - `EvidenceArtifact` da bunday ustun yo'q va
+        kursor jimgina ishlamay qolardi.
+        """
+        session = self.get_object()
+        queryset = selectors.session_evidence(
+            session.pk,
+            kind=request.query_params.get("kind"),
+            event_type=request.query_params.get("event_type"),
+        )
+        page = self.paginate_queryset(queryset)
+        serializer = EvidenceArtifactSerializer(
+            page, many=True, context={"request": request}
+        )
+        return self.get_paginated_response(serializer.data)
+
     @extend_schema(responses=ProctoringScreenshotSerializer(many=True))
     @action(
         detail=True,
@@ -242,13 +284,24 @@ class ExamSessionViewSet(PermissionRequiredMixin, viewsets.ReadOnlyModelViewSet)
         serializer.is_valid(raise_exception=True)
         reason = serializer.validated_data["reason"]
 
-        session = session_service.terminate_session(session, actor=request.user, reason=reason)
+        session = session_service.terminate_session(
+            session, actor=request.user, reason=reason, release_seat=True
+        )
         send_client_command(
             session_id=session.pk, command="terminate", payload={"reason": reason}
         )
+        released = (session.meta or {}).get("seat_release")
         record_audit(
             actor=request.user, action="session_terminate", object_type="ExamSession",
-            object_id=session.pk, meta={"reason": reason}, request=request,
+            object_id=session.pk,
+            meta={
+                "reason": reason,
+                # Bron ham shu amal bilan bo'shadi — alohida yozuv emas:
+                # bu BITTA qaror, jurnalda ham bitta bo'lishi kerak.
+                "seat_released": bool(released),
+                "booking_id": (released or {}).get("booking_id"),
+            },
+            request=request,
         )
         return Response(SessionDetailSerializer(session, context={"request": request}).data)
 
@@ -270,10 +323,9 @@ class TechnicalProblemViewSet(PermissionRequiredMixin, AuditLogMixin, viewsets.M
     ordering_fields = ["started_at", "created_at"]
 
     def get_queryset(self):
-        user = self.request.user
         return selectors.technical_problems(
             unresolved_only=self.request.query_params.get("unresolved") == "true",
-            region_id=None if user.is_superuser else user.region_id,
+            region_id=scope_region_id(self.request.user),
         )
 
     @extend_schema(request=TechnicalProblemResolveSerializer, responses=TechnicalProblemSerializer)
@@ -328,6 +380,14 @@ class AuditLogViewSet(PermissionRequiredMixin, viewsets.ReadOnlyModelViewSet):
             action=self.request.query_params.get("action"),
             object_type=self.request.query_params.get("object_type"),
         )
+        # Viloyat foydalanuvchisi faqat O'Z VILOYATI XODIMLARINING
+        # harakatlarini ko'radi. Ilgari jurnal umuman cheklanmagan edi va
+        # `audit.view` berilgan viloyat xodimi boshqa viloyatlarning
+        # chetlashtirishlari, dalil ko'rishlari va login IP'larini o'qirdi.
+        # Tizim yozuvlari (aktorsiz) — respublika darajasidagi ma'lumot.
+        user = self.request.user
+        if user.is_region_scoped:
+            queryset = queryset.filter(actor__region_id=user.region_id)
         # Sana oralig'i — apellyatsiya tekshiruvida "o'sha kuni nima
         # bo'lgan" savoli aynan shu shaklda beriladi.
         date_from = self.request.query_params.get("date_from")
@@ -342,12 +402,22 @@ class AuditLogViewSet(PermissionRequiredMixin, viewsets.ReadOnlyModelViewSet):
 # --------------------------------------------------------------------------
 # Dashboard
 # --------------------------------------------------------------------------
-class DashboardSummaryView(APIView):
-    permission_classes = [IsAuthenticated]
+class _DashboardView(APIView):
+    """
+    Dashboard endpointlari uchun umumiy ruxsat.
 
+    Ilgari ular faqat `IsAuthenticated` edi: menyuda «Boshqaruv paneli»
+    `dashboard.view` bilan yashirilgan bo'lsa ham, API har qanday
+    xodimga (masalan Operator'ga) viloyat bo'yicha sonlarni berardi.
+    """
+
+    permission_classes = [IsAuthenticated, HasRegionAssignment, HasRolePermission]
+    required_permission = "dashboard.view"
+
+
+class DashboardSummaryView(_DashboardView):
     def get(self, request):
-        user = request.user
-        region_id = None if user.is_superuser else user.region_id
+        region_id = scope_region_id(request.user)
         exam_date = request.query_params.get("date")
 
         from apps.integrations.exam_platform import platform_health
@@ -363,12 +433,9 @@ class DashboardSummaryView(APIView):
         )
 
 
-class DashboardZonesView(APIView):
-    permission_classes = [IsAuthenticated]
-
+class DashboardZonesView(_DashboardView):
     def get(self, request):
-        user = request.user
-        region_id = None if user.is_superuser else user.region_id
+        region_id = scope_region_id(request.user)
         return Response(
             {
                 "zones": selectors.zone_breakdown(
@@ -378,20 +445,121 @@ class DashboardZonesView(APIView):
         )
 
 
-class DashboardDevicesView(APIView):
-    permission_classes = [IsAuthenticated]
-
+class DashboardDevicesView(_DashboardView):
     def get(self, request):
         from apps.devices.selectors import zone_device_summary
 
-        user = request.user
-        region_id = None if user.is_superuser else user.region_id
+        region_id = scope_region_id(request.user)
         return Response({"zones": zone_device_summary(region_id=region_id)})
 
 
 # --------------------------------------------------------------------------
 # Skrinshot fayli
 # --------------------------------------------------------------------------
+class FaceLogFileView(APIView):
+    """
+    FaceID kadrini beradi (kirishdagi yoki test davomidagi).
+
+    RUXSAT DALILNIKI BILAN BIR XIL (`evidence.view`) va bu ataylab:
+    bu ham talabgorning yuzi, ya'ni bir xil og'irlikdagi shaxsiy
+    ma'lumot. Sessiyalar ro'yxatini ko'rish statistik ish, yuz
+    rasmini ochish esa boshqa huquq.
+
+    SESSIYASIZ QATOR HAM BERILADI — aynan u eng kerakli holat
+    ("kira olmadi, kadrda kim turgan edi?"). Hudud filtri o'shanda
+    qatordagi `zone` bo'yicha ishlaydi (`face_log_for_user`).
+
+    Har bir ochish AUDIT izida qoladi.
+    """
+
+    permission_classes = [IsAuthenticated, HasRegionAssignment, HasRolePermission]
+    required_permission = "evidence.view"
+
+    @extend_schema(responses={200: OpenApiTypes.BINARY})
+    def get(self, request, pk: int):
+        # `kind=reference` - hujjat rasmi (faqat kirish tekshiruvida),
+        # aks holda kameradagi kadr. Ikkisi bitta qatorda yashaydi,
+        # chunki ular bir tekshiruvning ikki tomoni.
+        kind = "reference" if request.query_params.get("kind") == "reference" else "live"
+        log_row = selectors.face_log_for_user(pk, request.user)
+        stored = (
+            (log_row.reference_image_path if kind == "reference" else log_row.image_path)
+            if log_row is not None
+            else ""
+        )
+        if log_row is None or not stored:
+            # "Ruxsat yo'q", "mavjud emas" va "rasm saqlanmagan"
+            # ATAYLAB ajratilmaydi: 403/404 farqi boshqa hududda
+            # qaysi id'lar borligini sanab chiqish imkonini berardi.
+            raise ScreenshotNotFound()
+
+        record_audit(
+            actor=request.user,
+            action="evidence_view",
+            object_type="FaceVerificationLog",
+            object_id=log_row.pk,
+            meta={
+                "session": str(log_row.session.public_id) if log_row.session_id else "",
+                "stage": log_row.stage,
+                "score": log_row.score,
+                "passed": log_row.passed,
+                "kind": kind,
+            },
+            request=request,
+        )
+        try:
+            return face_images_service.response(log_row, kind=kind)
+        except FileNotFoundError as exc:
+            logger.warning(
+                "FaceID qatori bor, fayl yo'q: id=%s path=%s", log_row.pk, stored
+            )
+            raise ScreenshotNotFound() from exc
+
+
+class EvidenceFileView(APIView):
+    """
+    Dalil faylini beradi (kadr yoki video klip).
+
+    Mas'uliyat bo'linishi `ScreenshotFileView` dagi bilan bir xil:
+    Django ruxsatni tekshiradi, baytlarni nginx uzatadi. Video uchun
+    bu yanada muhimroq - 12 MB lik klipni gunicorn worker'i orqali
+    berish uni butun yuklash davomida band qilib turardi.
+
+    RUXSAT ALOHIDA (`evidence.view`). Sessiyalar ro'yxatini ko'rish
+    statistik ish, talabgorning videosini ochish esa shaxsiy
+    ma'lumotga kirish - ular bir xil huquq bo'la olmaydi.
+
+    Har bir ochish AUDIT izida qoladi: bu shaxsiy ma'lumot va unga
+    kirish faktining o'zi tekshirilishi kerak bo'lgan harakat.
+    """
+
+    permission_classes = [IsAuthenticated, HasRegionAssignment, HasRolePermission]
+    required_permission = "evidence.view"
+
+    @extend_schema(responses={200: OpenApiTypes.BINARY})
+    def get(self, request, pk: int):
+        artifact = selectors.evidence_for_user(pk, request.user)
+        if artifact is None:
+            # "Ruxsat yo'q" va "mavjud emas" ATAYLAB ajratilmaydi:
+            # 403/404 farqi boshqa hududda qaysi id'lar borligini
+            # sanab chiqish imkonini berardi.
+            raise ScreenshotNotFound()
+
+        record_audit(
+            actor=request.user,
+            action="evidence_view",
+            object_type="EvidenceArtifact",
+            object_id=artifact.pk,
+            meta={
+                "session": str(artifact.session.public_id),
+                "kind": artifact.kind,
+                "event_type": artifact.event_type,
+            },
+            request=request,
+        )
+        return evidence_service.response(artifact)
+
+
 class ScreenshotFileView(APIView):
     """
     Fayl tizimidagi skrinshotni beradi.
@@ -417,7 +585,7 @@ class ScreenshotFileView(APIView):
     URL brauzer tarixida, `Referer` da va nginx access log'ida qoladi.
     """
 
-    permission_classes = [IsAuthenticated, HasRolePermission]
+    permission_classes = [IsAuthenticated, HasRegionAssignment, HasRolePermission]
     required_permission = "sessions.view"
 
     @extend_schema(responses={200: OpenApiTypes.BINARY})

@@ -9,7 +9,75 @@ sessiyalarni ko'rish" kerak. Shuning uchun `Role -> Permission(code)` va
 
 from rest_framework.permissions import SAFE_METHODS, BasePermission
 
-__all__ = ["HasRolePermission", "RegionScopedPermission"]
+__all__ = [
+    "HasRegionAssignment",
+    "HasRolePermission",
+    "RegionScopedPermission",
+    "RepublicLevelWrite",
+    "scope_region_id",
+]
+
+
+class HasRegionAssignment(BasePermission):
+    """
+    Admin yuzasida: viloyat darajasidagi xodimga viloyat biriktirilgan.
+
+    Faqat ADMIN yuzasiga qo'yiladi (`PermissionRequiredMixin`, dashboard,
+    WebSocket monitor) — desktop client'ning ruxsat zanjiri alohida:
+    operator hisobidagi tuzatilmagan maydon imtihon kuni butun binoni
+    to'xtatib qo'ymasligi kerak.
+
+    `code` frontendga ochiq sabab beradi: panel oddiy "ruxsat yo'q"
+    o'rniga "hisobingizga viloyat biriktirilmagan" ekranini ko'rsatadi.
+    """
+
+    message = "Hisobingizga viloyat biriktirilmagan — administratorga murojaat qiling"
+    code = "region_not_assigned"
+
+    def has_permission(self, request, view):
+        user = request.user
+        if not user or not user.is_authenticated:
+            return True  # autentifikatsiyani boshqa klass hal qiladi
+        return not user.lacks_region
+
+
+class RepublicLevelWrite(BasePermission):
+    """
+    UMUMIY ma'lumotni faqat respublika darajasi O'ZGARTIRADI.
+
+    Rollar, viloyatlar ro'yxati, client sozlama profillari, AI siyosati,
+    imtihonlar — barcha viloyatlar uchun BITTA yozuv. Viloyat
+    foydalanuvchisi ularni o'qiydi (o'z ishida kerak), lekin tahrirlasa
+    boshqa viloyatlardagi xodimlar, imtihonlar va mashinalarga ta'sir
+    qiladi — ya'ni viloyat chegarasi yozish orqali buzilardi. Ruxsat
+    kodi (`controls.manage` va h.k.) buni hal qilmaydi: u "nima" degan
+    savolga javob beradi, "qayerda" degan savolga emas.
+    """
+
+    message = "Bu umumiy ma'lumot — uni faqat respublika darajasidagi xodim o'zgartiradi"
+    code = "republic_level_only"
+
+    def has_permission(self, request, view):
+        if request.method in SAFE_METHODS:
+            return True
+        user = request.user
+        return bool(user and user.is_authenticated and not user.is_region_scoped)
+
+
+def scope_region_id(user):
+    """
+    So'rovdagi `region` parametri QACHON e'tiborga olinadi.
+
+    Viloyat foydalanuvchisi uchun — hech qachon: uning viloyati majburiy
+    (aks holda filtr maydoni chegarani chetlab o'tish vositasi bo'lardi).
+    Respublika darajasidagi foydalanuvchi uchun `None` — "barcha".
+
+    Ilgari bu savol `None if user.is_superuser else user.region_id`
+    shaklida to'rt joyda takrorlanardi va respublika roli (`is_global`)
+    bilan kelgan Administrator o'zini viloyatga qamab qo'yardi yoki
+    (viloyat biriktirilgan bo'lsa) faqat o'shani ko'rardi.
+    """
+    return user.region_id if user.is_region_scoped else None
 
 
 class HasRolePermission(BasePermission):

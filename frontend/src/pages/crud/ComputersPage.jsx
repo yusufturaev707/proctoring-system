@@ -3,7 +3,7 @@ import { Chip, Stack, Typography } from '@mui/material'
 import ResourcePage from '../../components/data/ResourcePage'
 import {
   DeviceStatusCell, LastSeenCell, camerasOfZone, deviceStatusText, useCameraOptions,
-  useRegionOptions, useZoneOptions, zonesOfRegion,
+  regionZoneFilters, useRegionOptions, useZoneOptions, zonesOfRegion,
 } from './shared'
 import { computers as computersApi } from '../../api/endpoints'
 
@@ -20,13 +20,25 @@ export default function ComputersPage() {
       restorable
       api={computersApi}
       permission="devices.manage"
-      searchPlaceholder="Inventar, IP yoki MAC…"
-      defaultSort={{ field: 'inventory_code', sort: 'asc' }}
+      searchPlaceholder="Raqam, inventar, IP yoki MAC…"
+      defaultSort={{ field: 'number', sort: 'asc' }}
       defaults={{ is_active: true }}
-      getRowLabel={(row) => row?.inventory_code}
+      getRowLabel={(row) => row?.label || row?.inventory_code}
       deleteConfirmPhrase
       deleteDescription="Kompyuterga bog‘langan sessiyalar tarixi saqlanib qoladi, lekin qurilma tokeni bekor bo‘ladi."
       columns={[
+        {
+          // RAQAM BIRINCHI USTUN: operator ro'yxatni xonadagi
+          // tartibda o'qiydi va mashinani aynan shu bo'yicha
+          // qidiradi. Inventar kodi undan keyin - u
+          // buxgalteriya uchun.
+          field: 'number', headerName: '№', width: 80,
+          renderCell: (params) => (
+            params.value
+              ? <Typography variant="body2" sx={{ fontWeight: 600 }}>{params.value}</Typography>
+              : <Typography variant="body2" color="text.disabled">—</Typography>
+          ),
+        },
         { field: 'inventory_code', headerName: 'Inventar', width: 150 },
         { field: 'zone_name', headerName: 'Bino', flex: 1, minWidth: 150, sortable: false },
         { field: 'region_name', headerName: 'Viloyat', flex: 1, minWidth: 140, sortable: false },
@@ -57,10 +69,15 @@ export default function ComputersPage() {
         { field: 'last_seen_at', headerName: 'Oxirgi signal', width: 150, renderCell: LastSeenCell },
       ]}
       toggleField="is_active"
+      // Holat client signali bilan 45 soniyada yangilanadi
+      // (`devices.services.touch_presence`) — ro'yxat ham o'zi
+      // yangilanishi kerak, aks holda ekrandagi "offline" allaqachon
+      // eskirgan bo'ladi.
+      refetchInterval={30000}
       exportName="kompyuterlar"
       formMaxWidth="md"
       filters={[
-        { name: 'zone', label: 'Bino', type: 'select', options: zoneOptions },
+        ...regionZoneFilters({ regionOptions, zoneOptions }),
         {
           name: 'status', label: 'Holat', type: 'select',
           options: [
@@ -92,8 +109,17 @@ export default function ComputersPage() {
           emptyOptionsText: 'Bu viloyatda bino yo‘q — avval bino qo‘shing',
         },
         {
+          // IXTIYORIY: hamma markazda ham mashinalar raqamlanmagan.
+          // Majburiy qilish mavjud yozuvlarni tahrirlashda
+          // to'ldirishga majbur qilardi - to'g'ri javobni esa
+          // faqat o'sha markaz biladi.
+          name: 'number', label: 'Kompyuter raqami', type: 'number',
+          min: 1, max: 32767, colSpan: 6,
+          helperText: 'Xonadagi tartib raqami. Bino ichida unikal bo‘lishi kerak',
+        },
+        {
           name: 'inventory_code', label: 'Inventar kodi', required: true,
-          maxLength: 50, pattern: 'slug', colSpan: 12,
+          maxLength: 50, pattern: 'slug', colSpan: 6,
           helperText: 'Faqat harf, raqam, `-` va `_`. Tizim bo‘ylab unikal.',
         },
         {

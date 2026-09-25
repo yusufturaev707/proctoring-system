@@ -17,6 +17,7 @@ import logging
 
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
+from redis.exceptions import RedisError
 
 from apps.proctoring.services.realtime import region_group, session_group, zone_group
 
@@ -24,6 +25,15 @@ logger = logging.getLogger(__name__)
 
 CLOSE_UNAUTHORIZED = 4401
 CLOSE_FORBIDDEN = 4403
+# RFC 6455 "Internal Error": server vaqtincha xizmat qila olmadi, client
+# backoff bilan qayta ulanadi. 44xx dan farqi — token ham, ruxsat ham
+# joyida, ya'ni qayta urinish ma'noli.
+CLOSE_LAYER_UNAVAILABLE = 1011
+
+# Channel layer'ning Redis'i ishlamay qolgandagi xatolar. `OSError` ham
+# kiradi: Windows'da o'lik socket ba'zan redis-py o'ramidan tashqarida
+# `WinError 121` bo'lib chiqadi.
+_LAYER_ERRORS = (RedisError, OSError)
 
 
 class MonitorConsumer(AsyncJsonWebsocketConsumer):
@@ -52,18 +62,36 @@ class MonitorConsumer(AsyncJsonWebsocketConsumer):
         await self.send_json({"type": "connected", "user": self.user["username"]})
 
     async def disconnect(self, code):
+        # Uzilishda Redis xatosi YUTILADI: ulanish baribir yopilyapti va
+        # istisno faqat "Exception in ASGI application" shovqini berardi.
+        # Tashlab ketilgan a'zolik o'zi eskiradi — o'lik kanalga
+        # yuborilgan xabar `expiry` (20 s) dan keyin o'chadi, guruh
+        # yozuvi esa `group_expiry` da.
         for group in getattr(self, "groups_joined", []):
-            await self.channel_layer.group_discard(group, self.channel_name)
+            try:
+                await self.channel_layer.group_discard(group, self.channel_name)
+            except _LAYER_ERRORS as exc:
+                logger.warning("monitor: guruhdan chiqib bo'lmadi (%s): %s", group, exc)
 
     async def receive_json(self, content, **kwargs):
         action = content.get("action")
 
-        if action == "subscribe":
-            await self._subscribe(content.get("zones", []), content.get("regions", []))
-        elif action == "unsubscribe":
-            await self._unsubscribe(content.get("zones", []), content.get("regions", []))
-        elif action == "ping":
-            await self.send_json({"type": "pong"})
+        try:
+            if action == "subscribe":
+                await self._subscribe(content.get("zones", []), content.get("regions", []))
+            elif action == "unsubscribe":
+                await self._unsubscribe(content.get("zones", []), content.get("regions", []))
+            elif action == "ping":
+                await self.send_json({"type": "pong"})
+        except _LAYER_ERRORS as exc:
+            # Channel layer ichidagi qayta urinishlar (`_channel_layer_host`)
+            # ham yordam bermadi — Redis haqiqatan ishlamayapti. Yarim
+            # obunali ulanishni tirik qoldirish panelda "ulangan, lekin
+            # hodisa kelmaydi" degan eng yomon holatni berardi; ochiq
+            # yopilish esa client'ni backoff bilan qayta ulanishga
+            # majbur qiladi.
+            logger.warning("monitor: channel layer ishlamadi (%s): %s", action, exc)
+            await self.close(code=CLOSE_LAYER_UNAVAILABLE)
 
     async def _subscribe(self, zones: list, regions: list) -> None:
         """
@@ -78,18 +106,23 @@ class MonitorConsumer(AsyncJsonWebsocketConsumer):
         for zone_id in zones[:50]:  # bir ulanishga cheklov
             if allowed_region and not await self._zone_in_region(zone_id, allowed_region):
                 continue
-            group = zone_group(int(zone_id))
-            await self.channel_layer.group_add(group, self.channel_name)
-            self.groups_joined.append(group)
+            await self._join(zone_group(int(zone_id)))
 
         for region_id in regions[:10]:
             if allowed_region and int(region_id) != allowed_region:
                 continue
-            group = region_group(int(region_id))
-            await self.channel_layer.group_add(group, self.channel_name)
-            self.groups_joined.append(group)
+            await self._join(region_group(int(region_id)))
 
         await self.send_json({"type": "subscribed", "groups": self.groups_joined})
+
+    async def _join(self, group: str) -> None:
+        # `group_add` takroriy obunada ham chaqiriladi — u guruh
+        # a'zoligining muddatini yangilaydi; ro'yxatga esa bir marta
+        # yoziladi (panel zonalar o'zgarganda qayta obuna bo'ladi va
+        # ro'yxat har safar o'sib borardi).
+        await self.channel_layer.group_add(group, self.channel_name)
+        if group not in self.groups_joined:
+            self.groups_joined.append(group)
 
     async def _unsubscribe(self, zones: list, regions: list) -> None:
         targets = [zone_group(int(z)) for z in zones] + [region_group(int(r)) for r in regions]
@@ -129,14 +162,26 @@ class MonitorConsumer(AsyncJsonWebsocketConsumer):
             return None
 
         return {
+            # Viloyatsiz viloyat xodimi — HTTP'dagi `HasRegionAssignment`
+            # bilan bir xil qoida (`_has_permission` rad etadi). Usiz u bu
+            # kanal orqali barcha binolarga obuna bo'la olardi:
+            # `_subscribe` cheklovni faqat `region_id` bor bo'lganda
+            # qo'llaydi. 4401 EMAS, 4403: token yaroqli va panel uni
+            # yangilab qayta-qayta ulanishga urinmasligi kerak.
+            "lacks_region": user.lacks_region,
             "id": user.pk,
             "username": user.username,
-            "region_id": None if user.is_superuser else user.region_id,
+            # `is_region_scoped` — HTTP bilan bir xil manba: ilgari bu
+            # yerda `is_superuser` edi va respublika roli (`is_global`)
+            # bilan kelgan Administrator o'z viloyatiga qamalib qolardi.
+            "region_id": user.region_id if user.is_region_scoped else None,
             "is_superuser": user.is_superuser,
             "permissions": user.permission_codes(),
         }
 
     async def _has_permission(self) -> bool:
+        if self.user.get("lacks_region"):
+            return False
         permissions = self.user.get("permissions", [])
         return (
             self.user["is_superuser"]
@@ -171,8 +216,17 @@ class ClientConsumer(AsyncJsonWebsocketConsumer):
             await self.close(code=CLOSE_UNAUTHORIZED)
             return
 
-        self.group = session_group(self.session_info["session_id"])
-        await self.channel_layer.group_add(self.group, self.channel_name)
+        group = session_group(self.session_info["session_id"])
+        try:
+            await self.channel_layer.group_add(group, self.channel_name)
+        except _LAYER_ERRORS as exc:
+            # Guruhsiz ulanish proktor buyruqlarini ("to'xtat",
+            # "ogohlantir") hech qachon olmaydi — uni qabul qilish
+            # nazorat kanali ishlayapti degan yolg'on bo'lardi.
+            logger.warning("client: channel layer ishlamadi: %s", exc)
+            await self.close(code=CLOSE_LAYER_UNAVAILABLE)
+            return
+        self.group = group
         await self.accept()
         await self.send_json(
             {"type": "connected", "session": self.session_info["public_id"]}
@@ -181,7 +235,10 @@ class ClientConsumer(AsyncJsonWebsocketConsumer):
     async def disconnect(self, code):
         group = getattr(self, "group", None)
         if group:
-            await self.channel_layer.group_discard(group, self.channel_name)
+            try:
+                await self.channel_layer.group_discard(group, self.channel_name)
+            except _LAYER_ERRORS as exc:
+                logger.warning("client: guruhdan chiqib bo'lmadi (%s): %s", group, exc)
 
     async def receive_json(self, content, **kwargs):
         action = content.get("action")

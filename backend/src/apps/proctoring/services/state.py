@@ -89,6 +89,20 @@ def store_pending(challenge: str, payload: dict) -> None:
     )
 
 
+def peek_pending(challenge: str) -> dict | None:
+    """
+    O'qiydi, lekin O'CHIRMAYDI.
+
+    Kirishdagi muvaffaqiyatsiz urinishni yozish uchun kerak: urinish
+    challenge'ni sarflamasligi kerak, aks holda birinchi "mos kelmadi"
+    dan keyin talabgor qaytadan JSHSHIR kiritishga majbur bo'lardi -
+    holbuki qayta urinish aynan kutilgan xulq (yorug'lik, ko'zoynak,
+    bosh burilishi).
+    """
+    raw = get_redis().get(pending_key(challenge))
+    return json.loads(raw) if raw else None
+
+
 def consume_pending(challenge: str) -> dict | None:
     """Bir martalik: o'qiydi va darhol o'chiradi."""
     client = get_redis()

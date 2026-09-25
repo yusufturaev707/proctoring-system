@@ -8,6 +8,16 @@ from apps.common.utils.validators import inventory_code_validator, mac_address_v
 class Camera(SoftDeleteModel):
     """IP kamera. Zonani kuzatadi (kompyuter kamerasidan alohida)."""
 
+    class Vendor(models.TextChoices):
+        HIKVISION = "hikvision", _("Hikvision")
+        DAHUA = "dahua", _("Dahua")
+        ONVIF = "onvif", _("ONVIF (umumiy)")
+        GENERIC = "generic", _("Boshqa")
+
+    class Transport(models.TextChoices):
+        TCP = "tcp", _("TCP")
+        UDP = "udp", _("UDP")
+
     class Status(models.TextChoices):
         ONLINE = "online", _("Online")
         OFFLINE = "offline", _("Offline")
@@ -23,6 +33,30 @@ class Camera(SoftDeleteModel):
         _("MAC manzil"), max_length=17, validators=[mac_address_validator]
     )
     rtsp_path = models.CharField(max_length=255, blank=True, default="/Streaming/Channels/101")
+
+    # --- Ulanish parametrlari ---
+    #
+    # Ilgari RTSP URL faqat `ip_address + rtsp_path` dan yig'ilardi va bu
+    # bitta vendor (Hikvision, 554-port, TCP) uchun ishlardi. Boshqa
+    # kamera qo'yilgan zahoti yo'l ham, port ham, transport ham
+    # boshqacha bo'ladi va ularni `rtsp_path` ichiga tiqib bo'lmaydi.
+    #
+    # `vendor` URL YIG'ISHDA qatnashmaydi — u faqat administrator uchun
+    # belgi va client tomonda kelajakdagi vendor-maxsus xatti-harakat
+    # (masalan ONVIF discovery) uchun ilgak. Yo'lni har doim `rtsp_path`
+    # belgilaydi: "vendor bo'yicha yo'lni taxmin qilish" modeli birinchi
+    # nostandart proshivkada buziladi.
+    vendor = models.CharField(
+        _("Ishlab chiqaruvchi"), max_length=32, choices=Vendor.choices, default=Vendor.HIKVISION
+    )
+    port = models.PositiveIntegerField(_("RTSP port"), default=554)
+    # TCP standart: UDP'da paket yo'qolishi kadrni buzadi va dalil
+    # sifatidagi qiymatini yo'qotadi. UDP tanlovi LAN'dagi yuqori
+    # bitrate oqimlar uchun qoldirilgan.
+    transport = models.CharField(
+        _("Transport"), max_length=8, choices=Transport.choices, default=Transport.TCP
+    )
+
     login = models.CharField(max_length=120, blank=True, default="")
     # Parol OCHIQ SAQLANMAYDI — AES-GCM bilan shifrlanadi (services.py).
     password_encrypted = models.TextField(blank=True, default="")
@@ -30,7 +64,17 @@ class Camera(SoftDeleteModel):
     status = models.CharField(
         max_length=20, choices=Status.choices, default=Status.OFFLINE, db_index=True
     )
+    #: Oxirgi marta ONLINE bo'lgan payt.
     last_seen_at = models.DateTimeField(null=True, blank=True)
+    #: Holat SABABI - odam tilida ("Login yoki parol noto'g'ri").
+    #: `error` holatida hal qiluvchi: "xatolik" so'zining o'zi
+    #: administratorga nimani tuzatishni aytmaydi.
+    status_message = models.CharField(max_length=200, blank=True, default="")
+    #: Oxirgi TEKSHIRUV payti (natijasidan qat'i nazar). `last_seen_at`
+    #: dan farqi: offline kamerada ham "holat qanchalik yangi?" degan
+    #: savolga javob beradi - tekshiruv umuman ishlamayotganini shu
+    #: yerdan bilish mumkin.
+    last_checked_at = models.DateTimeField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
 
     def __str__(self):
@@ -68,11 +112,36 @@ class Computer(SoftDeleteModel):
     zone = models.ForeignKey(
         "regions.Zone", on_delete=models.PROTECT, related_name="computers"
     )
+    #: Xonadagi TARTIB RAQAMI — stolga yopishtirilgan raqam.
+    #
+    # `inventory_code` DAN BOSHQA SAVOLGA javob beradi va ikkalasi
+    # ham kerak: inventar kodi buxgalteriya uchun ("INV-2024-0123",
+    # mashina almashtirilsa o'zgaradi), raqam esa XONADAGI O'RIN
+    # uchun ("12-kompyuter") va u mashina almashtirilganda ham
+    # o'sha joyda qoladi.
+    #
+    # Amalda operator va talabgor aynan shu raqam bilan ishlaydi:
+    # "12-kompyuterga o'ting", "15-kompyuterda kamera ishlamayapti".
+    # Inventar kodini ular hech qachon aytmaydi - u stikerning
+    # orqasida yoki umuman ko'rinmaydi.
+    #
+    # IXTIYORIY: hamma markazda ham mashinalar raqamlanmagan va
+    # majburiy qilish mavjud yozuvlarni migratsiyada to'ldirishga
+    # majbur qilardi - to'g'ri javobni esa faqat o'sha markaz
+    # biladi.
+    number = models.PositiveSmallIntegerField(
+        _("Raqami"), null=True, blank=True, db_index=True
+    )
     # Ikkalasi ham `unique=True` EMAS — pastdagi shartli cheklovlarga qarang.
     inventory_code = models.CharField(
         _("Inventar kodi"), max_length=50, validators=[inventory_code_validator]
     )
-    ip_address = models.GenericIPAddressField(_("IP manzil"))
+    # IXTIYORIY: Excel importida (`computer_import.py`) IP yo'q - DHCP
+    # tarmog'ida u o'zgarib turadi va mashinani MAC belgilaydi. Ilgari
+    # majburiy edi va avtomatik inventarizatsiya "0.0.0.0" qo'yardi,
+    # `unique_computer_zone_ip` esa binoda bittadan ortiq shunday
+    # mashinaga yo'l qo'ymasdi. NULL bu cheklovga tushmaydi.
+    ip_address = models.GenericIPAddressField(_("IP manzil"), null=True, blank=True)
     mac_address = models.CharField(
         _("MAC manzil"), max_length=17, validators=[mac_address_validator]
     )
@@ -87,15 +156,41 @@ class Computer(SoftDeleteModel):
     last_seen_at = models.DateTimeField(null=True, blank=True, db_index=True)
     is_active = models.BooleanField(default=True)
 
+    @property
+    def label(self) -> str:
+        """
+        Ekranda ko'rsatiladigan nom: "№12 · INV-001".
+
+        Raqam OLDINDA, chunki odam mashinani aynan shu bo'yicha
+        qidiradi. Raqam yo'q bo'lsa faqat inventar kodi qoladi -
+        "№None" yozuvi hech narsani anglatmasdi.
+        """
+        if self.number:
+            return "№{} · {}".format(self.number, self.inventory_code)
+        return self.inventory_code
+
     def __str__(self):
-        return f"{self.inventory_code} — {self.mac_address}"
+        return f"{self.label} — {self.mac_address}"
 
     class Meta:
         db_table = "computer"
         verbose_name = _("Kompyuter")
         verbose_name_plural = _("Kompyuterlar")
-        ordering = ["zone", "inventory_code"]
+        # RAQAM BO'YICHA, keyin inventar kodi. Operator ro'yxatni
+        # xonadagi tartibda ko'radi; raqamsiz mashinalar oxirida
+        # qoladi (Postgres `NULLS LAST`) - ular odatda yangi
+        # qo'shilgan va hali joylashtirilmagan.
+        ordering = ["zone", "number", "inventory_code"]
         constraints = [
+            # Raqam faqat BINO ichida unikal - "12-kompyuter" har
+            # binoda bor va bu normal holat. Ikkita "12" bitta
+            # binoda esa raqamning butun ma'nosini yo'qotardi:
+            # operator qaysi biriga borishni bilmasdi.
+            models.UniqueConstraint(
+                fields=["zone", "number"],
+                condition=models.Q(deleted_at__isnull=True, number__isnull=False),
+                name="unique_computer_zone_number",
+            ),
             # IP faqat zona ichida unikal — turli binolarda 192.168.1.10 normal holat.
             models.UniqueConstraint(
                 fields=["zone", "ip_address"],
@@ -150,6 +245,20 @@ class DeviceToken(TimeStampedModel):
         max_length=128, blank=True, default="", db_index=True
     )
 
+    # --- Apparat profili (proktorlik AI uchun) ---
+    #
+    # CPU/RAM/CUDA tafsiloti `Computer.info_pc` (JSON) da yotadi va u
+    # yerda qolishi to'g'ri: u mashinaning xususiyati, client
+    # nusxasiniki emas. Bu yerda esa faqat ikkita QIDIRILADIGAN qiymat
+    # bor — administrator "qaysi mashinalar CPU rejimida ishlayapti?"
+    # degan savolga JSON ichini titmasdan javob olishi kerak, chunki
+    # aynan o'sha mashinalarda kuzatuv sifati past bo'ladi.
+    gpu_name = models.CharField(_("GPU"), max_length=120, blank=True, default="")
+    performance_profile = models.CharField(
+        _("Unumdorlik profili"), max_length=8, blank=True, default="", db_index=True,
+        help_text=_("high / medium / low / cpu / minimal — client o'zi aniqlaydi"),
+    )
+
     app_version = models.CharField(max_length=32, blank=True, default="")
     app_hash = models.CharField(
         max_length=64,
@@ -175,6 +284,18 @@ class DeviceToken(TimeStampedModel):
     # qachon kirish ruxsatini hal qilmaydi (`is_ip_allowed` faqat server
     # ko'rgan manzil bilan ishlaydi) - u ma'lumot va diagnostika uchun.
     reported_public_ip = models.GenericIPAddressField(null=True, blank=True)
+    #: Client O'ZI aniqlagan LOKAL (LAN) manzil.
+    #
+    # NIMA UCHUN KERAK: panelda "bu sessiya qaysi mashinada o'tdi"
+    # degan savolga javob beradigan yagona aniq manzil shu. Server
+    # ko'rgan manzil (`last_ip`) NAT ortidagi butun bino uchun bitta
+    # bo'lishi mumkin, dev'da esa u umuman `127.0.0.1` - ya'ni
+    # bayonnomada foydasiz qiymat qolardi.
+    #
+    # ISHONCHSIZ, `reported_public_ip` bilan bir xil sababdan: uni
+    # client yuboradi. Hech qanday ruxsat qarori bunga tayanmaydi -
+    # u faqat ma'lumot va diagnostika uchun.
+    reported_lan_ip = models.GenericIPAddressField(null=True, blank=True)
     revoked_at = models.DateTimeField(null=True, blank=True)
     revoke_reason = models.CharField(max_length=255, blank=True, default="")
 

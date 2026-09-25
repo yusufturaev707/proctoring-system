@@ -11,6 +11,7 @@ uni kech qo'ysak, model `~/.insightface` ga yuklab olinadi.
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import types
@@ -30,6 +31,58 @@ _stub.MaskRenderer = type("MaskRenderer", (), {})
 sys.modules.setdefault("insightface.app.mask_renderer", _stub)
 
 log = setup_logging()
+
+
+def _disable_extra_monitors() -> None:
+    """
+    Imtihon BITTA ekranda o'tadi — qolganlari ish stolidan uziladi.
+
+    QT'DAN OLDIN va boshqa dasturlarni yopishdan ham OLDIN. Sabab
+    tartibda: monitor uzilganda undagi oynalar asosiy ekranga
+    ko'chadi, ya'ni `app_closer` ularni "ko'rinadigan oyna" sifatida
+    ko'radi va yopadi. Teskari tartibda ikkinchi ekrandagi oyna
+    yopilgandan keyin monitor uzilar va u yerdagi yangi oyna
+    (masalan dialog) nazoratdan tashqarida qolishi mumkin edi.
+
+    Xato butun dasturni TO'XTATMAYDI: bu tozalash bosqichi. O'chmagan
+    monitor `DeviceWatcher` orqali baribir `multi_monitor` hodisasi
+    sifatida qayd etiladi va proktor uni ko'radi.
+    """
+    from config import DISABLE_EXTRA_MONITORS
+
+    if not DISABLE_EXTRA_MONITORS:
+        log.info("Ortiqcha monitorlarni o'chirish o'chirilgan "
+                 "(DISABLE_EXTRA_MONITORS=0)")
+        return
+
+    from services import display_control
+
+    try:
+        report = display_control.disable_secondary()
+    except Exception:
+        log.exception("Monitorlarni o'chirishda kutilmagan xato")
+        return
+
+    for display in report.disabled:
+        log.info("Ortiqcha monitor o'chirildi: %s", display.describe())
+    for display in report.failed:
+        # Jimgina o'tib ketmasligi kerak: ekran hali ham yonib turibdi
+        # va talabgor undan foydalana oladi.
+        log.error("Monitor o'chmadi: %s", display.describe())
+
+
+def _restore_monitors() -> None:
+    """Dastur yopilgandan keyin monitorlarni qaytaradi."""
+    from config import RESTORE_MONITORS_ON_EXIT
+
+    if not RESTORE_MONITORS_ON_EXIT:
+        return
+    from services import display_control
+
+    try:
+        display_control.restore()
+    except Exception:
+        log.exception("Monitorlarni qaytarishda xato")
 
 
 def _close_other_apps() -> None:
@@ -75,8 +128,118 @@ def _close_other_apps() -> None:
         )
 
 
+def _sweep_threats() -> None:
+    """
+    Masofaviy boshqaruv, virtualizatsiya va yordamchi vositalarni tozalash.
+
+    `_close_other_apps()` dan KEYIN va bu ataylab. Birinchisi ko'rinadigan
+    oynalarni yopadi, ya'ni AnyDesk oynasi allaqachon ketgan bo'ladi va
+    bu yerda faqat uning OYNASIZ qismi - xizmat va fon jarayoni qoladi.
+    Teskari tartibda ikkala bosqich ham bir xil jarayonlarga tegib,
+    ikkinchisi birinchisining natijasini "qayta paydo bo'ldi" deb
+    o'qishi mumkin edi.
+
+    Qt'dan OLDIN: tozalash bir necha soniya olishi mumkin va bu paytda
+    oyna ko'rinmasligi kerak.
+
+    NATIJA SAQLANADI, lekin bu yerda HECH NARSA TO'SILMAYDI. Qaror
+    imtihon tanlangandan keyin qabul qilinadi (`proctoring/policy.py`
+    -> `check_readiness`): u yerda operator sababni ham, nima qilish
+    kerakligini ham ekranda ko'radi. Bu yerda to'sish - dastur
+    oynasi ochilmasdan turib "chiqib ketdi" degani bo'lardi va
+    operator nima bo'lganini umuman bilmasdi.
+    """
+    from config import (
+        THREAT_ALLOW_VIRTUAL_HOST,
+        THREAT_SCAN_ALLOW,
+        THREAT_SCAN_ENABLED,
+    )
+
+    if not THREAT_SCAN_ENABLED:
+        log.info("Tahdid skaneri o'chirilgan (THREAT_SCAN_ENABLED=0)")
+        return
+
+    from services import threat_scanner
+
+    try:
+        report = threat_scanner.sweep(
+            allow=THREAT_SCAN_ALLOW,
+            allow_virtual_host=THREAT_ALLOW_VIRTUAL_HOST,
+        )
+    except Exception:
+        # Tozalash imtihonning SHARTI emas: skaner yiqilsa dastur
+        # baribir ishga tushadi va kuzatuv qatlami (`DeviceWatcher`)
+        # o'z tekshiruvini bajaradi.
+        log.exception("Tahdid skanerida kutilmagan xato")
+        return
+
+    threat_scanner.remember(report)
+    log.info(
+        "Tahdid skaneri: %s (%s ta jarayon, %s ta xizmat, %s ms, admin=%s)",
+        report.summary(), report.scanned_processes, report.scanned_services,
+        report.duration_ms, report.elevated,
+    )
+    for finding in report.findings:
+        if finding.neutralized:
+            log.warning("Yo'q qilindi: %s", finding.describe())
+        else:
+            log.error("YO'Q QILINMADI: %s | sabab: %s", finding.describe(), finding.reason)
+
+
+def _purge_archive() -> None:
+    """
+    Muddati o'tgan yozuvlarni o'chiradi.
+
+    ISHGA TUSHISHDA, imtihon boshlanishidan oldin: tozalash diskni
+    kezadi va imtihon davomida u skrinshot oqimi hamda ekran
+    yozuvi bilan bitta diskda raqobatlashardi.
+
+    Xato dasturni TO'XTATMAYDI: tozalash qulaylik, kuzatuvning
+    sharti emas. To'lgan disk esa alohida muammo va u `pick_root`
+    da ko'rinadi (2 GB dan kam joyi bor disk tanlanmaydi).
+    """
+    from config import LOCAL_ARCHIVE_ENABLED, LOCAL_ARCHIVE_RETENTION_DAYS
+
+    if not LOCAL_ARCHIVE_ENABLED or LOCAL_ARCHIVE_RETENTION_DAYS <= 0:
+        return
+    from services import local_archive
+
+    try:
+        local_archive.purge_old(LOCAL_ARCHIVE_RETENTION_DAYS)
+    except Exception:
+        log.exception("Arxivni tozalashda kutilmagan xato")
+
+
+def _log_env_file() -> None:
+    """
+    Qaysi `.env` o'qilganini yozadi.
+
+    "Nega bu mashina boshqa serverga ulanyapti?" degan savolning birinchi
+    javobi shu: `.env` uch joydan qidiriladi (`core/bundle_paths`) va
+    eski `.exe` yonidagi fayl ProgramData'dagini soyalab qo'yishi mumkin.
+    O'rnatilgan dasturda fayl umuman topilmasa - bu o'rnatish nosozligi
+    (server manzili standart `127.0.0.1` bo'lib qoladi), shuning uchun ERROR.
+    """
+    from config import ENV_FILE
+    from core.bundle_paths import env_file_candidates, is_frozen
+
+    if ENV_FILE is not None:
+        log.info("Sozlama fayli: %s", ENV_FILE)
+        return
+    level = logging.ERROR if is_frozen() else logging.WARNING
+    log.log(
+        level,
+        "Sozlama fayli (.env) topilmadi, standart qiymatlar ishlatilmoqda. "
+        "Qidirilgan joylar: %s",
+        ", ".join(str(path) for path in env_file_candidates()),
+    )
+
+
 def main() -> int:
+    _disable_extra_monitors()
+    _purge_archive()
     _close_other_apps()
+    _sweep_threats()
 
     from PyQt6.QtCore import Qt
     from PyQt6.QtGui import QFont
@@ -106,7 +269,14 @@ def main() -> int:
     window = MainWindow()
     window.show_start()
     log.info("%s v%s ishga tushdi", APP_NAME, APP_VERSION)
-    return app.exec()
+    _log_env_file()
+    try:
+        return app.exec()
+    finally:
+        # `finally` ATAYLAB: monitorning uzilishi registrga yoziladi
+        # va u dastur bilan birga yo'qolmaydi. Oddiy chiqishda ham,
+        # istisno bilan tugashda ham ekran operatorga qaytishi kerak.
+        _restore_monitors()
 
 
 if __name__ == "__main__":

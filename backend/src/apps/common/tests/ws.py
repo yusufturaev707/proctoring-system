@@ -75,6 +75,10 @@ class WebsocketCommunicator:
         assert message["type"] == "websocket.send", message
         return json.loads(message["text"])
 
+    async def receive_output(self, timeout: float = 3.0) -> dict:
+        """Xom ASGI xabari — `websocket.close` ni tekshirish uchun."""
+        return await self._start().receive_output(timeout)
+
     async def disconnect(self, code: int = 1000, timeout: float = 3.0) -> None:
         communicator = self._start()
         await communicator.send_input({"type": "websocket.disconnect", "code": code})

@@ -31,9 +31,9 @@ export function StatCardSkeleton() {
 
 export function StatRowSkeleton({ count = 6 }) {
   return (
-    <Grid container spacing={2.5}>
+    <Grid container spacing={{ xs: 1.5, sm: 2.5 }}>
       {Array.from({ length: count }).map((_, index) => (
-        <Grid item xs={12} sm={6} lg={2} key={index}>
+        <Grid item xs={6} sm={4} lg={2} key={index}>
           <StatCardSkeleton />
         </Grid>
       ))}

@@ -26,8 +26,10 @@ import {
   sessions as sessionsApi, zones as zonesApi, exams as examsApi,
   examSchedules as schedulesApi, regions as regionsApi,
 } from '../api/endpoints'
-import { fromNow } from '../utils/labels'
+import { computerLabel, fromNow } from '../utils/labels'
 import { isIntegrityEvent } from '../utils/events'
+import { filterFieldSx } from '../components/data/responsive'
+import { listAll } from '../components/data/useResource'
 
 /** Bugungi sana `YYYY-MM-DD` ko'rinishida (mahalliy vaqt bo'yicha). */
 const today = () => {
@@ -74,10 +76,10 @@ export default function LiveMonitor() {
    */
   const [acknowledged, setAcknowledged] = useState({})
 
-  const { data: zonesData } = useQuery({ queryKey: ['zones-all'], queryFn: () => zonesApi.list({ page_size: 200 }) })
+  const { data: zonesData } = useQuery({ queryKey: ['zones-all'], queryFn: () => listAll(zonesApi) })
   const { data: regionsData } = useQuery({
     queryKey: ['regions-all'],
-    queryFn: () => regionsApi.list({ page_size: 100 }),
+    queryFn: () => listAll(regionsApi),
     enabled: !lockedRegion,
   })
 
@@ -94,12 +96,12 @@ export default function LiveMonitor() {
    */
   const { data: schedulesData } = useQuery({
     queryKey: ['schedules-active', dateFilter],
-    queryFn: () => schedulesApi.list({ is_active: true, exam_date: dateFilter, page_size: 200 }),
+    queryFn: () => listAll(schedulesApi, { is_active: true, exam_date: dateFilter }),
   })
 
   const { data: examsData } = useQuery({
     queryKey: ['exams-all'],
-    queryFn: () => examsApi.list({ is_active: true, page_size: 100 }),
+    queryFn: () => listAll(examsApi, { is_active: true }),
     enabled: (schedulesData?.results?.length ?? 0) === 0,
   })
 
@@ -263,10 +265,13 @@ export default function LiveMonitor() {
           ) : null,
       },
       { field: 'candidate_name', headerName: 'Talabgor', flex: 1.4, minWidth: 190 },
-      { field: 'masked_pinfl', headerName: 'JSHSHIR', width: 140 },
+      { field: 'pinfl', headerName: 'JSHSHIR', width: 160 },
       { field: 'exam_name', headerName: 'Imtihon', flex: 1, minWidth: 140 },
       { field: 'zone_name', headerName: 'Bino', width: 120 },
-      { field: 'computer_code', headerName: 'Kompyuter', width: 120 },
+      {
+        field: 'computer_code', headerName: 'Kompyuter', width: 140,
+        valueGetter: (value, row) => computerLabel(row.computer_number, value),
+      },
       {
         field: 'status', headerName: 'Holat', width: 150,
         renderCell: (params) => <StatusChip status={params.value} label={params.row.status_display} />,
@@ -361,11 +366,17 @@ export default function LiveMonitor() {
       */}
       <Card sx={{ mb: 2.5 }}>
         <CardContent>
-          <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'center' }}>
+          <Stack
+            direction={{ xs: 'column', sm: 'row' }}
+            spacing={2}
+            flexWrap="wrap"
+            useFlexGap
+            alignItems={{ sm: 'center' }}
+          >
             <TextField
               select label="Imtihon" value={examFilter}
               onChange={(e) => setExamFilter(e.target.value)}
-              sx={{ minWidth: 230, maxWidth: 280 }}
+              sx={filterFieldSx(230, 280)}
               helperText={
                 schedulesData?.results?.length
                   ? 'Shu sanaga jadvalga qo‘yilganlar'
@@ -389,7 +400,7 @@ export default function LiveMonitor() {
               type="date" label="Sana" value={dateFilter}
               onChange={(e) => setDateFilter(e.target.value)}
               InputLabelProps={{ shrink: true }}
-              sx={{ minWidth: 165, maxWidth: 180 }}
+              sx={filterFieldSx(165, 180)}
               helperText={dateFilter === today() ? 'Bugun' : 'Arxiv sanasi'}
             />
 
@@ -398,7 +409,7 @@ export default function LiveMonitor() {
               value={regionFilter}
               onChange={(e) => { setRegionFilter(e.target.value); setZoneFilter('') }}
               disabled={Boolean(lockedRegion)}
-              sx={{ minWidth: 200, maxWidth: 240 }}
+              sx={filterFieldSx(200, 240)}
               helperText={lockedRegion ? 'Hisobingizga biriktirilgan' : ' '}
             >
               <MenuItem value="">Barcha viloyatlar</MenuItem>
@@ -414,7 +425,7 @@ export default function LiveMonitor() {
             <TextField
               select label="Bino" value={zoneFilter}
               onChange={(e) => setZoneFilter(e.target.value)}
-              sx={{ minWidth: 220, maxWidth: 280 }}
+              sx={filterFieldSx(220, 280)}
               helperText={
                 regionFilter ? `${zoneOptions.length} ta bino` : 'Barcha viloyatlar bo‘yicha'
               }
@@ -428,7 +439,12 @@ export default function LiveMonitor() {
             </TextField>
 
             <Box sx={{ flex: 1 }} />
-            <Chip label={`Faol: ${rows.length}`} color="primary" variant="outlined" />
+            <Chip
+              label={`Faol: ${rows.length}`}
+              color="primary"
+              variant="outlined"
+              sx={{ alignSelf: { xs: 'flex-start', sm: 'center' } }}
+            />
           </Stack>
         </CardContent>
       </Card>
@@ -473,7 +489,9 @@ export default function LiveMonitor() {
             onSelectSession={openSession}
             category={streamCategory}
             onCategoryChange={setStreamCategory}
-            height={660}
+            // Telefonda past: jadval ustida turadi va 660 px bo'sh oqim
+            // ekranni uch marta to'ldirardi.
+            height={{ xs: 460, xl: 660 }}
           />
         </Grid>
       </Grid>
@@ -494,7 +512,7 @@ export default function LiveMonitor() {
       <ConfirmDialog
         open={Boolean(terminateTarget)}
         title="Sessiyani chetlashtirish"
-        description={`${terminateTarget?.candidate_name || ''} imtihondan darhol chetlashtiriladi. Bu amalni qaytarib bo‘lmaydi.`}
+        description={`${terminateTarget?.candidate_name || ''} imtihondan darhol chetlashtiriladi. Kompyuter broni ham bo‘shatiladi — joy keyingi talabgorga beriladi. Bu amalni qaytarib bo‘lmaydi.`}
         confirmLabel="Chetlashtirish"
         color="error"
         requireReason

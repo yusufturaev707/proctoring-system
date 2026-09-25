@@ -38,11 +38,23 @@ export const EVENT_CATEGORY = {
   multi_monitor: 'integrity',
   camera_lost: 'integrity',
   camera_blocked: 'integrity',
+  // Kuzatuvning O'Z nosozligi ham butunlik masalasi: u "hech narsa
+  // bo'lmadi" emas, "hech narsa KO'RILMADI" degani va proktor buni
+  // xulq hodisalaridan oldin bilishi kerak.
+  camera_degraded: 'integrity',
+  proctoring_degraded: 'integrity',
 
   // --- Shaxs ---
   face_mismatch: 'identity',
   multiple_faces: 'identity',
   face_not_found: 'identity',
+  face_occluded: 'identity',
+  face_too_far: 'identity',
+  face_too_close: 'identity',
+  student_left_frame: 'identity',
+  second_person: 'identity',
+  high_suspicion_person: 'identity',
+  high_suspicion_identity: 'identity',
 
   // --- Xulq ---
   window_blur: 'behaviour',
@@ -51,9 +63,20 @@ export const EVENT_CATEGORY = {
   clipboard_blocked: 'behaviour',
   navigation_blocked: 'behaviour',
   object_detected: 'behaviour',
+  looking_away: 'behaviour',
+  prolonged_looking_away: 'behaviour',
+  excessive_head_movement: 'behaviour',
+  eyes_closed: 'behaviour',
+  hand_below_desk: 'behaviour',
+  suspicious_hand_movement: 'behaviour',
+  unauthorized_device: 'behaviour',
+  high_suspicion_phone: 'behaviour',
 
   // --- Tizim / fon ---
   window_focus: 'system',
+  // Tiklanish — fon holati: u xavf emas, lekin usiz "kamera
+  // yo'qoldi" hodisasi abadiy ochiq bo'lib ko'rinardi.
+  camera_reconnected: 'system',
   network_lost: 'system',
   network_restored: 'system',
   proctor_warning: 'system',
@@ -86,6 +109,12 @@ export const isIntegrityEvent = (eventType) => categoryOf(eventType) === 'integr
 
 export const eventLabel = (eventType) => EVENT_LABEL[eventType] || eventType
 
+/** `detail.count` birligi — hodisa turiga qarab. */
+const COUNT_UNIT = {
+  multi_monitor: 'ekran',
+  second_person: 'odam',
+}
+
 /**
  * Backend yuborgan `detail` ni bitta qatorga aylantiradi.
  *
@@ -105,7 +134,12 @@ export function eventDetail(eventType, detail) {
     parts.push(detail.processes.join(', '))
   }
   if (typeof detail.count === 'number') {
-    parts.push(`${detail.count} ta ekran`)
+    // `count` ikki xil hodisada keladi va birligi turga bog'liq:
+    // `multi_monitor` — ekranlar, `second_person` — kadrdagi odamlar
+    // (talabgor bilan). Ilgari hammasi "ta ekran" edi va «Kadrda
+    // ikkinchi odam» ostida "2 ta ekran" chiqardi.
+    const unit = COUNT_UNIT[eventType]
+    parts.push(unit ? `${detail.count} ta ${unit}` : `${detail.count} ta`)
   }
   if (detail.key) {
     parts.push(
@@ -115,6 +149,24 @@ export function eventDetail(eventType, detail) {
   if (detail.kind) parts.push(ANOMALY_KIND[detail.kind] || String(detail.kind))
   if (detail.reason) parts.push(ANOMALY_KIND[detail.reason] || String(detail.reason))
   if (detail.host) parts.push(String(detail.host))
+
+  // --- Masofaviy boshqaruv / virtualizatsiya tozalash ---
+  //
+  // `neutralized` BIRINCHI o'rinda va bu ataylab: proktor uchun
+  // "AnyDesk topildi va yopildi" bilan "AnyDesk topildi, yopib
+  // bo'lmadi" butunlay boshqa vaziyat. Birinchisi bayonnomaga
+  // yozuv, ikkinchisi esa darhol aralashuvni talab qiladi — ekran
+  // hozir ham boshqa odamga ochiq bo'lishi mumkin. Ro'yxatning
+  // oxiriga qo'yilsa, u uzun satrda ko'zdan qochardi.
+  if (typeof detail.neutralized === 'boolean') {
+    parts.unshift(detail.neutralized ? 'yopildi' : 'YOPIB BO‘LMADI')
+  }
+  if (detail.label) parts.push(String(detail.label))
+  if (detail.service) parts.push(`xizmat: ${detail.service}`)
+  if (detail.process) parts.push(String(detail.process))
+  // Dalil — "nega shu dastur deb qaror qilindi". Apellyatsiyada
+  // "AnyDesk edi" degan da'voni faqat shu satr tasdiqlaydi.
+  if (detail.evidence) parts.push(String(detail.evidence))
 
   // Yuz tekshiruvida ball chegara bilan birga ma'noga ega: "42" o'z-o'zicha
   // hech nima demaydi, "42 / 70" esa qanchalik uzoq ekanini ko'rsatadi.
@@ -129,7 +181,48 @@ export function eventDetail(eventType, detail) {
     parts.push(`${detail.faces} ta yuz`)
   }
 
+  // --- AI kuzatuv ---
+  if (detail.object) parts.push(String(detail.object))
+  if (detail.direction) parts.push(GAZE_DIRECTION[detail.direction] || String(detail.direction))
+  if (typeof detail.deviation === 'number') parts.push(`${detail.deviation}°`)
+  if (typeof detail.similarity === 'number') parts.push(`o‘xshashlik ${detail.similarity}`)
+  if (detail.module) parts.push(`modul: ${MODULE_LABEL[detail.module] || detail.module}`)
+  // Davomiylik hodisaning JIDDIYLIGINI belgilaydi: bir soniyalik
+  // "chetga qaradi" tabiiy, o'n soniyalik esa emas.
+  if (typeof detail.duration_ms === 'number' && detail.duration_ms >= 1000) {
+    parts.push(`${Math.round(detail.duration_ms / 1000)} s`)
+  }
+  if (typeof detail.confidence === 'number') parts.push(`ishonch ${detail.confidence}%`)
+  // Birlashtirilgan xulosaning ASOSI. Usiz "yuqori shubha" yorlig'i
+  // tekshirib bo'lmaydigan da'vo bo'lib qolardi.
+  if (Array.isArray(detail.fused_from) && detail.fused_from.length) {
+    parts.push(detail.fused_from.map((type) => EVENT_LABEL[type] || type).join(' + '))
+  }
+  if (detail.camera_role) parts.push(CAMERA_ROLE[detail.camera_role] || String(detail.camera_role))
+
   return parts.join(' • ')
+}
+
+/** Nigoh yo'nalishi — operator qaysi tomonga qarashini bilishi kerak. */
+const GAZE_DIRECTION = {
+  left: 'chapga',
+  right: 'o‘ngga',
+  up: 'yuqoriga',
+  down: 'pastga',
+}
+
+/** Qaysi kamera ko'rdi. */
+const CAMERA_ROLE = {
+  primary: 'asosiy kamera',
+  secondary: 'ikkinchi kamera',
+}
+
+/** `proctoring_degraded` — qaysi modul ishlamadi. */
+const MODULE_LABEL = {
+  identity: 'shaxs',
+  objects: 'obyekt',
+  pose: 'poza',
+  gaze: 'nigoh',
 }
 
 /** Client yuboradigan sabab kodlari — o'qiladigan matnga. */

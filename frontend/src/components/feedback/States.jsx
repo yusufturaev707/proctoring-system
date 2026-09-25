@@ -89,6 +89,24 @@ export function ErrorState({ error, onRetry, dense }) {
   )
 }
 
+/**
+ * Viloyat darajasidagi rol, lekin hisobga viloyat biriktirilmagan.
+ *
+ * Oddiy "Ruxsat yo'q" bu yerda noto'g'ri yo'naltirardi: xodimda ruxsat
+ * BOR, yetishmayotgani — viloyat. Administrator nima qilishi kerakligi
+ * aniq aytiladi (server: `HasRegionAssignment`).
+ */
+export function RegionMissingState() {
+  return (
+    <StateShell
+      icon={LockIcon}
+      tone="warning"
+      title="Hisobingizga viloyat biriktirilmagan"
+      description="Rolingiz viloyat darajasida ishlaydi, shuning uchun ma’lumotlar faqat biriktirilgan viloyat bo‘yicha ko‘rsatiladi. Administrator «Foydalanuvchilar» sahifasida hisobingizga viloyatni tanlashi kerak."
+    />
+  )
+}
+
 export function ForbiddenState({ permission }) {
   return (
     <StateShell

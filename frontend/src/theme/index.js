@@ -23,6 +23,62 @@ export const DENSITY = {
   compact: { spacing: 7, rowHeight: 38, fontScale: 0.94 },
 }
 
+/** Yon panel kengliklari (Material 3: navigation drawer / rail). */
+export const SIDEBAR = { expanded: 272, rail: 84 }
+
+/**
+ * Ikki HEX rangni aralashtiradi (`amount` — ikkinchisining ulushi).
+ *
+ * Material 3 tonal sirtlari (`surfaceContainer*`, `*Container`) — asosiy
+ * rangning fon ustidagi QATTIQ rangdagi aralashmasi, shaffof qatlam
+ * emas. Shaffoflik (`alpha`) ustma-ust tushganda (menyu kartada, karta
+ * fonda) har safar boshqa rang berardi va sirtlar darajasi yo'qolardi.
+ * Aralashma HISOBLANADI, palitrada qo'lda yozilmaydi: 5 sxema x 2 rejim
+ * uchun 50 ta qo'shimcha rangni qo'lda moslab bo'lmasdi.
+ */
+function mix(base, tint, amount) {
+  const parse = (hex) => {
+    const value = hex.replace('#', '')
+    return [0, 2, 4].map((i) => parseInt(value.slice(i, i + 2), 16))
+  }
+  const a = parse(base)
+  const b = parse(tint)
+  const channel = (i) => Math.round(a[i] + (b[i] - a[i]) * amount).toString(16).padStart(2, '0')
+  return `#${channel(0)}${channel(1)}${channel(2)}`
+}
+
+/**
+ * Material 3 rang rollari — mavjud palitradan chiqariladi.
+ *
+ * Rejimga qarab ulush boshqacha: tungi rejimda past to'yinganlik
+ * yetarli emas (ko'z farqni sezmaydi), kunduzgisida esa yuqori ulush
+ * katta yuzalarni "bo'yab" yuborardi.
+ */
+function buildM3Roles(colors, isLight) {
+  const bg = colors.background.default
+  const primary = colors.primary.main
+  const secondary = colors.secondary.main
+  const ink = isLight ? '#000000' : '#FFFFFF'
+  return {
+    primaryContainer: mix(bg, primary, isLight ? 0.16 : 0.28),
+    onPrimaryContainer: isLight ? colors.primary.dark : colors.primary.light,
+    secondaryContainer: mix(bg, secondary, isLight ? 0.18 : 0.3),
+    onSecondaryContainer: isLight ? mix(colors.secondary.dark, ink, 0.2) : colors.secondary.light,
+    // Sirt darajalari: eng pastidan eng balandigacha. Karta — "lowest",
+    // yon panel — "low", menyu va dialog — "high".
+    // Tungi rejimda M3 spetsifikatsiyasidagi "lowest" (fondan TO'Q)
+    // ishlatilmaydi: sinovda kartalar sahifaga "botib" ko'rindi. Karta
+    // fondan biroz OCHROQ — ko'z uni ko'tarilgan sirt deb o'qiydi.
+    surfaceContainerLowest: isLight ? '#FFFFFF' : colors.background.paper,
+    surfaceContainerLow: mix(bg, primary, isLight ? 0.035 : 0.05),
+    surfaceContainer: mix(bg, primary, isLight ? 0.06 : 0.08),
+    surfaceContainerHigh: isLight ? mix('#FFFFFF', primary, 0.05) : mix(bg, primary, 0.12),
+    surfaceContainerHighest: mix(bg, primary, isLight ? 0.11 : 0.16),
+    outline: mix(bg, colors.text.secondary, isLight ? 0.55 : 0.5),
+    outlineVariant: mix(bg, colors.text.secondary, isLight ? 0.2 : 0.25),
+  }
+}
+
 export function createAppTheme({
   palette: paletteKey = DEFAULT_PALETTE,
   mode = 'light',
@@ -32,6 +88,7 @@ export function createAppTheme({
   const colors = variant[mode] || variant.light
   const densityConfig = DENSITY[density] || DENSITY.comfortable
   const isLight = mode === 'light'
+  const m3 = buildM3Roles(colors, isLight)
 
   const theme = createTheme({
     palette: {
@@ -47,6 +104,8 @@ export function createAppTheme({
       text: colors.text,
       // MUI standartida yo'q, lekin bizga kerak — `theme.palette.surface`
       surface: colors.surface,
+      // Material 3 rollari — `sx` da `m3.primaryContainer` kabi ishlatiladi.
+      m3,
       action: {
         hover: alpha(colors.primary.main, isLight ? 0.06 : 0.1),
         selected: alpha(colors.primary.main, isLight ? 0.1 : 0.16),
@@ -58,12 +117,16 @@ export function createAppTheme({
     spacing: densityConfig.spacing,
 
     typography: {
-      fontFamily: '"Inter", "Roboto", "Segoe UI", system-ui, -apple-system, sans-serif',
+      // Inter — paket ichida (`@fontsource-variable/inter`, `main.jsx`),
+      // CDN'dan emas: imtihon markazlarining tarmog'ida internet
+      // bo'lmasligi mumkin va shrift jimgina Segoe UI ga tushardi.
+      fontFamily: '"Inter Variable", "Inter", "Segoe UI", system-ui, -apple-system, sans-serif',
       // `-0.01em` — katta sarlavhalarda harflar orasidagi bo'shliqni
       // qisqartiradi, matn "yig'ilgan" va o'qishga qulay ko'rinadi.
       h4: { fontWeight: 700, letterSpacing: '-0.02em', fontSize: `${1.9 * densityConfig.fontScale}rem` },
-      h5: { fontWeight: 700, letterSpacing: '-0.015em', fontSize: `${1.45 * densityConfig.fontScale}rem` },
-      h6: { fontWeight: 650, letterSpacing: '-0.01em', fontSize: `${1.15 * densityConfig.fontScale}rem` },
+      // M3 "headline small" — sahifa sarlavhasi.
+      h5: { fontWeight: 650, letterSpacing: '-0.02em', fontSize: `${1.5 * densityConfig.fontScale}rem`, lineHeight: 1.3 },
+      h6: { fontWeight: 650, letterSpacing: '-0.01em', fontSize: `${1.12 * densityConfig.fontScale}rem` },
       subtitle1: { fontWeight: 600 },
       subtitle2: { fontWeight: 600, fontSize: `${0.86 * densityConfig.fontScale}rem` },
       body1: { fontSize: `${0.94 * densityConfig.fontScale}rem` },
@@ -118,43 +181,81 @@ export function createAppTheme({
         styleOverrides: { root: { backgroundImage: 'none' } },
       },
 
+      // M3 "outlined card": sirt eng past darajada, chegara
+      // `outlineVariant` bilan. Soya YO'Q — daraja rang bilan beriladi.
       MuiCard: {
         defaultProps: { elevation: 0 },
         styleOverrides: {
           root: {
-            border: `1px solid ${colors.divider}`,
-            backgroundColor: colors.surface.raised,
+            borderRadius: 16,
+            border: `1px solid ${m3.outlineVariant}`,
+            backgroundColor: m3.surfaceContainerLowest,
             transition: `border-color ${MOTION.fast}ms ${MOTION.easing}, box-shadow ${MOTION.fast}ms ${MOTION.easing}`,
           },
         },
       },
 
+      // Telefonda karta chegarasi 16 px (20 emas): sahifa chetidagi 16 px
+      // bilan birga matn uchun ~300 px qoladi, ichma-ich kartada esa
+      // har 4 px o'qiladigan qatorga ta'sir qiladi.
       MuiCardHeader: {
         styleOverrides: {
-          root: { paddingBottom: 8 },
-          title: { fontSize: '1.05rem', fontWeight: 650 },
-          subheader: { fontSize: '0.82rem' },
+          root: ({ theme: t }) => ({
+            paddingBottom: 8, paddingInline: 20, paddingTop: 18,
+            [t.breakpoints.down('sm')]: { paddingInline: 16, paddingTop: 16 },
+          }),
+          title: { fontSize: '1rem', fontWeight: 650, letterSpacing: '-0.005em' },
+          subheader: { fontSize: '0.82rem', marginTop: 2 },
         },
       },
 
+      MuiCardContent: {
+        styleOverrides: {
+          root: ({ theme: t }) => ({
+            paddingInline: 20,
+            '&:last-child': { paddingBottom: 20 },
+            [t.breakpoints.down('sm')]: { paddingInline: 16, '&:last-child': { paddingBottom: 16 } },
+          }),
+        },
+      },
+
+      // M3 tugmalari — to'liq kapsula (`full` shakl), 40 px balandlik.
       MuiButton: {
         defaultProps: { disableElevation: true },
         styleOverrides: {
           root: {
-            borderRadius: 10,
-            paddingInline: 16,
-            transition: `background-color ${MOTION.fast}ms ${MOTION.easing}, transform ${MOTION.fast}ms ${MOTION.easing}`,
-            '&:active': { transform: 'scale(0.985)' },
+            borderRadius: 999,
+            paddingInline: 18,
+            minHeight: 38,
+            transition: `background-color ${MOTION.fast}ms ${MOTION.easing}, transform ${MOTION.fast}ms ${MOTION.easing}, border-color ${MOTION.fast}ms ${MOTION.easing}`,
+            '&:active': { transform: 'scale(0.98)' },
           },
+          sizeSmall: { minHeight: 32, paddingInline: 12, fontSize: '0.8rem' },
+          sizeLarge: { minHeight: 46, paddingInline: 24 },
           containedPrimary: {
             '&:hover': { backgroundColor: colors.primary.dark },
+          },
+          outlined: {
+            borderColor: m3.outline,
+            '&:hover': { borderColor: colors.primary.main },
+          },
+          // `color="inherit"` + text — M3 "text button" ikkilamchi amal.
+          textInherit: {
+            color: colors.text.secondary,
+            '&:hover': { color: colors.text.primary },
           },
         },
       },
 
       MuiIconButton: {
         styleOverrides: {
-          root: { transition: `background-color ${MOTION.fast}ms ${MOTION.easing}` },
+          root: { transition: `background-color ${MOTION.fast}ms ${MOTION.easing}, color ${MOTION.fast}ms ${MOTION.easing}` },
+        },
+      },
+
+      MuiFab: {
+        styleOverrides: {
+          root: { borderRadius: 16, boxShadow: 'none' },
         },
       },
 
@@ -172,43 +273,74 @@ export function createAppTheme({
       MuiOutlinedInput: {
         styleOverrides: {
           root: {
-            backgroundColor: colors.surface.raised,
-            '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: colors.primary.light },
+            borderRadius: 10,
+            backgroundColor: m3.surfaceContainerLowest,
+            '& .MuiOutlinedInput-notchedOutline': { borderColor: m3.outlineVariant },
+            '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: m3.outline },
+            '&.Mui-focused .MuiOutlinedInput-notchedOutline': { borderWidth: 2 },
           },
         },
+      },
+
+      MuiInputLabel: {
+        styleOverrides: { root: { fontWeight: 500 } },
       },
 
       MuiTableCell: {
         styleOverrides: {
-          root: { borderColor: colors.divider },
+          root: { borderColor: m3.outlineVariant, fontVariantNumeric: 'tabular-nums' },
           head: {
-            fontWeight: 700,
+            fontWeight: 650,
             whiteSpace: 'nowrap',
-            backgroundColor: colors.surface.subtle,
+            backgroundColor: m3.surfaceContainerLow,
             color: colors.text.secondary,
             fontSize: '0.78rem',
-            letterSpacing: '0.02em',
-            textTransform: 'uppercase',
+            letterSpacing: '0.01em',
           },
         },
       },
 
+      // M3 "plain tooltip": teskari sirt (to'q fonda och matn va aksincha).
+      // U menyu yig'ilganda sahifa nomini va vazifasini aytadi, ya'ni
+      // o'qilishi kerak — standart kulrang shaffof fon buni qiyinlashtirardi.
       MuiTooltip: {
-        defaultProps: { arrow: true, enterDelay: 400, enterNextDelay: 200 },
+        defaultProps: { arrow: false, enterDelay: 350, enterNextDelay: 150 },
         styleOverrides: {
-          tooltip: { fontSize: '0.78rem', paddingBlock: 6, paddingInline: 10, borderRadius: 8 },
+          tooltip: {
+            fontSize: '0.78rem',
+            lineHeight: 1.45,
+            paddingBlock: 6,
+            paddingInline: 10,
+            borderRadius: 8,
+            maxWidth: 320,
+            backgroundColor: isLight ? '#2B3230' : '#E3E8E5',
+            color: isLight ? '#F1F4F2' : '#1A201D',
+          },
         },
       },
 
+      // M3 "primary tabs": indikator faqat matn kengligida va yumaloq.
+      // Tab'lar DOIM suriladigan (`scrollable`): telefonda to'rtta tab
+      // sig'masdi va oxirgisi yarmidan kesilib, qolganlari borligi
+      // sezilmasdi. Surish tugmalari mobilda ham ko'rinadi — ular
+      // "o'ngda yana bor" degan yagona belgi. Butun kenglikni teng
+      // bo'lishishi kerak bo'lgan joy `variant="fullWidth"` ni ochiq beradi.
       MuiTabs: {
+        defaultProps: { variant: 'scrollable', scrollButtons: 'auto', allowScrollButtonsMobile: true },
         styleOverrides: {
-          root: { minHeight: 46 },
+          root: { minHeight: 48 },
           indicator: { height: 3, borderRadius: '3px 3px 0 0' },
         },
       },
       MuiTab: {
         styleOverrides: {
-          root: { minHeight: 46, fontWeight: 600, textTransform: 'none' },
+          root: {
+            minHeight: 48,
+            fontWeight: 600,
+            textTransform: 'none',
+            color: colors.text.secondary,
+            '&.Mui-selected': { color: colors.primary.main },
+          },
         },
       },
 
@@ -228,26 +360,81 @@ export function createAppTheme({
 
       MuiAlert: {
         styleOverrides: {
-          root: { borderRadius: 10, alignItems: 'center' },
+          root: { borderRadius: 12, alignItems: 'center' },
           standardInfo: { backgroundColor: alpha(colors.info.main, 0.1) },
           standardWarning: { backgroundColor: alpha(colors.warning.main, 0.12) },
           standardError: { backgroundColor: alpha(colors.error.main, 0.1) },
           standardSuccess: { backgroundColor: alpha(colors.success.main, 0.1) },
+          outlined: { backgroundColor: m3.surfaceContainerLowest },
         },
       },
 
+      // M3 dialog: "extra large" shakl (28 px), sirt "high" darajada.
       MuiDialog: {
         styleOverrides: {
-          paper: { borderRadius: 16, backgroundImage: 'none' },
+          paper: ({ theme: t }) => ({
+            borderRadius: 28,
+            backgroundImage: 'none',
+            backgroundColor: m3.surfaceContainerHigh,
+            // Telefonda chetlar 16 px (standart 32): 390 px ekranda
+            // standart bilan dialog 326 px bo'lib, ikki ustunli forma
+            // maydonlari o'qib bo'lmas darajada torayardi.
+            //
+            // `:not(fullScreen)` SHART: media so'rovdagi qoida CSS'da
+            // `paperFullScreen` dan keyin keladi va uni bosib, to'liq
+            // ekranli formani yana 16 px chetli oynaga aylantirardi.
+            [t.breakpoints.down('sm')]: {
+              '&:not(.MuiDialog-paperFullScreen)': {
+                margin: 16,
+                width: 'calc(100% - 32px)',
+                maxHeight: 'calc(100% - 32px)',
+                borderRadius: 24,
+              },
+            },
+          }),
+          // To'liq ekranli dialog (telefonda formalar) — yumaloq burchaksiz,
+          // aks holda ekran burchaklarida fon ko'rinib qolardi.
+          paperFullScreen: { borderRadius: 0, margin: 0, width: '100%', maxHeight: '100%' },
         },
+      },
+
+      MuiDialogContent: {
+        styleOverrides: { root: { paddingInline: 24 } },
+      },
+
+      MuiDialogActions: {
+        styleOverrides: { root: { paddingInline: 24, paddingBottom: 20, gap: 4 } },
       },
 
       MuiListItemButton: {
         styleOverrides: {
           root: {
-            borderRadius: 10,
+            borderRadius: 999,
             transition: `background-color ${MOTION.fast}ms ${MOTION.easing}, color ${MOTION.fast}ms ${MOTION.easing}`,
           },
+        },
+      },
+
+      MuiPaginationItem: {
+        styleOverrides: {
+          root: { borderRadius: 999, fontWeight: 600 },
+        },
+      },
+
+      MuiAvatar: {
+        styleOverrides: { root: { fontWeight: 650 } },
+      },
+
+      // DataGrid — butun paneldagi asosiy element, shuning uchun uning
+      // uslubi temada (har jadvalda alohida emas).
+      MuiDataGrid: {
+        styleOverrides: {
+          root: {
+            '--DataGrid-containerBackground': m3.surfaceContainerLow,
+            '--DataGrid-rowBorderColor': m3.outlineVariant,
+            fontVariantNumeric: 'tabular-nums',
+          },
+          columnHeaderTitle: { fontWeight: 650 },
         },
       },
 
@@ -257,12 +444,30 @@ export function createAppTheme({
       // tanlangan segment past to'yinganlikdagi primary bilan bo'yaladi.
       // MUI standarti to'rtburchak va deyarli ko'rinmaydigan tanlov beradi
       // — sahifa sarlavhasida u tugma emas, matn bo'lib qoladi.
+      // Tor ekranda guruh SIQILMAYDI, suriladi: siqilganda "Barchasi · 1"
+      // ikki qatorga bo'linib, segmentlar har xil balandlikda chiqardi.
       MuiToggleButtonGroup: {
         styleOverrides: {
-          root: { borderRadius: 999, overflow: 'hidden' },
+          root: {
+            borderRadius: 999,
+            border: `1px solid ${m3.outline}`,
+            overflow: 'hidden',
+            maxWidth: '100%',
+            // Flex bolasi sifatida `min-width: auto` guruhni mazmunidan
+            // tor bo'lishiga qo'ymaydi va u butun sahifani gorizontal surardi.
+            minWidth: 0,
+            overflowX: 'auto',
+            scrollbarWidth: 'none',
+            '&::-webkit-scrollbar': { display: 'none' },
+          },
+          // Chegara GURUHDA, tugmalarda emas: `overflow: hidden` kapsula
+          // chetini qirqadi va tugmaning o'z o'ng chegarasi kesilib,
+          // guruh "ochiq qolgan" bo'lib ko'rinardi. Tugmalar orasida
+          // faqat ajratuvchi chiziq.
           grouped: {
-            border: `1px solid ${colors.divider}`,
-            '&:not(:first-of-type)': { borderLeft: `1px solid ${colors.divider}`, marginLeft: 0 },
+            border: 0,
+            borderRadius: 0,
+            '&:not(:first-of-type)': { borderLeft: `1px solid ${m3.outlineVariant}`, marginLeft: 0 },
           },
         },
       },
@@ -273,6 +478,8 @@ export function createAppTheme({
             textTransform: 'none',
             fontWeight: 600,
             paddingInline: 14,
+            whiteSpace: 'nowrap',
+            flexShrink: 0,
             color: colors.text.secondary,
             transition: `background-color ${MOTION.fast}ms ${MOTION.easing}, color ${MOTION.fast}ms ${MOTION.easing}`,
             '&.Mui-selected': {
@@ -292,8 +499,9 @@ export function createAppTheme({
         styleOverrides: {
           paper: {
             borderRadius: 12,
-            border: `1px solid ${colors.divider}`,
+            border: `1px solid ${m3.outlineVariant}`,
             backgroundImage: 'none',
+            backgroundColor: m3.surfaceContainer,
           },
           listbox: { padding: 4 },
           option: {
@@ -323,11 +531,16 @@ export function createAppTheme({
         styleOverrides: {
           paper: {
             borderRadius: 12,
-            border: `1px solid ${colors.divider}`,
+            border: `1px solid ${m3.outlineVariant}`,
             backgroundImage: 'none',
+            backgroundColor: m3.surfaceContainer,
           },
           list: { padding: 4 },
         },
+      },
+
+      MuiPopover: {
+        styleOverrides: { paper: { backgroundImage: 'none' } },
       },
 
       MuiMenuItem: {
@@ -347,7 +560,9 @@ export function createAppTheme({
       },
 
       MuiDialogTitle: {
-        styleOverrides: { root: { fontSize: '1.1rem', fontWeight: 650, paddingBlock: 18 } },
+        styleOverrides: {
+          root: { fontSize: '1.25rem', fontWeight: 650, letterSpacing: '-0.01em', paddingTop: 22, paddingBottom: 12, paddingInline: 24 },
+        },
       },
 
       MuiFormHelperText: {
@@ -355,7 +570,7 @@ export function createAppTheme({
       },
 
       MuiDivider: {
-        styleOverrides: { root: { borderColor: colors.divider } },
+        styleOverrides: { root: { borderColor: m3.outlineVariant } },
       },
     },
   })
@@ -369,6 +584,7 @@ export function createAppTheme({
   }
   theme.density = { ...densityConfig, key: density }
   theme.motion = MOTION
+  theme.sidebar = SIDEBAR
 
   return theme
 }

@@ -85,7 +85,9 @@ export function ChartCard({ title, subheader, action, loading, isEmpty, emptyTex
         {loading ? (
           <ChartSkeleton height={height} />
         ) : isEmpty ? (
-          <Box sx={{ height, display: 'grid', placeItems: 'center' }}>
+          // Bo'sh holat telefonda PAST: grafik uchun ajratilgan 330 px
+          // ichida bitta ikonka ekranning yarmini bo'sh egallardi.
+          <Box sx={{ height: { xs: 180, md: height }, display: 'grid', placeItems: 'center' }}>
             <EmptyState title={emptyText || 'Ma’lumot yo‘q'} dense />
           </Box>
         ) : (

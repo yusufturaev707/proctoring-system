@@ -13,7 +13,7 @@ from datetime import timedelta
 from django.utils import timezone
 
 from apps.controls.models import Setting
-from apps.devices.models import Computer, DeviceToken
+from apps.devices.models import Camera, Computer, DeviceToken
 from apps.exams.models import Exam, ExamSchedule
 from apps.proctoring.models import ExamSession
 from apps.regions.models import Region, Zone
@@ -47,11 +47,31 @@ def make_zone(region=None, **kwargs) -> Zone:
     )
 
 
+def make_camera(zone=None, **kwargs) -> Camera:
+    index = _next()
+    return Camera.objects.create(
+        zone=zone or make_zone(),
+        **{
+            "name": f"Kamera {index}",
+            "ip_address": f"10.20.0.{index % 250 + 1}",
+            "mac_address": "DC:BB:CC:{:02X}:{:02X}:{:02X}".format(
+                index % 256, (index // 256) % 256, (index // 65536) % 256
+            ),
+            **kwargs,
+        },
+    )
+
+
 def make_computer(zone=None, **kwargs) -> Computer:
     index = _next()
     return Computer.objects.create(
         zone=zone or make_zone(),
         **{
+            # Raqam ham beriladi: u bino ichida unikal va
+            # `_next()` hisoblagichi buni ta'minlaydi. Bo'sh
+            # qoldirish testlarni raqamsiz mashinaga bog'lab
+            # qo'yardi - holbuki amalda mashinalar raqamlanadi.
+            "number": index,
             "inventory_code": f"PC-{index:04d}",
             "ip_address": f"192.168.1.{index % 250 + 1}",
             "mac_address": "AA:BB:CC:{:02X}:{:02X}:{:02X}".format(
@@ -101,12 +121,22 @@ def make_setting(**kwargs) -> Setting:
     return Setting.objects.create(**{"name": f"Profil-{index}", **kwargs})
 
 
-def make_user(*, permissions=None, **kwargs) -> User:
-    """Berilgan ruxsat kodlari bilan xodim (rol avtomatik yaratiladi)."""
+def make_user(*, permissions=None, global_role=None, **kwargs) -> User:
+    """
+    Berilgan ruxsat kodlari bilan xodim (rol avtomatik yaratiladi).
+
+    `global_role` berilmasa VILOYATGA qarab tanlanadi: viloyatsiz xodim —
+    respublika roli, viloyatli — viloyat roli. Ilgari viloyatsiz xodim
+    `is_global` siz ham hamma narsani ko'rardi va testlar shunga
+    tayangan; endi u admin panelda to'siladi (`User.lacks_region`),
+    shuning uchun "hamma narsani ko'radigan xodim" rolda ochiq aytiladi.
+    """
     index = _next()
     role = None
+    if global_role is None:
+        global_role = kwargs.get("region") is None
     if permissions is not None:
-        role = Role.objects.create(name=f"Rol-{index}", key=index)
+        role = Role.objects.create(name=f"Rol-{index}", key=index, is_global=global_role)
         objects = [
             Permission.objects.get_or_create(code=code, defaults={"name": code})[0]
             for code in permissions

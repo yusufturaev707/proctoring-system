@@ -53,6 +53,12 @@ REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
 }
 
 PROCTORING["REQUIRE_DEVICE_ID"] = False  # noqa: F405
+# `.env` dagi qiymat testlarga O'TMASIN: dasturchining lokal sozlamasi
+# (`REQUIRE_COMPUTER_BOOKING=true`, `ALLOW_PRIVATE_SOURCE_IP=true`) ilgari
+# sessiya va IP ro'yxati testlarini yiqitardi. Bu qoidalarni tekshiradigan
+# testlar ularni `override_settings` bilan o'zi yoqadi.
+PROCTORING["REQUIRE_COMPUTER_BOOKING"] = False  # noqa: F405
+PROCTORING["ALLOW_PRIVATE_SOURCE_IP"] = False  # noqa: F405
 EXTERNAL_PLATFORM["MOCK"] = True  # noqa: F405
 STORAGE["ENABLED"] = False  # noqa: F405
 

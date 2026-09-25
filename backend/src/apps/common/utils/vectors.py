@@ -41,6 +41,26 @@ def cosine_similarity(left: list[float], right: list[float]) -> float:
 
 
 def similarity_score(left: list[float], right: list[float]) -> int:
-    """Cosine (-1..1) -> 0..100 ball. `Setting.faceid_min_score_*` shu shkalada."""
+    """
+    Cosine -> 0..100 ball. `Setting.faceid_min_score_*` shu shkalada.
+
+    FORMULA: `max(0, cos) * 100`, butun songa yaxlitlangan.
+
+    MANFIY COSINE 0 GA SIQILADI va bu ma'lumot yo'qotmaydi: manfiy
+    o'xshashlik "boshqa odam" degan xulosadan nariga hech narsa
+    qo'shmaydi (ArcFace'da -0.1 ham, -0.4 ham bir xil javob beradi).
+    Ya'ni foydali oraliq 0..1 va ball to'g'ridan-to'g'ri "necha foiz
+    o'xshash" degan savolga javob beradi.
+
+    Ilgari `(cos+1)/2*100` ishlatilardi va u butunlay boshqa
+    odamga ~50 ball berardi — panelda "yarmi o'xshash" bo'lib
+    ko'rinardi va chegarani tanlashda ham chalkashtirardi
+    (70 ball aslida 0.40 cosine edi). Yangi shkalada 70 ball
+    aynan 0.70 cosine.
+
+    Client AYNAN shu formulani ishlatadi
+    (`client/services/face_engine.py:similarity_score`) — chegara
+    bitta bo'lgani uchun shkala ham bitta bo'lishi shart.
+    """
     similarity = cosine_similarity(left, right)
-    return max(0, min(100, round((similarity + 1) / 2 * 100)))
+    return max(0, min(100, round(max(0.0, similarity) * 100)))

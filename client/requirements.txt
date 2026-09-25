@@ -27,6 +27,32 @@ psutil==7.2.2
 keyboard==0.13.5
 
 # ONNX Runtime - FAQAT BITTASINI o'rnating:
-#   GPU (CUDA 12.x): pip install onnxruntime-gpu==1.20.1
-#   CPU:             pip install onnxruntime==1.20.1
-onnxruntime==1.20.1
+#
+#   CPU:  pip install onnxruntime==1.22.0
+#   GPU:  pip install onnxruntime-gpu==1.22.0
+#
+# VERSIYA CUDA NASHRI BILAN BOG'LIQ va buni bilish SHART.
+# `onnxruntime-gpu` ning har bir versiyasi ANIQ bir CUDA versiyasi
+# uchun yig'iladi va ular almashtirilmaydi:
+#
+#   1.22.x -> CUDA 12.x + cuDNN 9.x   (cublasLt64_12.dll, cudnn64_9.dll)
+#   1.24+  -> CUDA 13.x               (cublasLt64_13.dll)
+#
+# Nomos nashr JIMGINA ishlaydi: paket o'rnatiladi, `get_available_providers()`
+# ro'yxatida `CUDAExecutionProvider` turadi, lekin provayder DLL'i
+# yuklanmaydi va model CPU'da ishga tushadi - dastur ishlayveradi,
+# faqat bir necha barobar sekin. Aynan shu holat ishlab chiqish
+# mashinasida bor edi (1.29.0 o'rnatilgan, mashinada esa CUDA 12).
+# `proctoring/hardware/cuda_runtime.py` uni endi aniqlaydi va qaysi
+# fayl yetishmayotganini aytadi.
+#
+# GPU uchun CUDA kutubxonalarining O'ZI ham kerak. Uch yo'l:
+#   1) `pip install nvidia-cublas-cu12 nvidia-cudnn-cu12`
+#      + `nvidia-cufft-cu12 nvidia-cuda-runtime-cu12` (tavsiya
+#      etiladi - PyInstaller ularni bundle'ga qo'sha oladi);
+#   2) mashinada CUDA Toolkit 12.x + cuDNN 9.x o'rnatilgan bo'lsa
+#      (`CUDA_PATH` orqali topiladi);
+#   3) `.exe` yonidagi `cuda/` katalogiga nusxalash.
+# Client ularni o'zi topadi va jarayonga yuklaydi - PATH ni qo'lda
+# sozlash kerak emas.
+onnxruntime-gpu==1.22.0

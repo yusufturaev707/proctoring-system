@@ -1,0 +1,28 @@
+[Unit]
+Description=Proctoring — HTTP API (gunicorn, gthread)
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=proctoring
+Group=proctoring
+WorkingDirectory=/srv/proctoring/backend
+# `.env` ham DJANGO_SETTINGS_MODULE ni beradi (`config/env.py`), lekin bu
+# yerda ochiq yozilgani ustun — `.env` da xato qolsa ham production.
+Environment=DJANGO_SETTINGS_MODULE=config.settings.production
+Environment=PYTHONPATH=/srv/proctoring/backend/src
+ExecStart=/srv/proctoring/backend/.venv/bin/gunicorn config.wsgi:application -c deploy/gunicorn.conf.py
+Restart=always
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=40
+# Qattiqlashtirish: kod o'qish uchun, yozish faqat quyidagi kataloglarga.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/srv/proctoring/storage /srv/proctoring/backend/logs /srv/proctoring/backend/var
+
+[Install]
+WantedBy=multi-user.target

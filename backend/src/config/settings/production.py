@@ -39,6 +39,12 @@ for _name, _bad_default in _INSECURE_DEFAULTS.items():
 if len(SECRET_KEY) < 50:  # noqa: F405
     raise ImproperlyConfigured("SECRET_KEY kamida 50 belgidan iborat bo'lishi kerak")
 
+# FaceID kaliti butun respublika bo'yicha bron qila oladi — qisqa kalit
+# production'da qabul qilinmaydi (bo'sh = integratsiya o'chiq, bu ruxsat).
+_faceid_key = FACEID_INTEGRATION["API_KEY"]  # noqa: F405
+if _faceid_key and len(_faceid_key) < 32:
+    raise ImproperlyConfigured("FACEID_API_KEY kamida 32 belgidan iborat bo'lishi kerak")
+
 
 # --------------------------------------------------------------------------
 # HTTPS / Xavfsizlik header'lari
@@ -63,6 +69,9 @@ CSRF_COOKIE_SECURE = True
 CSRF_COOKIE_HTTPONLY = True
 CSRF_COOKIE_SAMESITE = "Strict"
 CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS", [])
+# Bo'sh = hech qaysi begona origin. `base.py` standarti (`localhost:5173`)
+# dev uchun; production'da panel va API bitta domenda (nginx).
+CORS_ALLOWED_ORIGINS = env_list("CORS_ALLOWED_ORIGINS", [])
 
 X_FRAME_OPTIONS = "DENY"
 
@@ -113,7 +122,28 @@ TEMPLATES[0]["OPTIONS"]["loaders"] = [  # noqa: F405
     )
 ]
 
-STATICFILES_STORAGE = "django.contrib.staticfiles.storage.ManifestStaticFilesStorage"
+# `STORAGES`, `STATICFILES_STORAGE` EMAS: ikkinchisi Django 5.1 da olib
+# tashlangan va 6.x da JIMGINA e'tiborsiz qoladi — production oddiy
+# `StaticFilesStorage` bilan ishlab, keshni bekor qiladigan xeshli nomlar
+# yo'qolardi (brauzer yangi deploydan keyin eski JS/CSS ni ko'rsatardi).
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {
+        "BACKEND": "django.contrib.staticfiles.storage.ManifestStaticFilesStorage",
+    },
+}
+
+# API hujjati (`/api/schema/`) production'da o'chiq (`config/urls.py`), lekin
+# drf-spectacular har `check` da sxemani yig'adi va o'nlab hujjat
+# ogohlantirishlari `check --deploy` dagi haqiqiy xavfsizlik xabarlarini
+# ko'mib yuborardi. `ENABLE_API_DOCS=true` bo'lsa ular yana ko'rinadi.
+ENABLE_API_DOCS = env_bool("ENABLE_API_DOCS", False)
+if not ENABLE_API_DOCS:
+    SILENCED_SYSTEM_CHECKS = [
+        *globals().get("SILENCED_SYSTEM_CHECKS", []),
+        "drf_spectacular.W001",
+        "drf_spectacular.W002",
+    ]
 
 # --------------------------------------------------------------------------
 # Skrinshot storage

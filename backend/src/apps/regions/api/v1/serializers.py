@@ -1,5 +1,6 @@
 from rest_framework import serializers
 
+from apps.common.region_scope import ensure_in_region, region_pk
 from apps.regions.models import Region, Zone
 
 
@@ -28,3 +29,10 @@ class ZoneSerializer(serializers.ModelSerializer):
             "computers_count", "cameras_count", "created_at", "deleted_at",
         )
         read_only_fields = ("id", "created_at", "deleted_at")
+
+    def validate(self, attrs):
+        ensure_in_region(
+            self, attrs, "region", region_of=region_pk,
+            message="Binoni faqat o'z viloyatingizga qo'sha olasiz",
+        )
+        return attrs

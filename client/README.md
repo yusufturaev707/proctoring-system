@@ -12,18 +12,49 @@ venv/Scripts/activate            # Windows
 pip install -r requirements.txt
 
 # ONNX Runtime — FAQAT bittasi:
-pip install onnxruntime==1.20.1          # CPU
-# pip install onnxruntime-gpu==1.20.1    # CUDA 12.x
+pip install onnxruntime==1.22.0          # CPU
+# pip install onnxruntime-gpu==1.22.0    # CUDA 12.x (requirements.txt izohiga qarang)
 
 cp .env.example .env              # API_BASE_URL ni to'g'rilang
 python main.py
 ```
+
+Logotip `client/resources/images/logo.png` da — PyInstaller buyrug'iga
+`--add-data "resources;resources"` qo'shilishi SHART (fayl topilmasa
+dastur ishlaydi, lekin logotip ko'rinmaydi).
 
 InsightFace modellari `client/models/buffalo_l/` ga qo'yiladi (5 ta
 `.onnx` fayl). Dev rejimda ular bo'lmasa InsightFace internetdan yuklab
 oladi; frozen (`.exe`) rejimda esa bu **xato** — imtihon mashinasi
 oflayn bo'lishi mumkin va yuklab olish 30+ soniya timeout bilan
 tushunarsiz xato beradi.
+
+## Sozlamalar: `.env` va admin panel
+
+Ikki qatlam (batafsil: `../CLAUDE.md` -> "Client sozlamalari"):
+
+* **`.env`** — serverdan OLDIN kerak bo'ladigan va mashinaga xos
+  qiymatlar: server manzili, TLS, kiosk, monitorlar, ishga tushishda
+  dasturlarni yopish (`CLOSE_OTHER_APPS*`), bloklanadigan tezkor
+  tugmalarning STANDARTI (`BLOCKED_HOTKEYS`), kamera/GPU, arxiv diski.
+* **Admin panel (`Setting` profili)** — imtihon/bino bo'yicha
+  o'zgaradiganlar: FaceID oqimi, ekran yozuvi, skrinshot tasmasi,
+  tahdid to'sig'i, heartbeat/batch, tezkor tugmalar ro'yxati. Server
+  qiymati USTUN, `.env` dagi mos qiymat faqat zaxira
+  (`services/runtime_settings.py`).
+
+## O'rnatuvchi (Windows)
+
+`.exe` va `setup.exe` — [`installer/`](installer/README.md): PyInstaller
+`onedir` + Inno Setup, GPU/CPU nashri, silent o'rnatish
+(`/VERYSILENT`; server manzili build paytida `installer/client.env` dan joylanadi), `.env` ning joyi
+(`%ProgramData%\ProctoringClient\.env`) va yangilash tartibi.
+Logotip (`--add-data "resources;resources"`) va modellarni spec o'zi
+qo'shadi.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File installer\build.ps1 -Gpu   # yoki -Cpu
+```
 
 ## Oqim
 

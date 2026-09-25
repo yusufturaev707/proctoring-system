@@ -1,7 +1,7 @@
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
-from apps.common.models import SoftDeleteModel
+from apps.common.models import SoftDeleteModel, TimeStampedModel
 
 
 class ExamType(SoftDeleteModel):
@@ -71,10 +71,21 @@ class Exam(SoftDeleteModel):
     site_url = models.URLField(
         _("Test platformasi URL"), max_length=500, default="https://ntest.uzbmb.uz/login"
     )
-    # WebView'da ochilishiga ruxsat etilgan domenlar. Bo'sh bo'lsa `site_url`
-    # domeni ishlatiladi. Bu ro'yxat client'ga beriladi va u yerda
-    # QWebEngineUrlRequestInterceptor allowlist sifatida qo'llanadi.
-    allowed_domains = models.JSONField(_("Ruxsat etilgan domenlar"), default=list, blank=True)
+    # Platformaga so'rov bilan ketadigan QO'SHIMCHA SARLAVHA, to'liq
+    # ko'rinishda: "Authorization: Bearer eyJhbGci...".
+    #
+    # SHIFRLANGAN SAQLANADI va sabab `Camera.password_encrypted` dagi
+    # bilan bir xil: bu KREDENSIAL. Ochiq ustunda yotsa, bazaning bir
+    # marta o'qilishi tashqi platformaning API'siga to'liq kirish
+    # beradi. Nomi ham shunga mos - `site_header` emas: maydonda
+    # sarlavhaning o'zi emas, uning shifrlangan ko'rinishi yotadi va
+    # nom buni yashirmasligi kerak.
+    #
+    # `TextField`: shifrlangan matn asl qiymatdan ~1.4 barobar uzun
+    # (base64 + nonce), JWT esa 2-4 KB bo'lishi mumkin.
+    site_header_encrypted = models.TextField(
+        _("Platforma sarlavhasi"), blank=True, default=""
+    )
 
     duration_minutes = models.PositiveIntegerField(_("Davomiyligi (daq)"), default=180)
     setting = models.ForeignKey(
@@ -91,8 +102,25 @@ class Exam(SoftDeleteModel):
         return str(self.name)
 
     def get_allowed_domains(self) -> list[str]:
-        if self.allowed_domains:
-            return list(self.allowed_domains)
+        """
+        WebView'da ochilishiga ruxsat etilgan domenlar.
+
+        MANBA BITTA — `site_url`. Ilgari qo'lda to'ldiriladigan
+        `allowed_domains` ro'yxati ham bor edi va u ikki muammo
+        tug'dirardi: administrator uni `site_url` bilan birga
+        yangilashni unutsa, imtihon oq ekranda ochilardi (domen
+        bloklangan), bo'sh qoldirilsa esa ro'yxat jimgina
+        `site_url` domeniga tushardi - ya'ni maydon ko'p hollarda
+        umuman ishlamasdi.
+
+        Ro'yxat client'ga beriladi va u yerda
+        `QWebEngineUrlRequestInterceptor` allowlist sifatida
+        qo'llanadi. Bo'sh ro'yxat client uchun "tekshiruv
+        o'chirilgan" degani, shuning uchun `site_url` noto'g'ri
+        bo'lsa ham bu yerdan bo'sh ro'yxat qaytishi mumkin - o'sha
+        holatda WebView umuman ochilmaydi (`login_url` ham o'sha
+        maydondan keladi).
+        """
         from urllib.parse import urlparse
 
         host = urlparse(self.site_url).hostname
@@ -181,4 +209,125 @@ class ExamSchedule(SoftDeleteModel):
                 fields=["exam_date", "is_active"], name="idx_schedule_date_active"
             ),
             models.Index(fields=["zone", "exam_date"], name="idx_schedule_zone_date"),
+        ]
+
+
+class ComputerBooking(TimeStampedModel):
+    """
+    Test sessiyasidagi ish o'rni (kompyuter) va unga biriktirilgan talabgor.
+
+    "TEST SESSIYASI" — `ExamSchedule`: imtihon + sana + vaqt + (ixtiyoriy)
+    bino. Talabgorning shaxsiy sessiyasi (`proctoring.ExamSession`) bu
+    yerga TO'G'RI KELMAYDI: u FaceID'dan keyin yaratiladi, bron esa
+    undan ancha oldin — talabgor binoga kelmasdanoq — tuziladi.
+
+    Bitta qator = bitta kompyuter shu sessiyada. Qator ikki narsani
+    saqlaydi va ular ATAYLAB alohida bayroq:
+
+        is_active  - mashina ishchi holatdami (buzilgan bo'lsa `False`);
+        is_booked  - unga talabgor biriktirilganmi (`pinfl` bilan).
+
+    Ular birlashtirilsa "buzilgan, lekin talabgori bor" holatini
+    ifodalab bo'lmasdi — aynan shu holatda administrator talabgorni
+    boshqa kompyuterga KO'CHIRADI va buning uchun kim ko'chirilishi
+    kerakligini ko'rishi shart.
+
+    Qatorlar kompyuterlar ro'yxatidan YIG'ILADI (`services.generate_seats`)
+    yoki biriktirish paytida yaratiladi — administrator 500 ta qatorni
+    qo'lda kiritmaydi.
+
+    `Computer.is_active` (hisobdan chiqarilgan) BU YERDAGI `is_active`
+    DAN BOSHQA: birinchisi mashina umuman ishlatilmaydi, ikkinchisi esa
+    "bugun, shu sessiyada buzildi" (sichqoncha ishlamaydi, kamera yo'q).
+    Ertangi sessiyada o'sha mashina yana ishlashi mumkin.
+    """
+
+    schedule = models.ForeignKey(
+        "exams.ExamSchedule",
+        verbose_name=_("Test sessiyasi"),
+        on_delete=models.CASCADE,
+        related_name="bookings",
+    )
+    # PROTECT: bronda turgan kompyuterni fizik o'chirish bron tarixini
+    # (kim qayerda o'tirgan) jimgina yo'qotardi. Kompyuterlar baribir
+    # yumshoq o'chiriladi (`SoftDeleteModel`).
+    computer = models.ForeignKey(
+        "devices.Computer",
+        verbose_name=_("Kompyuter"),
+        on_delete=models.PROTECT,
+        related_name="bookings",
+    )
+    is_active = models.BooleanField(_("Ishchi holatda"), default=True, db_index=True)
+    is_booked = models.BooleanField(_("Band"), default=False, db_index=True)
+    # Tashqi platformada `imie`. Loyihaning qolgan qismida (sessiya,
+    # FaceID jurnali, qidiruv) bu qiymat `pinfl` deb ataladi va shu
+    # nom saqlanadi: bitta tushuncha uchun ikkita nom so'rovlarda
+    # albatta aralashib ketardi.
+    pinfl = models.CharField(
+        _("JSHSHIR"), max_length=14, blank=True, default="", db_index=True
+    )
+    booked_at = models.DateTimeField(_("Biriktirilgan vaqt"), null=True, blank=True)
+    booked_by = models.ForeignKey(
+        "users.User",
+        verbose_name=_("Kim biriktirgan"),
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    # JOY BIR SESSIYADA BIR NECHA TALABGORGA XIZMAT QILADI: talabgor
+    # clientda «Yakunlash» ni bosganda yoki administrator uni
+    # chetlashtirganda joy o'zi bo'shaydi va keyingisi shu kompyuterga
+    # biriktiriladi (`bookings.release_after_session`). Ikkala yakun ham
+    # shu hisoblagichda — "shu joyda imtihoni yakunlanganlar".
+    # Shu ikki maydon bo'shatilgan joyning izi — usiz oxirgi talabgor
+    # yakunlagach sessiyada birorta `is_booked` qolmas va
+    # `bookings_enforced` bron tekshiruvini JIMGINA o'chirib qo'yardi.
+    finished_count = models.PositiveIntegerField(_("Yakunlaganlar soni"), default=0)
+    last_finished_at = models.DateTimeField(_("Oxirgi yakun"), null=True, blank=True)
+
+    @property
+    def masked_pinfl(self) -> str:
+        from apps.common.utils.crypto import mask_pinfl
+
+        return mask_pinfl(self.pinfl) if self.pinfl else ""
+
+    def __str__(self):
+        return "{} · {}".format(self.computer.label, self.pinfl or "bo'sh")
+
+    class Meta:
+        verbose_name = _("Kompyuter broni")
+        verbose_name_plural = _("Kompyuter bronlari")
+        db_table = "computer_booking"
+        ordering = ["schedule", "computer__zone", "computer__number", "computer__inventory_code"]
+        constraints = [
+            # Bitta kompyuter bitta sessiyada BIR MARTA: ikki qator
+            # bo'lsa "bu joy bo'shmi?" savolining ikki javobi bo'lardi.
+            models.UniqueConstraint(
+                fields=["schedule", "computer"], name="unique_booking_schedule_computer"
+            ),
+            # Bitta talabgor bitta sessiyada BITTA joyda. Bu cheklov
+            # bazada — ilova tekshiruvi ikki parallel API so'rovida
+            # (tashqi tizim bir JSHSHIR'ni ikki marta yubordi) o'tib
+            # ketardi.
+            models.UniqueConstraint(
+                fields=["schedule", "pinfl"],
+                condition=~models.Q(pinfl=""),
+                name="unique_booking_schedule_pinfl",
+            ),
+            # `is_booked` va `pinfl` BIR XIL narsani aytishi shart:
+            # "band, lekin kim ekani noma'lum" yoki "bo'sh, lekin
+            # JSHSHIR yozilgan" qatori JSHSHIR tekshiruvida ikki xil
+            # talqin qilinardi.
+            models.CheckConstraint(
+                condition=(
+                    models.Q(is_booked=True) & ~models.Q(pinfl="")
+                ) | (
+                    models.Q(is_booked=False) & models.Q(pinfl="")
+                ),
+                name="booking_pinfl_matches_flag",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["schedule", "is_booked"], name="idx_booking_schedule_booked"),
         ]

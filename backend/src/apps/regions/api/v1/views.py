@@ -17,6 +17,9 @@ class RegionViewSet(PermissionRequiredMixin, AuditLogMixin, viewsets.ModelViewSe
     required_permission = "regions.manage"
     required_read_permission = "regions.view"
     audit_object_type = "Region"
+    # Viloyatlar ro'yxati — respublika tuzilmasi: viloyat xodimi o'z
+    # viloyatini KO'RADI, lekin uni o'zgartirmaydi va yangisini ochmaydi.
+    republic_write_only = True
     filterset_fields = ["is_active"]
     search_fields = ["name"]
     ordering_fields = ["name", "dtm_id", "vm_number"]

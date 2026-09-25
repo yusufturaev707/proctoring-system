@@ -52,6 +52,8 @@ export default function Roles() {
 
   return (
     <ResourcePage
+      // Barcha viloyatlar uchun bitta yozuv — o'zgartirish respublika darajasida.
+      shared
       title="Rollar va ruxsatlar"
       subtitle="Har bir rol uchun aniq amallar to‘plami"
       queryKey="roles"

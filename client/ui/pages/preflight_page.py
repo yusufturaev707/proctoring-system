@@ -144,6 +144,10 @@ class PreflightPage(BrandBackdrop):
         outer.setContentsMargins(24, 24, 24, 24)
         outer.addStretch()
 
+        # Login sahifasidagi bilan AYNAN bir xil joyda (`make_logo`).
+        outer.addWidget(self.make_logo(), alignment=Qt.AlignmentFlag.AlignCenter)
+        outer.addSpacing(26)
+
         card = QFrame()
         card.setObjectName("preflightCard")
         # MD3 shape scale: "extra large" (28 px) - dialog darajasidagi
@@ -226,7 +230,7 @@ class PreflightPage(BrandBackdrop):
         info_layout.setContentsMargins(16, 11, 16, 12)
         info_layout.setSpacing(1)
 
-        self._info_label = QLabel("TASHQI IP MANZIL")
+        self._info_label = QLabel("CHIQUVCHI IP MANZIL")
         self._info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         _apply_font(self._info_label, 11, bold=True,
                     extra="color: {}; letter-spacing: 1px;".format(COLORS["text_muted"]))

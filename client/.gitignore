@@ -8,11 +8,21 @@ __pycache__/
 # Sirlar. Namunasi `.env.example` da.
 .env
 .env.local
+# O'rnatuvchiga joylanadigan .env - o'rnatishga (viloyat/markaz) xos,
+# namunasi `installer/env.production.template`.
+installer/client.env
+installer/*.env
 
-# PyInstaller
+# PyInstaller / Inno Setup chiqishi (`installer/build.ps1`)
 build/
 dist/
+*.exe
 *.spec
+# Yagona spec - versiya nazoratida (qolgan `*.spec` lar `pyi-makespec`
+# qoldiqlari bo'ladi va ular tasodifan commit qilinmasligi kerak).
+!installer/proctoring_client.spec
+# VC++ runtime o'rnatuvchisi (ixtiyoriy, build mashinasiga qo'yiladi).
+installer/redist/
 
 *.log
 

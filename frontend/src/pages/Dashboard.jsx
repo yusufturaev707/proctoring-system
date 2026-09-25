@@ -19,6 +19,7 @@ import CloudDoneIcon from '@mui/icons-material/CloudDoneOutlined'
 import ArrowIcon from '@mui/icons-material/ArrowForwardOutlined'
 
 import PageHeader from '../components/PageHeader'
+import { TablePager } from '../components/data/DataTable'
 import StatCard from '../components/StatCard'
 import { ChartCard, DonutChart, RankedBarChart } from '../components/charts/ChartKit'
 import { StatRowSkeleton } from '../components/feedback/Skeletons'
@@ -151,7 +152,7 @@ export default function Dashboard() {
       {showSkeleton ? (
         <StatRowSkeleton count={6} />
       ) : (
-        <Grid container spacing={2.5}>
+        <Grid container spacing={{ xs: 1.5, sm: 2.5 }}>
           {[
             { label: 'Jami sessiya', value: summary.total, icon: GroupsIcon, color: 'primary', params: {} },
             { label: 'Jarayonda', value: summary.in_progress, icon: PlayIcon, color: 'success', params: { status: 'in_progress' } },
@@ -160,7 +161,9 @@ export default function Dashboard() {
             { label: 'Chetlashtirilgan', value: summary.terminated, icon: BlockIcon, color: 'error', params: { status: 'terminated' } },
             { label: 'Texnik muammo', value: summary.technical, icon: BuildIcon, color: 'warning', to: '/technical-problems' },
           ].map((tile, index) => (
-            <Grid item xs={12} sm={6} lg={2} key={tile.label}>
+            // Telefonda IKKI ustun: bittadan bo'lganda oltita karta ~900 px
+            // egallab, grafiklarni birinchi ekrandan butunlay chiqarib yuborardi.
+            <Grid item xs={6} sm={4} lg={2} key={tile.label}>
               <StaggerItem index={index}>
                 <StatCard
                   label={tile.label}
@@ -176,7 +179,7 @@ export default function Dashboard() {
         </Grid>
       )}
 
-      <Grid container spacing={2.5} sx={{ mt: 0.5 }}>
+      <Grid container spacing={{ xs: 1.5, sm: 2.5 }} sx={{ mt: { xs: 0, sm: 0.5 } }}>
         <Grid item xs={12} lg={7}>
           <ChartCard
             title="Eng ko‘p uchragan hodisalar"
@@ -232,6 +235,11 @@ export default function Dashboard() {
 
 function ZoneTable({ zones, loading, onSelect }) {
   const theme = useTheme()
+  // Respublika administratori uchun bu yuzlab bino — sahifalanadi.
+  // Ma'lumot bitta so'rovda keladi (dashboard kesimi), shuning uchun
+  // sahifalash brauzerda; futer DataTable'niki bilan bir xil.
+  const [page, setPage] = useState({ page: 0, pageSize: 25 })
+  const visible = zones.slice(page.page * page.pageSize, (page.page + 1) * page.pageSize)
 
   if (loading) {
     return (
@@ -248,8 +256,10 @@ function ZoneTable({ zones, loading, onSelect }) {
   }
 
   return (
+    <>
     <Box sx={{ overflowX: 'auto' }}>
-      <Table size="small">
+      {/* Telefonda siqilmaydi, suriladi — bino nomi 4 qatorga bo'linardi. */}
+      <Table size="small" sx={{ minWidth: 760 }}>
         <TableHead>
           <TableRow>
             <TableCell align="right" width={52}>№</TableCell>
@@ -264,7 +274,8 @@ function ZoneTable({ zones, loading, onSelect }) {
           </TableRow>
         </TableHead>
         <TableBody>
-          {zones.map((zone, index) => {
+          {visible.map((zone, position) => {
+            const index = page.page * page.pageSize + position
             const ratio = zone.total ? Math.round((zone.active / zone.total) * 100) : 0
             const hasIssues = zone.terminated > 0 || zone.problems > 0
 
@@ -336,5 +347,14 @@ function ZoneTable({ zones, loading, onSelect }) {
         </TableBody>
       </Table>
     </Box>
+    {zones.length > 25 && (
+      <TablePager
+        rowCount={zones.length}
+        rowsOnPage={visible.length}
+        paginationModel={page}
+        onPaginationModelChange={setPage}
+      />
+    )}
+    </>
   )
 }

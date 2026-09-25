@@ -10,6 +10,7 @@ UI thread'da emas.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Optional
 
@@ -178,6 +179,23 @@ class DeviceRepository:
         return self._api.post("/devices/register/", json_body=payload, with_auth=False)
 
 
+def _face_files(image, reference_image) -> dict:
+    """
+    FaceID so'rovining fayl qismini yig'adi.
+
+    IKKALA RASM IXTIYORIY va mustaqil: kamera kadrni bermagan
+    bo'lishi ham, platforma hujjat rasmini bermagan bo'lishi ham
+    mumkin. Bo'sh maydonni yuborish serverda "buzilgan fayl" bo'lib
+    ko'rinardi, shuning uchun yo'q rasm umuman qo'shilmaydi.
+    """
+    files = {}
+    if image:
+        files["image"] = ("face.jpg", image, "image/jpeg")
+    if reference_image:
+        files["reference_image"] = ("passport.jpg", reference_image, "image/jpeg")
+    return files
+
+
 class ProctoringRepository:
     """
     `/api/v1/client/...` yuzasi - imtihon oqimining butun mantig'i.
@@ -191,32 +209,187 @@ class ProctoringRepository:
 
     # --- 1. Handshake -------------------------------------------------
     def handshake(self, *, app_version: str, app_hash: str = "",
-                  monitors: int = 1, cameras: int = 1) -> dict:
+                  monitors: int = 1, cameras: int = 1,
+                  hardware: Optional[dict] = None,
+                  machine: Optional[dict] = None) -> dict:
+        """
+        Qurilma holati va bugungi imtihonlar.
+
+        `machine` — `system_info.machine_identity()` natijasi
+        (`mac`, `ip`). Server MAC ni `Computer.mac_address` bilan
+        SOLISHTIRADI va javobda `machine.allowed` qaytaradi.
+        Qiymat yuborilmasa tekshiruv "noma'lum" bo'lib qoladi va
+        server sozlamasiga qarab u ham to'siq bo'lishi mumkin -
+        shuning uchun uni yuborish IXTIYORIY emas, majburiy
+        amaliyot (chaqiruvchi `AuthService.handshake`).
+
+        `hardware` — `proctoring.hardware.report()` natijasi
+        (`gpu_name`, `performance_profile`, `detail`). IXTIYORIY va
+        bu ongli: apparat aniqlash fon thread'ida ketadi va
+        handshake uni KUTMAYDI. Bo'sh kelsa server tegishli
+        maydonlarga tegmaydi — eski qiymat saqlanib qoladi, ya'ni
+        bir marta aniqlangan mashina keyingi sekin ishga tushishda
+        "GPU yo'q" bo'lib qolmaydi.
+        """
+        hardware = hardware or {}
+        machine = machine or {}
+        body = {
+            "app_version": app_version,
+            "app_hash": app_hash,
+            "hardware_fingerprint": system_info.hardware_fingerprint(),
+            # Har handshake'da yangilanadi: bino rezerv kanalga
+            # o'tsa, panelda eski manzil qolib ketmasligi kerak.
+            "public_ip": system_info.public_ip(),
+            "monitors": monitors,
+            "cameras": cameras,
+        }
+        if machine.get("mac"):
+            body["mac_address"] = machine["mac"]
+        if machine.get("ip"):
+            body["ip_address"] = machine["ip"]
+        if hardware:
+            body["gpu_name"] = hardware.get("gpu_name", "")
+            body["performance_profile"] = hardware.get("performance_profile", "")
+            # Tafsilot (CPU, RAM, VRAM, provayderlar, GPU
+            # ogohlantirishi) `Computer.info_pc` ga tushadi:
+            # qurilma yozuvida faqat IKKI qidiriladigan qiymat
+            # bor, "nega sekin?" degan savolga esa aynan shu
+            # tafsilot javob beradi.
+            body["info_pc"] = {
+                **system_info.info_pc(),
+                "hardware": hardware.get("detail") or {},
+            }
+        return self._api.post("/client/handshake/", json_body=body)
+
+    # --- 1b. Kamera ---------------------------------------------------
+    def presence(self, *, in_exam: bool = False) -> dict:
+        """
+        "Client ishlab turibdi" signali (sessiyasiz ham).
+
+        NIMA UCHUN HEARTBEAT YETMAYDI: u faqat imtihon davomida
+        yuboriladi, mashina esa kunning katta qismini talabgor
+        kutib o'tkazadi. Signalsiz server 120 soniyadan keyin
+        mashinani "offline" deb belgilaydi va panelda ishlab
+        turgan kompyuter o'chirilgandek ko'rinadi.
+        """
+        return self._api.post("/client/presence/", json_body={"in_exam": bool(in_exam)})
+
+    def camera_config(self, *, exam_id: Optional[int] = None) -> dict:
+        """
+        Binodagi kameralar ro'yxati va kuzatuv siyosati.
+
+        ROLLAR JAVOBDA YO'Q: ularni operator client tomonda tanlaydi
+        (`proctoring/camera/roles.py`). Server faqat kompyuter turgan
+        binodagi faol IP kameralarni beradi - kredensial ularning
+        har biri uchun alohida so'raladi.
+
+        `exam_id` IXTIYORIY va bu bo'shliq ongli: kamera tekshiruvi
+        login'dan keyin, imtihon tanlashdan OLDIN o'tadi - o'sha
+        paytda qaysi imtihon bo'lishi hali ma'lum emas. Berilmasa
+        global siyosat qaytadi, imtihonniki esa boshlash paytida
+        server tomonidan qayta tekshiriladi.
+        """
+        params = {"exam": int(exam_id)} if exam_id else None
+        return self._api.get("/client/camera/config/", params=params)
+
+    def camera_stream(self, *, camera_id: int, role: str = "primary") -> dict:
+        """
+        IP kamera uchun RTSP manzili (kredensial bilan).
+
+        SO'ROV KAMERA ID BO'YICHA. Ilgari u ROL bo'yicha ketardi va
+        server javobni `CameraAssignment` jadvalidan izlardi;
+        biriktirish olib tashlangach rolni faqat client biladi.
+        `role` esa yuboriladi, lekin faqat AUDIT uchun: jurnalda
+        "qaysi vazifa uchun so'raldi" degan yozuv qolishi kerak.
+
+        NATIJANI SAQLAMANG. U parol o'z ichiga oladi va uni
+        `AppState` ga, faylga yoki log'ga yozish kredensialni
+        mashinada qoldirish demak. `CameraManager` uni oqim
+        ochilayotgan paytda so'raydi va o'sha zahoti ishlatib
+        yuboradi - shuning uchun u manzilni SATR emas, FUNKSIYA
+        ko'rinishida qabul qiladi.
+        """
+        # Zaxira slot (`spare:<kalit>`) - server uchun "preview": u rolni
+        # faqat audit uchun yozadi va boshqa qiymatni qabul qilmaydi.
+        role = role if role in ("primary", "secondary") else "preview"
         return self._api.post(
-            "/client/handshake/",
-            json_body={
-                "app_version": app_version,
-                "app_hash": app_hash,
-                "hardware_fingerprint": system_info.hardware_fingerprint(),
-                # Har handshake'da yangilanadi: bino rezerv kanalga
-                # o'tsa, panelda eski manzil qolib ketmasligi kerak.
-                "public_ip": system_info.public_ip(),
-                "monitors": monitors,
-                "cameras": cameras,
-            },
+            "/client/camera/stream/",
+            json_body={"camera_id": int(camera_id), "role": role},
+        )
+
+    def exam_config(self, *, exam_id: int) -> dict:
+        """
+        Tanlangan imtihonning TO'LIQ client profili.
+
+        Handshake global standartni beradi (u imtihon tanlashdan
+        oldin bajariladi), bu esa aynan shu imtihonnikini. Farq
+        haqiqiy: `Exam.setting` biriktirilgan bo'lsa, FaceID
+        chegarasi, skrinshot oralig'i va bloklanadigan tugmalar
+        boshqacha bo'ladi.
+        """
+        return self._api.get("/client/exam/config/", params={"exam": int(exam_id)})
+
+    def camera_check(self, *, cameras: list, exam_id=None) -> dict:
+        """
+        Kamera tekshiruvi: XOM O'LCHOVLARNI yuboradi.
+
+        Client bu yerda hech qanday xulosa yubormaydi ("ok", "passed"
+        kabi maydonlar serializerda ham qabul qilinmaydi): baholashni
+        server bajaradi. Client aytgan xulosaga ishonish
+        o'zgartirilgan nusxaga eshikni ochib qo'yardi.
+        """
+        payload: dict = {"cameras": cameras}
+        if exam_id:
+            payload["exam_id"] = int(exam_id)
+        return self._api.post("/client/camera/check/", json_body=payload)
+
+    def proctoring_start(self, *, ai_profile: str = "") -> dict:
+        """
+        Kuzatuvni ishga tushiradi — "START EXAM" nuqtasi.
+
+        WebView ochilishidan OLDIN chaqiriladi. Server bu yerda
+        kamera tekshiruvini majburlaydi: `camera_check_required`
+        (tekshiruv yo'q/eskirgan) yoki `camera_check_failed`
+        (tekshiruv bor, lekin talablarga mos emas).
+        """
+        return self._api.post(
+            "/client/proctoring/start/", json_body={"ai_profile": ai_profile}
+        )
+
+    def proctoring_stop(self, *, reason: str = "") -> dict:
+        return self._api.post(
+            "/client/proctoring/stop/", json_body={"reason": reason}
         )
 
     # --- 2. Talabgorni aniqlash --------------------------------------
-    def lookup_candidate(self, *, pinfl: str, exam_id: int) -> dict:
-        return self._api.post(
-            "/client/candidate/lookup/",
-            json_body={"pinfl": pinfl, "exam_id": int(exam_id)},
-        )
+    def lookup_candidate(self, *, pinfl: str, exam_id: int, mac_address: str = "") -> dict:
+        body = {"pinfl": pinfl, "exam_id": int(exam_id)}
+        # Jismoniy mashina — server uni kompyuter broni bilan
+        # solishtiradi ("talabgor AYNAN shu stoldami?"). Bo'sh bo'lsa
+        # yuborilmaydi: serializer bo'sh satrni qabul qiladi, lekin
+        # MAC aniqlanmagan holat qurilma biriktiruvi bilan hal bo'ladi.
+        if mac_address:
+            body["mac_address"] = mac_address
+        return self._api.post("/client/candidate/lookup/", json_body=body)
 
     # --- 3. Kirishdagi FaceID ----------------------------------------
     def verify_face(self, *, challenge: str, embedding: Optional[list] = None,
                     score: Optional[int] = None, faces_detected: int = 1,
+                    image: Optional[bytes] = None, reference_image: Optional[bytes] = None,
                     image_key: str = "") -> dict:
+        """
+        Moslik TASDIQLANGAN — sessiya ochiladi.
+
+        Solishtirishni client bajardi; bu yerda uning natijasi ketadi:
+        etalon vektor (server uni sessiyaga muzlatadi), ball va o'sha
+        paytdagi JONLI KADR.
+
+        RASM BOR BO'LSA `multipart/form-data`. Vektor o'shanda JSON
+        SATR sifatida ketadi: form-data ichma-ich strukturani
+        ko'tarmaydi (dalildagi `boxes` bilan bir xil qoida).
+        Rasmsiz holatda oddiy JSON yuboriladi - server ikkalasini
+        ham qabul qiladi.
+        """
         body: dict[str, Any] = {
             "challenge": challenge,
             "faces_detected": faces_detected,
@@ -229,20 +402,72 @@ class ProctoringRepository:
             body["embedding"] = embedding
         if score is not None:
             body["score"] = int(score)
-        return self._api.post("/client/face/verify/", json_body=body)
+
+        if not image and not reference_image:
+            return self._api.post("/client/face/verify/", json_body=body)
+
+        if embedding is not None:
+            body["embedding"] = json.dumps(embedding)
+        return self._api.request(
+            "POST",
+            "/client/face/verify/",
+            files=_face_files(image, reference_image),
+            data=body,
+        )
+
+    def face_attempt(self, *, challenge: str, score: Optional[int] = None,
+                     faces_detected: int = 1, image: Optional[bytes] = None,
+                     reference_image: Optional[bytes] = None) -> dict:
+        """
+        Kirishda MOS KELMAGAN urinish: rasm va ball.
+
+        Sessiya YARATILMAYDI va `challenge` sarflanmaydi - talabgor
+        qayta urinib ko'radi. Yozuv esa qoladi: kadrda boshqa odam
+        turgan bo'lishi mumkin.
+
+        Vektor YUBORILMAYDI: u faqat sessiya etaloni sifatida
+        ma'noga ega, sessiya esa ochilmadi.
+
+        Qaytadi: `{"recorded", "score", "threshold", "attempts"}`.
+        """
+        body: dict[str, Any] = {
+            "challenge": challenge,
+            "faces_detected": faces_detected,
+        }
+        if score is not None:
+            body["score"] = int(score)
+        if not image and not reference_image:
+            return self._api.post("/client/face/attempt/", json_body=body)
+        return self._api.request(
+            "POST",
+            "/client/face/attempt/",
+            files=_face_files(image, reference_image),
+            data=body,
+        )
 
     # --- 4. Operator shaxsni tasdiqlaydi -----------------------------
-    def confirm_identity(self, *, document_type: str, document_number: str,
+    def confirm_identity(self, *, document_type: str = "", document_number: str = "",
                          note: str = "") -> dict:
-        return self._api.post(
-            "/client/identity/confirm/",
-            json_body={
-                "decision": "confirm",
-                "document_type": document_type,
-                "document_number": document_number,
-                "note": note,
-            },
-        )
+        """
+        Operator shaxsni tasdiqlaydi.
+
+        HUJJAT MA'LUMOTI IXTIYORIY va client uni YUBORMAYDI:
+        operator hujjatni ekranda (jonli kadr + platformadan kelgan
+        rasm) tekshiradi. Maydonlar shartnomada qoldirildi -
+        boshqa o'rnatishda raqamni qayd etish talab qilinishi
+        mumkin va o'shanda faqat chaqiruv o'zgaradi.
+
+        Javobgarlik yo'qolmaydi: server tasdiqlagan xodimni va
+        vaqtni `identity` meta'siga yozadi.
+        """
+        body = {"decision": "confirm"}
+        if document_type:
+            body["document_type"] = document_type
+        if document_number:
+            body["document_number"] = document_number
+        if note:
+            body["note"] = note
+        return self._api.post("/client/identity/confirm/", json_body=body)
 
     def reject_identity(self, *, reason: str) -> dict:
         return self._api.post(
@@ -261,14 +486,39 @@ class ProctoringRepository:
     def send_events(self, events: list[dict]) -> dict:
         return self._api.post("/client/events/", json_body={"events": events})
 
-    def periodic_face(self, *, embedding: Optional[list] = None,
-                      score: Optional[int] = None, faces_detected: int = 1) -> dict:
-        body: dict[str, Any] = {"faces_detected": faces_detected}
-        if embedding is not None:
-            body["embedding"] = embedding
-        if score is not None:
-            body["score"] = int(score)
-        return self._api.post("/client/face/periodic/", json_body=body)
+    def periodic_face(self, *, score: int, faces_detected: int = 1,
+                      image: Optional[bytes] = None,
+                      passed_since_last: int = 0) -> dict:
+        """
+        Test davomidagi tekshiruv - FAQAT MOS KELMAGANDA chaqiriladi.
+
+        Solishtirish clientda: etalon `AppState.face_reference` da,
+        jonli vektor esa kuzatuv oqimidan. Muvaffaqiyatli tekshiruvlar
+        SERVERGA UMUMAN BORMAYDI - ularning soni heartbeat bilan
+        ketadi (`face_checks`).
+
+        `passed_since_last` - oxirgi xabardan keyingi muvaffaqiyatli
+        tekshiruvlar soni. Usiz server "ketma-ket" qoidasini qo'llay
+        olmasdi: u oradagi muvaffaqiyatlarni ko'rmaydi va ikki soat
+        oralab kelgan uchta xato talabgorni chetlashtirib yuborardi.
+
+        `embedding` YUBORILMAYDI: server uni solishtirmaydi va uni
+        baribir uzatish "kim solishtiryapti?" degan savolni ochiq
+        qoldirardi.
+        """
+        body: dict[str, Any] = {
+            "score": int(score),
+            "faces_detected": int(faces_detected),
+            "passed_since_last": int(passed_since_last),
+        }
+        if not image:
+            return self._api.post("/client/face/periodic/", json_body=body)
+        return self._api.request(
+            "POST",
+            "/client/face/periodic/",
+            files={"image": ("face.jpg", image, "image/jpeg")},
+            data=body,
+        )
 
     def session_state(self) -> dict:
         return self._api.get("/client/session/state/")
@@ -324,9 +574,105 @@ class ProctoringRepository:
             data={"captured_at": captured_at},
         )
 
+    def upload_evidence(self, *, kind: str, data: bytes, captured_at: str,
+                        event_type: str = "", camera_role: str = "",
+                        confidence: int = 0, duration_ms: int = 0,
+                        boxes: Optional[list] = None) -> dict:
+        """
+        Shubhali hodisaning dalili (kadr yoki klip).
+
+        Skrinshot yuklashdan ALOHIDA: dalilda hodisa konteksti bor
+        (tur, kamera roli, ishonch, ramkalar) va u proktor ekranida
+        hodisa yonida turadi. Skrinshot esa muntazam va kontekstsiz.
+
+        `boxes` JSON SATR sifatida ketadi: `multipart/form-data`
+        ichma-ich strukturani ko'tarmaydi va backend uni satrdan
+        ochadi (`EvidenceUploadSerializer.validate_boxes`).
+
+        Qaytadi: `{"id": ..., "kind": ..., "size": ...}` — `id`
+        hodisaning `evidence_id` siga bog'lanadi.
+        """
+        name, content_type = (
+            ("clip.mp4", "video/mp4") if kind == "clip" else ("frame.jpg", "image/jpeg")
+        )
+        return self._api.request(
+            "POST",
+            "/client/evidence/upload/",
+            files={"file": (name, data, content_type)},
+            data={
+                "kind": kind,
+                "captured_at": captured_at,
+                "event_type": event_type,
+                "camera_role": camera_role,
+                "confidence": int(confidence),
+                "duration_ms": int(duration_ms),
+                "boxes": json.dumps(boxes or []),
+            },
+        )
+
+    def register_recording(self, *, kind: str, local_path: str, captured_at: str,
+                           size_bytes: int = 0, duration_ms: int = 0,
+                           width: int = 0, height: int = 0,
+                           frames: int = 0, frames_dropped: int = 0,
+                           event_type: str = "", camera_role: str = "",
+                           confidence: int = 0, session_id: str = "",
+                           timeout: Optional[float] = None) -> dict:
+        """
+        Mashinada QOLGAN yozuvning manzilini qayd etadi.
+
+        FAYL YUBORILMAYDI va bu `upload_evidence` dan asosiy farq.
+        Ekran yozuvi 3 soatlik imtihonda ~360 MB, kamera klipi esa
+        hodisa sayin yig'iladi - 500 mashinali binoda bu kuniga
+        yuzlab gigabayt degani va hech qanday kanalga sig'maydi.
+        Serverga "qayerda yotibdi va qanaqa" degan ma'lumot boradi,
+        proktor esa shu manzil bo'yicha mashinadan faylni so'raydi.
+
+        Skrinshot bundan farq qiladi va AVVALGIDEK yuklanadi: u
+        ~60 KB va proktorga imtihon davomida, real vaqtda kerak.
+
+        JSON, `multipart` EMAS: yuboradigan fayl yo'q.
+
+        `session_id` - sessiyaning `public_id` si va u HAR DOIM
+        yuboriladi. Odatda server sessiyani tokendan topadi va bu
+        qiymat faqat solishtiriladi; lekin proktor chetlashtirganda
+        token client bilmasdan bekor bo'ladi va yozuv aynan o'shanda
+        yakunlanadi - u holda sessiyani topishning yagona yo'li shu.
+        """
+        return self._api.post(
+            "/client/recordings/",
+            json_body={
+                "kind": kind,
+                "local_path": local_path,
+                "captured_at": captured_at,
+                "size_bytes": int(size_bytes),
+                "duration_ms": int(duration_ms),
+                "width": int(width),
+                "height": int(height),
+                "frames": int(frames),
+                "frames_dropped": int(frames_dropped),
+                "event_type": event_type,
+                "camera_role": camera_role,
+                "confidence": int(confidence),
+                "session_id": session_id or None,
+            },
+            timeout=timeout,
+        )
+
     # --- Yakunlash ----------------------------------------------------
-    def finish_session(self, *, reason: str = "") -> dict:
-        return self._api.post("/client/session/finish/", json_body={"reason": reason})
+    def finish_session(
+        self, *, reason: str = "", completed: bool = False, timeout: Optional[float] = None
+    ) -> dict:
+        """
+        `completed=True` — talabgor testni O'ZI yakunladi («Yakunlash»
+        tugmasi): server kompyuter bronini bo'shatadi va joy keyingi
+        talabgorga beriladi. Dasturdan chiqishdagi yakun uni YUBORMAYDI —
+        talabgor testni topshirmagan va joyi saqlanishi kerak.
+        """
+        return self._api.post(
+            "/client/session/finish/",
+            json_body={"reason": reason, "completed": completed},
+            timeout=timeout,
+        )
 
     def report_technical_problem(self, *, kind: str, description: str) -> dict:
         # Maydon nomi `kind` (`type` EMAS) - backend

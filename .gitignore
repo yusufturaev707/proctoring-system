@@ -17,3 +17,18 @@ Desktop.ini
 # parollari kaliti). Namunasi `.env.example` da va u commit qilinadi.
 .env
 .env.local
+client/
+backend/.env
+backend/.env.local
+backend/.venv
+
+
+__pycache__/
+*.pyc
+.env
+venv/
+env/
+.venv/
+media/
+staticfiles/
+*.log

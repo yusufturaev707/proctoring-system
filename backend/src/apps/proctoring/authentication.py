@@ -82,8 +82,14 @@ class DeviceResolution(_BearerHeaderMixin, BaseAuthentication):
             request.device = None
             return None
 
+        # `computer__zone__region` ham JOIN'ga kiradi: mashina
+        # tekshiruvi (`verify_machine`) xabarida viloyat va bino nomi
+        # turadi va usiz har handshake bitta qo'shimcha so'rov
+        # qilardi. Zanjir kalta va uchala jadval ham kichik.
         device = (
-            DeviceToken.objects.select_related("computer", "computer__zone")
+            DeviceToken.objects.select_related(
+                "computer", "computer__zone", "computer__zone__region"
+            )
             .filter(device_id=device_id)
             .first()
         )
@@ -182,3 +188,27 @@ class SessionTokenAuthentication(_BearerHeaderMixin, BaseAuthentication):
                 },
             )
         return session
+
+
+class LenientSessionTokenAuthentication(SessionTokenAuthentication):
+    """
+    Yaroqsiz yoki yakunlangan tokenni RAD ETMAYDI - sessiyasiz o'tkazadi.
+
+    FAQAT `client/recordings/` uchun. Proktor chetlashtirganda token
+    client bilmagan holda bekor bo'ladi, client esa o'sha paytda
+    yakunlangan ekran yozuvining manzilini yuboradi - hali eski
+    token bilan. Qat'iy tekshiruv so'rovni view'ga yetkazmasdan
+    `session_not_found` bilan qaytarardi va sessiyani `public_id`
+    bo'yicha topadigan yo'l (`recordings.session_without_token`)
+    hech qachon ishlamasdi.
+
+    `SessionForbidden` (token BOSHQA qurilmaniki) avvalgidek rad
+    etiladi: bu yaroqsiz token emas, begona token.
+    """
+
+    def authenticate(self, request):
+        try:
+            return super().authenticate(request)
+        except SessionNotFound:
+            request.exam_session = None
+            return None

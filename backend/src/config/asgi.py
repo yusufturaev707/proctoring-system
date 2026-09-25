@@ -2,6 +2,10 @@ import os
 
 from django.core.asgi import get_asgi_application
 
+from config.env import load_env  # noqa: E402
+
+# `.env` dagi DJANGO_SETTINGS_MODULE shu yerda ko'rinishi uchun (`config/env.py`).
+load_env()
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.local")
 
 # Django ilovasi Channels routing import qilinishidan OLDIN yuklanishi shart,

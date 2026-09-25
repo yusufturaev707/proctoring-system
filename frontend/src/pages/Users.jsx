@@ -92,7 +92,8 @@ export default function Users() {
         ]}
         filters={[
           { name: 'role', label: 'Rol', type: 'select', options: roleOptions },
-          { name: 'region', label: 'Viloyat', type: 'select', options: regionOptions },
+          // Viloyat xodimi faqat o'z viloyatini ko'radi — tanlov ma'nosiz.
+          { name: 'region', label: 'Viloyat', type: 'select', options: regionOptions, regionScope: true },
           {
             name: 'is_active', label: 'Holat', type: 'select',
             options: [{ value: 'true', label: 'Faol' }, { value: 'false', label: 'Bloklangan' }],

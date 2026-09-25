@@ -26,9 +26,16 @@ Nimalar kuzatiladi va NIMA UCHUN aynan shu usulda:
     tekshiruv. Ikkinchi monitor imtihon boshida ham, o'rtasida ulansa
     ham bir xil darajada muhim.
 
-  RDP - jarayonlar ro'yxati ALOHIDA thread'da skanerlanadi.
-    `psutil.process_iter` sekin mashinada 100 ms gacha oladi va UI
-    thread'ida u WebView'ni tutib qolardi.
+  MASOFAVIY BOSHQARUV VA VIRTUALIZATSIYA - ALOHIDA thread'da
+    skanerlanadi (`threat_scanner`). Jarayonlar ro'yxatini o'qish
+    sekin mashinada 100 ms, imzolarni tekshirish esa undan ham
+    ko'proq oladi va UI thread'ida u WebView'ni tutib qolardi.
+
+    Bu yerda modul o'z qoidasidan CHETGA CHIQADI va topilganini
+    darhol YO'Q QILADI. Sabab: imtihon o'rtasida ishga tushirilgan
+    AnyDesk "keyinroq ko'rib chiqiladigan hodisa" emas - u o'sha
+    lahzada ekranni boshqa odamga ochib beradi. Qolgan hamma
+    narsada qoida kuchda: kuzatamiz va xabar qilamiz.
 
   BLOKLANGAN TUGMALAR - `lockdown` observer'i orqali. Bloklashning
     o'zi hodisa emas, lekin Alt+Tab ni qayta-qayta bosish - niyatning
@@ -69,30 +76,61 @@ _PROCESS_SCAN_MS = 15_000
 _HOTKEY_COOLDOWN_S = 15.0
 
 
-class _ProcessScanner(QThread):
+class _ThreatScanner(QThread):
     """
-    Jarayonlar ro'yxatini fon rejimida kuzatadi.
+    Masofaviy boshqaruv, virtualizatsiya va yordamchi vositalarni
+    imtihon DAVOMIDA kuzatadi.
+
+    Ilgari bu sinf jarayonlarni FAQAT NOM bo'yicha solishtirardi va
+    ro'yxat serverdan kelardi (`Setting.rdp_objects`). Bu tekshiruvni
+    chetlab o'tish uchun `AnyDesk.exe` ni qayta nomlash yetardi -
+    ya'ni himoya eng sodda hujumga ham dosh bermasdi. Endi qaror
+    `threat_scanner` da: PE resursi, Authenticode imzosi, xizmat nomi
+    va tinglanayotgan port bo'yicha.
+
+    SERVERDAGI RO'YXAT YO'QOLMADI - u ichki katalogga QO'SHILADI
+    (`_rules_from_names`). Administrator panelga yangi dastur
+    qo'shganda uni butun parkka tarqatish uchun client'ni qayta
+    yig'ish shart emas.
+
+    TOPILGANI DARHOL YO'Q QILINADI. Ishga tushishdagi tozalash faqat
+    o'sha paytdagi holatni ko'radi; imtihon o'rtasida ishga tushirilgan
+    AnyDesk esa aynan eng xavfli holat va uni keyingi skanergacha
+    qoldirish mumkin emas. Hodisa YO'Q QILINGAN holatda ham yoziladi -
+    bayonnomada "urinish bo'lgan" degan yozuv qolishi kerak.
 
     Faqat O'ZGARISHLAR haqida xabar beradi (edge detection): dastur
     ishlab turgani har 15 soniyada takroriy hodisa bo'lmasligi kerak,
     lekin u yopilib qayta ochilsa - bu yangi hodisa.
     """
 
-    #: Ro'yxatda paydo bo'lgan jarayonlar nomi.
-    appeared = pyqtSignal(list)
+    #: Yangi topilgan `Finding` obyektlari.
+    found = pyqtSignal(list)
 
-    def __init__(self, process_names: list, parent=None) -> None:
+    def __init__(self, rdp_config: dict, allow: list, parent=None) -> None:
         super().__init__(parent)
-        # Taqqoslash kichik harfda va kengaytmasiz ham bajariladi:
-        # panelga `AnyDesk.exe` ham, `anydesk` ham yozilishi mumkin.
-        self._targets = {}
-        for raw in process_names or []:
-            name = str(raw or "").strip().lower()
-            if not name:
-                continue
-            self._targets[name] = raw
-            if name.endswith(".exe"):
-                self._targets[name[:-4]] = raw
+        from services import threat_rules
+
+        # TARTIB QARORI: aniq ichki qoidalar -> server ro'yxati ->
+        # kalit so'z tori. Qidiruv birinchi mos kelgan qoidada
+        # to'xtaydi, shuning uchun har uchala qatlamning o'rni muhim:
+        #
+        #   ichki katalog OLDINDA, chunki uning belgilari kuchliroq
+        #     (imzo, `OriginalFilename`) va `blocking` bayrog'i
+        #     tekshirilgan. Serverdagi bir nomli, faqat jarayon nomi
+        #     bilan yozilgan dublikat oldinda tursa, u AnyDesk'ni
+        #     to'smaydigan qoida sifatida qayd etardi;
+        #   server ro'yxati O'RTADA — u katalogda YO'Q dasturlarni
+        #     qo'shadi;
+        #   `FALLBACK_RULES` OXIRIDA — "remote desktop" kabi keng
+        #     kalit so'z undan keyingi har qanday aniq qoidani
+        #     soyalab qo'yardi.
+        self._rules = (
+            threat_rules.BUILTIN_RULES
+            + _rules_from_config(rdp_config)
+            + threat_rules.FALLBACK_RULES
+        )
+        self._allow = [str(item).strip().lower() for item in (allow or []) if str(item).strip()]
         self._running = False
         self._seen: set = set()
 
@@ -114,35 +152,34 @@ class _ProcessScanner(QThread):
         self._running = False
 
     def run(self) -> None:
-        if not self._targets:
-            return
-        try:
-            import psutil
-        except ImportError:
-            log.warning("psutil yo'q - RDP aniqlash ishlamaydi")
-            return
+        from services import threat_scanner
 
         while self._running:
-            found = set()
             try:
-                for process in psutil.process_iter(["name"]):
-                    name = (process.info.get("name") or "").strip().lower()
-                    if not name:
-                        continue
-                    if name in self._targets:
-                        found.add(self._targets[name])
-                    elif name.endswith(".exe") and name[:-4] in self._targets:
-                        found.add(self._targets[name[:-4]])
+                report = threat_scanner.scan(rules=self._rules, allow=self._allow)
+                fresh = [
+                    finding
+                    for finding in report.findings
+                    if (finding.code, finding.kind, finding.name, finding.service)
+                    not in self._seen
+                ]
+                # Holat AVVAL yangilanadi: `neutralize` sekin (xizmat
+                # to'xtashini 8 soniyagacha kutadi) va shu paytda
+                # `stop()` kelishi mumkin.
+                self._seen = {
+                    (item.code, item.kind, item.name, item.service)
+                    for item in report.findings
+                }
+                if fresh:
+                    partial = threat_scanner.ThreatReport(
+                        findings=fresh, elevated=report.elevated
+                    )
+                    threat_scanner.neutralize(partial)
+                    self.found.emit(fresh)
             except Exception:
-                # Jarayonlar ro'yxatini o'qib bo'lmadi (huquq, WMI).
+                # Skanerlashda xato (huquq, WMI, o'chib ketgan jarayon).
                 # Kuzatuv to'xtamaydi - keyingi tsiklda qayta uriniladi.
-                log.debug("Jarayonlarni skanerlashda xato", exc_info=True)
-                found = self._seen
-
-            new = sorted(found - self._seen)
-            self._seen = found
-            if new:
-                self.appeared.emit(new)
+                log.debug("Tahdid skanerida xato", exc_info=True)
 
             # Kichik bo'laklarda uxlaymiz: `stop()` chaqirilganda
             # thread 15 soniya kutib turmasligi kerak - dastur
@@ -151,6 +188,96 @@ class _ProcessScanner(QThread):
                 if not self._running:
                     return
                 self.msleep(250)
+
+
+def _rules_from_config(rdp_config: dict) -> tuple:
+    """
+    Serverdagi `Setting.rdp_objects` yozuvlarini qoidaga aylantiradi.
+
+    IKKI SHAKL QO'LLAB-QUVVATLANADI va bu ataylab:
+
+      `rules`     — to'liq yozuv (imzo, `OriginalFilename`, xizmat,
+                    port). Yangi backend shuni beradi.
+      `processes` — faqat nomlar ro'yxati. ESKI backend bilan
+                    ishlaydigan client uchun saqlangan: server
+                    yangilanmagan o'rnatishda `rules` umuman
+                    kelmaydi va o'shanda nomlar bo'yicha qidiruv
+                    hech yo'qdan yaxshiroq.
+
+    Ikkalasi ham kelsa `processes` E'TIBORGA OLINMAYDI: u `rules`
+    ichidagi `names` ning nusxasi va uni ikkinchi marta qo'shish
+    bitta dastur uchun ikkita hodisa berardi.
+
+    Nom `AnyDesk.exe` ham, `anydesk` ham yozilishi mumkin — kengaytma
+    o'zi qo'shiladi.
+    """
+    from services.threat_rules import ThreatRule
+
+    config = rdp_config or {}
+    rules: list = []
+
+    for raw in config.get("rules") or []:
+        try:
+            code = str(raw.get("code") or "").strip().lower()
+            if not code:
+                continue
+            rules.append(
+                ThreatRule(
+                    code=code,
+                    label=str(raw.get("label") or code),
+                    category=str(raw.get("category") or "remote"),
+                    # `is_blocking` panelda ochiq qo'yilgan bo'lsagina
+                    # to'sadi — standart qiymat `False`.
+                    blocking=bool(raw.get("blocking")),
+                    publishers=_lowered(raw.get("publishers")),
+                    originals=_exe_names(raw.get("originals")),
+                    products=_lowered(raw.get("products")),
+                    names=_exe_names(raw.get("names")),
+                    services=_lowered(raw.get("services")),
+                    ports=tuple(
+                        port for port in (raw.get("ports") or []) if isinstance(port, int)
+                    ),
+                    hint="Bu dastur administrator ro'yxatida taqiqlangan.",
+                )
+            )
+        except (AttributeError, TypeError, ValueError):
+            # Bitta buzilgan yozuv butun ro'yxatni yo'qotmasligi kerak.
+            log.warning("Serverdagi tahdid qoidasi o'qilmadi: %r", raw)
+
+    if rules:
+        return tuple(rules)
+
+    names = _exe_names(config.get("processes"))
+    if not names:
+        return ()
+    return (
+        ThreatRule(
+            code="server_list",
+            label="Taqiqlangan dastur (panel ro'yxati)",
+            category="remote",
+            blocking=False,
+            originals=names,
+            names=names,
+            hint="Bu dastur administrator ro'yxatida taqiqlangan.",
+        ),
+    )
+
+
+def _lowered(values) -> tuple:
+    return tuple(
+        sorted({str(item).strip().lower() for item in (values or []) if str(item).strip()})
+    )
+
+
+def _exe_names(values) -> tuple:
+    """Nomlarni kichik harfga o'tkazadi va `.exe` kengaytmasini qo'shadi."""
+    names = set()
+    for raw in values or []:
+        name = str(raw or "").strip().lower()
+        if not name:
+            continue
+        names.add(name if name.endswith(".exe") else name + ".exe")
+    return tuple(sorted(names))
 
 
 class DeviceWatcher(QObject):
@@ -176,7 +303,7 @@ class DeviceWatcher(QObject):
         self._active = False
         self._window = None
         self._watch_fullscreen = False
-        self._scanner: Optional[_ProcessScanner] = None
+        self._scanner: Optional[_ThreatScanner] = None
         self._app = QApplication.instance()
 
         #: Bloklangan tugmalar: kod -> (oxirgi xabar vaqti, sanoq).
@@ -210,21 +337,23 @@ class DeviceWatcher(QObject):
                 # keyin ulangandan kam xavfli emas.
                 self._emit_multi_monitor(screens, "startup")
 
-        # --- RDP ---
+        # --- Masofaviy boshqaruv / virtualizatsiya ---
         if rdp.get("enabled", True):
-            processes = rdp.get("processes") or []
-            if processes:
-                self._scanner = _ProcessScanner(processes, parent=self)
-                self._scanner.appeared.connect(self._on_processes_found)
-                self._scanner.start()
-                log.info("RDP kuzatuvi: %s ta dastur", len(processes))
-            else:
-                # Ro'yxat bo'sh - bu "aniqlash yoqilgan, lekin nimani
-                # qidirishni administrator ko'rsatmagan" holati.
-                log.warning(
-                    "RDP aniqlash yoqilgan, lekin dasturlar ro'yxati bo'sh - "
-                    "panelda `RdpObject` yozuvlarini qo'shing"
-                )
+            from config import THREAT_SCAN_ALLOW
+
+            # Ro'yxat BO'SH BO'LSA HAM ishga tushadi va bu o'zgarish
+            # ataylab. Ilgari bo'sh ro'yxat kuzatuvni butunlay
+            # o'chirardi, ya'ni panelda `RdpObject` yozuvlarini
+            # qo'shishni unutish jimgina "himoya yo'q" holatini
+            # yaratardi. Endi ichki katalog baribir ishlaydi, server
+            # ro'yxati esa unga QO'SHILADI.
+            self._scanner = _ThreatScanner(rdp, THREAT_SCAN_ALLOW, parent=self)
+            self._scanner.found.connect(self._on_threats_found)
+            self._scanner.start()
+            log.info(
+                "Tahdid kuzatuvi boshlandi (panel ro'yxati: %s ta qoida, %s ta nom)",
+                len(rdp.get("rules") or []), len(rdp.get("processes") or []),
+            )
 
         log.info("Qurilma kuzatuvi boshlandi")
 
@@ -325,16 +454,54 @@ class DeviceWatcher(QObject):
         )
 
     # ------------------------------------------------------------------
-    # RDP
+    # Masofaviy boshqaruv / virtualizatsiya
     # ------------------------------------------------------------------
-    def _on_processes_found(self, names: list) -> None:
+    def _on_threats_found(self, findings: list) -> None:
+        """
+        Topilmalarni hodisa oqimiga o'tkazadi.
+
+        HODISA TURI BO'YICHA GURUHLANADI. Bitta skanerda AnyDesk ham,
+        VirtualBox ham topilishi mumkin va ularni bitta hodisaga
+        qo'shish panelda ikkita butunlay boshqa muammoni bitta
+        qatorga siqib qo'yardi: `rdp_detected` va `vm_detected`
+        frontendda ham har xil turkumga tushadi (`utils/events.js`).
+
+        JIDDIYLIK YO'Q QILINGANIGA QARAB O'ZGARADI. Yopib bo'lgan
+        dastur - YUQORI (3): u imtihonga ta'sir qilmadi, lekin
+        urinish bo'lgan. Yopib bo'lmagani - KRITIK (4) va u
+        write-behind buferini chetlab o'tib darhol yoziladi
+        (`ingest.IMMEDIATE_SEVERITY`), ya'ni proktor ekranida o'sha
+        zahoti ko'rinadi - masofaviy boshqaruv HOZIR ishlab turibdi.
+        """
         if not self._active:
             return
-        log.warning("Masofaviy boshqaruv dasturi aniqlandi: %s", names)
-        # CRITICAL: imtihon paytida masofaviy boshqaruv - eng jiddiy
-        # texnik buzilish va u buferni chetlab o'tib darhol yozilishi
-        # kerak (`ingest.IMMEDIATE_SEVERITY`).
-        self.detected.emit("rdp_detected", 4, {"processes": names})
+
+        grouped: dict = {}
+        for finding in findings:
+            if finding.neutralized:
+                log.warning("Imtihon davomida yo'q qilindi: %s", finding.describe())
+            else:
+                log.error(
+                    "Imtihon davomida YO'Q QILINMADI: %s | sabab: %s",
+                    finding.describe(), finding.reason,
+                )
+            grouped.setdefault(finding.event_type, []).append(finding)
+
+        for event_type, items in grouped.items():
+            severity = 3 if all(item.neutralized for item in items) else 4
+            self.detected.emit(
+                event_type,
+                severity,
+                {
+                    "processes": [item.name or item.service for item in items if item.name or item.service],
+                    "codes": [item.code for item in items],
+                    "neutralized": all(item.neutralized for item in items),
+                    # Birinchi topilmaning dalili — payload'da uzunlik
+                    # chegarasi bor (`ingest._BROADCAST_DETAIL_KEYS`),
+                    # shuning uchun hammasini yozishning ma'nosi yo'q.
+                    "evidence": items[0].evidence,
+                },
+            )
 
     # ------------------------------------------------------------------
     # Bloklangan tugmalar

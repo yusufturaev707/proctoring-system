@@ -12,6 +12,8 @@ import { modelVersions as modelVersionsApi } from '../../api/endpoints'
 export default function ModelVersionsPage() {
   return (
     <ResourcePage
+      // Barcha viloyatlar uchun bitta yozuv — o'zgartirish respublika darajasida.
+      shared
       title="Model versiyalari"
       subtitle="Client ishlatadigan obyekt aniqlash modellari"
       queryKey="model-versions"

@@ -36,28 +36,30 @@ export default function StatCard({
 
   if (loading) return <StatCardSkeleton />
 
+  // NOM TEPADA, KARTANING TO'LIQ KENGLIGIDA va ikki qatorgacha
+  // o'raladi; ikonka pastda, raqam qatorida. Ilgari ikonka nom yonida
+  // edi: dashboardda oltita karta yonma-yon turadi va har biriga
+  // ~160 px tegadi — "Chetlashtirilgan" (bitta uzun so'z, o'ralmaydi)
+  // "Chetlas…" bo'lib qolardi, ya'ni raqam nimani sanayotganini faqat
+  // tooltip'dan bilish mumkin edi.
   const content = (
-    <CardContent sx={{ p: 2.5, width: '100%', '&:last-child': { pb: 2.5 } }}>
-      <Stack direction="row" spacing={2} alignItems="flex-start">
-        {Icon && (
-          <Box
-            sx={{
-              width: 44, height: 44, borderRadius: 2.5, flexShrink: 0,
-              display: 'grid', placeItems: 'center',
-              bgcolor: (theme) => alpha(theme.palette[color].main, 0.12),
-              color: `${color}.main`,
-            }}
-          >
-            <Icon />
-          </Box>
-        )}
+    <CardContent sx={{ p: 2.25, width: '100%', '&:last-child': { pb: 2.25 } }}>
+      <Typography
+        variant="body2"
+        color="text.secondary"
+        fontWeight={600}
+        title={typeof label === 'string' ? label : undefined}
+        sx={{
+          lineHeight: 1.3, minHeight: '2.6em',
+          display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+        }}
+      >
+        {label}
+      </Typography>
 
-        <Box sx={{ minWidth: 0, flex: 1 }}>
-          <Typography variant="caption" color="text.secondary" fontWeight={600} noWrap display="block">
-            {label}
-          </Typography>
-
-          <Stack direction="row" spacing={1} alignItems="baseline">
+      <Box sx={{ minWidth: 0, mt: 0.5 }}>
+          <Stack direction="row" spacing={1} alignItems="center">
+            <Stack direction="row" spacing={1} alignItems="baseline" sx={{ flex: 1, minWidth: 0 }}>
             <Typography variant="h4" sx={{ lineHeight: 1.15 }}>{animated}</Typography>
             {trend != null && trend !== 0 && (
               <Tooltip title="Kechagi kunga nisbatan">
@@ -73,6 +75,19 @@ export default function StatCard({
                   </Typography>
                 </Stack>
               </Tooltip>
+            )}
+            </Stack>
+            {Icon && (
+              <Box
+                sx={{
+                  width: 36, height: 36, borderRadius: '12px', flexShrink: 0,
+                  display: 'grid', placeItems: 'center',
+                  bgcolor: (theme) => alpha(theme.palette[color].main, 0.12),
+                  color: `${color}.main`,
+                }}
+              >
+                <Icon sx={{ fontSize: 20 }} />
+              </Box>
             )}
           </Stack>
 
@@ -103,8 +118,7 @@ export default function StatCard({
               <Sparkline data={trendData} color={undefined} height={30} />
             </Box>
           )}
-        </Box>
-      </Stack>
+      </Box>
     </CardContent>
   )
 
@@ -130,7 +144,7 @@ export default function StatCard({
     >
       <ButtonBase
         onClick={onClick}
-        sx={{ width: '100%', height: '100%', textAlign: 'left', alignItems: 'stretch', borderRadius: 3 }}
+        sx={{ width: '100%', height: '100%', textAlign: 'left', alignItems: 'stretch', borderRadius: 'inherit' }}
       >
         {content}
       </ButtonBase>

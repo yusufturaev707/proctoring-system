@@ -33,6 +33,7 @@ URL'dagi opaque sessiya tokeni nginx access log'ida qoladi.
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 from typing import Optional
@@ -60,19 +61,43 @@ _BACKOFF_S = (1, 2, 4, 8, 15, 30)
 _PING_INTERVAL_MS = 25_000
 
 
+#: Dev tartibi (`CLAUDE.md` -> Buyruqlar): `runserver` 8000 da, WebSocket
+#: esa ALOHIDA jarayonda (`uvicorn ... --port 8001`).
+_DEV_API_PORT = 8000
+_DEV_WS_PORT = 8001
+_LOOPBACK = {"127.0.0.1", "localhost", "::1"}
+
+
+# Keshlanadi: har qayta ulanishda chaqiriladi va dev ogohlantirishi
+# log'ni to'ldirmasligi kerak.
+@functools.lru_cache(maxsize=1)
 def default_ws_url() -> str:
     """
     `.env` da `WS_BASE_URL` berilmagan bo'lsa - API manzilidan chiqariladi.
 
-    DIQQAT: dev'da bu QIYMAT NOTO'G'RI bo'ladi. WebSocket alohida
-    process'da (`uvicorn ... --port 8001`) ishlaydi, HTTP API esa
-    8000 da - bitta manzildan ikkalasini chiqarib bo'lmaydi.
-    Production'da nginx ikkalasini bitta host ostida beradi va bu
-    derivatsiya to'g'ri ishlaydi.
+    Production'da nginx HTTP va WebSocket'ni bitta host ostida beradi va
+    manzil shunchaki sxemasi almashtirilgan API manzili.
+
+    DEV ISTISNOSI: loopback + 8000-port — bu `runserver`, WebSocket esa
+    8001 da. Ilgari port ham ko'chirilardi va client `ws://...:8000` ga
+    urilardi: `runserver` WebSocket'ni bilmaydi va 404 qaytaradi
+    ("GET /ws/client/ 404"), kanal esa hech qachon ochilmasdi — proktor
+    ogohlantirishi va chetlashtirish buyrug'i clientga YETMASDI, holbuki
+    boshqa hamma narsa ishlab turgandek ko'rinardi. Aniq tartibni tanib
+    to'g'ri portni olamiz va buni log'da ochiq aytamiz.
     """
     parsed = urlparse(API_BASE_URL)
     scheme = "wss" if parsed.scheme == "https" else "ws"
-    return urlunparse((scheme, parsed.netloc, "", "", "", ""))
+    netloc = parsed.netloc
+    if (parsed.hostname or "") in _LOOPBACK and parsed.port == _DEV_API_PORT:
+        host = parsed.hostname if ":" not in (parsed.hostname or "") else "[{}]".format(parsed.hostname)
+        netloc = "{}:{}".format(host, _DEV_WS_PORT)
+        log.warning(
+            "WS_BASE_URL berilmagan - dev tartibi taxmin qilindi: %s://%s "
+            "(runserver %s, uvicorn %s). Aniq qiymatni .env da bering.",
+            scheme, netloc, _DEV_API_PORT, _DEV_WS_PORT,
+        )
+    return urlunparse((scheme, netloc, "", "", "", ""))
 
 
 class ProctorChannel(QObject):
@@ -206,9 +231,20 @@ class ProctorChannel(QObject):
         self._schedule_retry()
 
     def _on_error(self, error) -> None:
-        # Xato KO'RSATILMAYDI: kanal ixtiyoriy tezlik qatlami va uning
-        # uzilishi operator uchun harakat talab qilmaydi. Log'da qoladi.
-        log.info("WebSocket xatosi: %s", error)
+        # Xato EKRANDA KO'RSATILMAYDI: kanal ixtiyoriy tezlik qatlami va
+        # uning uzilishi operator uchun harakat talab qilmaydi. Log'da esa
+        # SABAB bilan qoladi — ilgari faqat enum kodi yozilardi va 404
+        # ("manzil HTTP API'ga qaragan") oddiy tarmoq uzilishidan farq
+        # qilmasdi.
+        detail = self._socket.errorString() if self._socket is not None else ""
+        if "404" in detail or "Not Found" in detail:
+            log.error(
+                "WebSocket manzili WebSocket server emas (404): %s. "
+                "WS_BASE_URL ni tekshiring - dev'da ws://127.0.0.1:8001",
+                detail,
+            )
+            return
+        log.info("WebSocket xatosi: %s (%s)", error, detail)
 
     def _send_ping(self) -> None:
         if self._socket is None or not self._connected:

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from datetime import datetime, timedelta
 
 from django.conf import settings
@@ -32,11 +33,18 @@ from django.utils import timezone
 
 from apps.common.redis_client import get_redis
 from apps.proctoring.models import ProctoringEvent, ScreenshotMeta
+from apps.proctoring.services import risk as risk_service
 from apps.proctoring.services import state as session_state
 
 logger = logging.getLogger(__name__)
 
 #: Hodisa turi -> xavf balliga qo'shiladigan qiymat.
+#:
+#: BU ZAXIRA RO'YXAT. Amaldagi qiymatlar `controls.EventRiskWeight`
+#: jadvalida va ular administrator tomonidan sozlanadi
+#: (`services/risk.py:weight_for`). Kod ichidagi qiymatlar jadval
+#: bo'sh bo'lganda ishlaydi: "sozlanmagan tizim ballni umuman
+#: hisoblamaydi" holati chetlashtirish qarorini asossiz qoldirardi.
 RISK_WEIGHTS: dict[str, int] = {
     ProctoringEvent.Type.WINDOW_BLUR: 3,
     ProctoringEvent.Type.FULLSCREEN_EXIT: 5,
@@ -71,8 +79,17 @@ def push_event(
     payload: dict | None = None,
     screenshot_key: str = "",
     client_event_id: str = "",
+    risk_config: dict | None = None,
 ) -> None:
-    """Bitta hodisani navbatga qo'yadi (yoki kritik bo'lsa — darhol yozadi)."""
+    """
+    Bitta hodisani navbatga qo'yadi (yoki kritik bo'lsa — darhol yozadi).
+
+    `risk_config` — imtihon siyosatidagi ball sozlamalari
+    (pasayish, cooldown, chegaralar). Berilmasa standart qiymatlar
+    ishlatiladi: bu yo'l sessiyasiz kontekstlarda (masalan
+    `check_frozen_frames`) chaqiriladi va u yerda imtihon profilini
+    o'qish uchun qo'shimcha so'rov kerak bo'lardi.
+    """
     occurred_at, original = clamp_time(occurred_at)
     record = {
         "session_id": session_id,
@@ -85,10 +102,8 @@ def push_event(
         "client_event_id": client_event_id,
     }
 
-    risk = RISK_WEIGHTS.get(type, 1)
     session_state.increment(session_id, "events")
-    if risk:
-        session_state.bump_risk(session_id, risk)
+    _apply_risk(session_id, type, risk_config)
 
     if int(severity) >= IMMEDIATE_SEVERITY:
         _write_immediately(record)
@@ -107,9 +122,17 @@ def push_events_batch(*, session, events: list[dict]) -> int:
     handshake soni keskin kamayadi.
     """
     accepted = 0
-    total_risk = 0
     skewed = 0
     pipeline_records: list[dict] = []
+
+    # Siyosat BIR MARTA o'qiladi: u keshlangan, lekin har hodisa
+    # uchun chaqirish 200 ta hodisali batch'da 200 ta kesh
+    # qidiruvini bergan bo'lardi.
+    from apps.controls.services import get_client_config
+
+    risk_config = risk_service.resolve_config(
+        (get_client_config(session.exam) or {}).get("proctoring")
+    )
 
     for item in events:
         event_type = item.get("type")
@@ -136,7 +159,7 @@ def push_events_batch(*, session, events: list[dict]) -> int:
         else:
             pipeline_records.append(record)
 
-        total_risk += RISK_WEIGHTS.get(event_type, 1)
+        _apply_risk(session.pk, event_type, risk_config)
         _broadcast(record)
         accepted += 1
 
@@ -145,8 +168,6 @@ def push_events_batch(*, session, events: list[dict]) -> int:
 
     if accepted:
         session_state.increment(session.pk, "events", accepted)
-    if total_risk:
-        session_state.bump_risk(session.pk, min(total_risk, 40))
     if skewed:
         # Mashina soati adashgan — bu texnik nosozlik belgisi.
         logger.warning(
@@ -187,6 +208,27 @@ def push_screenshot_meta(
     # bo'lishi mumkin. Bu eng oson aniqlanadigan spoofing belgisi.
     if sha256:
         check_frozen_frames(session, sha256)
+
+
+def _apply_risk(session_id: int, event_type: str, config: dict | None) -> None:
+    """
+    Hodisani xavf balliga qo'shadi.
+
+    ILGARI bu oddiy `bump_risk(delta)` edi va uchta narsa yo'q edi:
+    pasayish, takror hisoblashga qarshi oyna va tarkib. Uchalasi ham
+    `services/risk.py` da - sabab o'sha modul docstring'ida.
+
+    Xato YUTILADI: ball hisoblanmagani hodisani yo'qotmasligi kerak.
+    Hodisa dalil, ball esa tartiblash vositasi.
+    """
+    try:
+        risk_service.apply(
+            session_id=session_id,
+            event_type=event_type,
+            config=config or risk_service.resolve_config(None),
+        )
+    except Exception:
+        logger.warning("Xavf balli yangilanmadi (%s)", event_type, exc_info=True)
 
 
 # --------------------------------------------------------------------------
@@ -266,7 +308,7 @@ def _write_immediately(record: dict) -> None:
 # kadrlar" esa aytadi.
 _BROADCAST_DETAIL_KEYS = (
     "processes",   # rdp_detected — qaysi dastur
-    "count",       # multi_monitor — nechta ekran
+    "count",       # multi_monitor — ekranlar, second_person — odamlar
     "key",         # hotkey_blocked — qaysi kombinatsiya
     "repeats",     # hotkey_blocked — necha marta
     "reason",      # client_anomaly / camera_lost — sabab
@@ -275,6 +317,31 @@ _BROADCAST_DETAIL_KEYS = (
     "score",       # face_* — ball
     "threshold",   # face_* — chegara
     "faces",       # face_* — nechta yuz
+    # --- AI kuzatuv (M3-M5) ---
+    "object",      # object_detected — qaysi buyum
+    "confidence",  # har qanday AI hodisasi — ishonch (0-100)
+    "duration_ms", # temporal hodisa — qancha davom etdi
+    "camera_role", # qaysi kamera ko'rdi (primary | secondary)
+    "track_id",    # ByteTrack izi — ikkita telefonni ajratish uchun
+    "direction",   # looking_away — qaysi tomonga qaradi
+    "deviation",   # looking_away — necha gradus
+    "rule",        # fusion — qaysi qoida ishladi
+    "fused_from",  # fusion — qaysi hodisalardan yig'ildi
+    "module",      # proctoring_degraded — qaysi modul o'chdi
+    "similarity",  # face_mismatch — etalonga o'xshashlik
+    # --- Masofaviy boshqaruv / virtualizatsiya tozalash ---
+    #
+    # `neutralized` PROKTOR UCHUN HAL QILUVCHI: "AnyDesk topildi va
+    # yopildi" bilan "AnyDesk topildi, yopib bo'lmadi" butunlay
+    # boshqa vaziyat. Birinchisi bayonnomaga yozuv, ikkinchisi esa
+    # darhol aralashuvni talab qiladi — ekran hozir ham boshqa
+    # odamga ochiq bo'lishi mumkin.
+    "neutralized", # tozalash muvaffaqiyatli bo'ldimi
+    "codes",       # qaysi qoidalar ishladi (anydesk, virtualbox...)
+    "label",       # dasturning o'qiladigan nomi
+    "evidence",    # NEGA shu deb qaror qilindi (imzo, OriginalFilename)
+    "service",     # qaysi Windows xizmati
+    "process",     # qaysi jarayon
 )
 
 #: Bitta matn maydonining eng ko'p uzunligi.
@@ -356,8 +423,20 @@ def _broadcast(record: dict) -> None:
             },
         )
     except Exception as exc:
-        # Realtime — qo'shimcha qulaylik, u ishlamasa ham ingest to'xtamasligi kerak.
-        logger.debug("Broadcast xatosi: %s", exc)
+        # Realtime — qo'shimcha qulaylik, u ishlamasa ham ingest to'xtamasligi
+        # kerak. Lekin JIMGINA emas: ilgari xato `debug` da yozilardi va
+        # panelda "hodisa kelmayapti" degan shikoyatning sababini log'dan
+        # topib bo'lmasdi. Daqiqasiga bittadan ko'p emas — Redis uzilganda
+        # har hodisa uchun qator yozish jurnalni to'ldirardi.
+        global _last_broadcast_warning
+        now = time.monotonic()
+        if now - _last_broadcast_warning >= 60:
+            _last_broadcast_warning = now
+            logger.warning("Panelga uzatilmadi (zone.%s): %s", record.get("zone_id"), exc)
+
+
+#: Oxirgi `_broadcast` ogohlantirishi (monotonik soat) — log cheklovi.
+_last_broadcast_warning = float("-inf")
 
 
 # --------------------------------------------------------------------------

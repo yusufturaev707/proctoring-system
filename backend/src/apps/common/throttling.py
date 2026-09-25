@@ -125,6 +125,30 @@ class ExitVerifyThrottle(BaseScopedThrottle):
         return f"ip:{client_ip(request)}"
 
 
+class FaceAttemptThrottle(BaseScopedThrottle):
+    """
+    Kirishda MOS KELMAGAN urinishlar — QURILMA bo'yicha.
+
+    IP bo'yicha bo'lishi mumkin emas: butun bino bitta NAT manzili
+    ortida turadi va ommaviy kirish paytida 500 mashinaning
+    urinishlari bitta byudjetni yer edi — natijada aybsiz
+    operatorning urinishi jimgina yozilmay qolardi.
+
+    Sessiya bu bosqichda hali YO'Q (u moslik tasdiqlangach ochiladi),
+    shuning uchun `FaceVerifyThrottle` dagi kalit bu yerda ishlamaydi.
+    Chegaraning o'zi o'sha `face_verify` byudjetidan: ikkalasi ham
+    bitta oqimning ikki yakuni.
+    """
+
+    scope = "face_verify"
+
+    def get_ident_value(self, request, view):
+        device = getattr(request, "device", None)
+        if device is not None:
+            return f"dev:{device.pk}"
+        return f"ip:{client_ip(request)}"
+
+
 class FaceVerifyThrottle(BaseScopedThrottle):
     scope = "face_verify"
 

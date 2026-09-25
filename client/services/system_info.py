@@ -7,10 +7,18 @@ Uchta manzil uchta boshqa savolga javob beradi va ular ARALASHTIRILMAYDI:
     MAC        - mashinaning o'zi kim (global unikal, asosiy belgi)
     public IP  - bino internetga qaysi manzil bilan chiqadi
 
-Har biri uchun gibrid strategiya: eng arzon usul birinchi, ishlamasa
-keyingisi. Sabab - imtihon markazlaridagi mashinalar bir xil emas:
-virtual adapterlar (WSL, VMware, Hyper-V), o'chirilgan WMI, proxy
-ortidagi tarmoq, tizim tili har xil.
+Har biri uchun gibrid strategiya: eng ISHONCHLI usul birinchi,
+ishlamasa keyingisi. Sabab - imtihon markazlaridagi mashinalar bir
+xil emas: virtual adapterlar (WSL, VMware, Hyper-V), o'chirilgan
+WMI, proxy ortidagi tarmoq, tizim tili har xil.
+
+Windows'da birinchi usul - WinAPI (`winapi_net.py`): u marshrut
+jadvalidan "serverga qaysi adapter orqali chiqiladi" degan javobni
+oladi va MAC bilan IP ni AYNAN o'sha adapterdan beradi. Bu muhim,
+chunki MAC server tomonda mashinani identifikatsiya qiladi
+(`Computer.mac_address`) - Hyper-V adapterining MAC'i yuborilsa,
+to'g'ri ro'yxatga olingan mashina ham "ro'yxatda yo'q" bo'lib
+chiqardi.
 
 QOIDA: bu moduldagi hech bir funksiya UI thread'ni uzoq bloklamaydi.
 Public IP tashqi so'rov talab qiladi, shuning uchun u FON rejimida
@@ -67,9 +75,32 @@ def _run(command: list, timeout: float = 5.0) -> str:
     )
 
 
+def _winapi_primary():
+    """
+    Serverga chiqadigan adapter yoki `None`.
+
+    Xato YUTILADI: WinAPI yo'li ishlamasa (Windows emas, DLL
+    o'zgargan, huquq yetmagan) modul zaxira usullarga tushishi
+    kerak - manzil aniqlanmasligi dasturni to'xtatmaydi.
+    """
+    try:
+        from services import winapi_net
+
+        return winapi_net.primary()
+    except Exception:
+        log.debug("WinAPI adapteri o'qilmadi", exc_info=True)
+        return None
+
+
 # ---------------------------------------------------------------------
 # LAN IP
 # ---------------------------------------------------------------------
+def _ip_via_winapi() -> str:
+    """Marshrut tanlagan adapterning IPv4 manzili (faqat Windows)."""
+    adapter = _winapi_primary()
+    return adapter.ipv4 if adapter is not None else ""
+
+
 def _ip_via_socket() -> str:
     """
     UDP socket orqali OS marshrutidan olish - eng tez va ishonchli usul.
@@ -138,7 +169,7 @@ def _ip_via_os_command() -> str:
 
 def local_ip() -> str:
     """Mashinaning LAN manzili. Topilmasa `0.0.0.0`."""
-    for method in (_ip_via_socket, _ip_via_psutil, _ip_via_os_command):
+    for method in (_ip_via_winapi, _ip_via_socket, _ip_via_psutil, _ip_via_os_command):
         try:
             ip = method()
         except Exception:
@@ -160,6 +191,12 @@ def _normalize_mac(value: str) -> str:
     if mac in ("00:00:00:00:00:00", "FF:FF:FF:FF:FF:FF"):
         return ""
     return mac
+
+
+def _mac_via_winapi() -> str:
+    """Marshrut tanlagan adapterning MAC'i (faqat Windows)."""
+    adapter = _winapi_primary()
+    return _normalize_mac(adapter.mac) if adapter is not None else ""
 
 
 def _mac_of_active_interface() -> str:
@@ -238,7 +275,7 @@ def mac_address() -> str:
     u har ishga tushishda boshqacha bo'ladi - qurilma har safar yangi
     mashina kabi ko'rinardi.
     """
-    for method in (_mac_of_active_interface, _mac_via_os_command):
+    for method in (_mac_via_winapi, _mac_of_active_interface, _mac_via_os_command):
         try:
             mac = method()
         except Exception:
@@ -409,6 +446,119 @@ def info_pc() -> dict:
     except Exception:
         log.debug("psutil tizim ma'lumotini bermadi", exc_info=True)
     return data
+
+
+#: `machine_identity()` keshi. MAC mashina ishlab turganda
+#: o'zgarmaydi, IP esa DHCP ijarasi yangilanganda o'zgarishi
+#: mumkin - shuning uchun kesh bor, lekin uni MAJBURAN yangilash
+#: ham mumkin ("Yangilash" tugmasi aynan shuni qiladi).
+_identity_lock = threading.Lock()
+_identity_cache: dict = {}
+
+
+def machine_identity(refresh: bool = False) -> dict:
+    """
+    MAC va IP - BITTA adapterdan, bitta chaqiruvda.
+
+    `mac_address()` va `local_ip()` ni alohida chaqirish MUMKIN,
+    lekin bu yerda ular ATAYLAB birga olinadi: server ikkalasini
+    bitta mashinaning tavsifi deb qabul qiladi
+    (`Computer.mac_address` + `Computer.ip_address`), turli
+    adapterdan kelgan juftlik esa mavjud bo'lmagan mashinani
+    tasvirlardi.
+
+    `source` - qiymat qayerdan kelgani (`winapi` / `fallback`).
+    U diagnostika uchun: MAC bo'yicha tekshiruv rad etganda
+    birinchi savol "qaysi adapter o'qilgan?" bo'ladi.
+
+    BLOKLAYDI: zaxira yo'lda OS buyrug'i ishga tushishi mumkin
+    (~100-500 ms). Fon thread'idan chaqiring.
+    """
+    with _identity_lock:
+        if _identity_cache and not refresh:
+            return dict(_identity_cache)
+
+    adapter = _winapi_primary()
+    if adapter is not None and adapter.mac:
+        primary_ip = adapter.ipv4 or local_ip()
+        identity = {
+            "mac": _normalize_mac(adapter.mac),
+            "ip": primary_ip,
+            "source": "winapi",
+            "adapter": adapter.name or adapter.description,
+            "ips": _all_addresses(primary_ip),
+        }
+    else:
+        # Zaxira: ikkala qiymat alohida yo'l bilan olinadi. Ular
+        # bir adapterdan bo'lishi KAFOLATLANMAYDI va buni chaqiruvchi
+        # `source` orqali biladi.
+        primary_ip = local_ip()
+        identity = {
+            "mac": mac_address(),
+            "ip": primary_ip,
+            "source": "fallback",
+            "adapter": "",
+            "ips": _all_addresses(primary_ip),
+        }
+
+    with _identity_lock:
+        _identity_cache.clear()
+        _identity_cache.update(identity)
+    # Barcha manzillar ham LOG'GA tushadi: "panelda boshqa IP
+    # ko'rinyapti" degan savolga javob shu qatordan boshlanadi.
+    log.info(
+        "Mashina: MAC %s / IP %s (%s%s)%s",
+        identity["mac"] or "-",
+        identity["ip"] or "-",
+        identity["source"],
+        ", " + identity["adapter"] if identity.get("adapter") else "",
+        " | barcha manzillar: {}".format(
+            ", ".join("{} ({})".format(ip, name) for name, ip in identity["ips"])
+        )
+        if len(identity["ips"]) > 1
+        else "",
+    )
+    return dict(identity)
+
+
+def _all_addresses(primary_ip: str = "") -> list:
+    """
+    Mashinaning barcha IPv4 manzillari: `[(adapter nomi, ip), ...]`.
+
+    Asosiy manzil BIRINCHI turadi - ro'yxat operatorga ko'rsatiladi
+    va u yerda tartib ma'noli bo'lishi kerak.
+
+    Windows'da manba `winapi_net`, boshqa joyda psutil. Ikkalasi
+    ham bo'lmasa kamida asosiy manzil qaytadi: bo'sh ro'yxat
+    "manzil yo'q" degan noto'g'ri xulosa berardi.
+    """
+    entries: list = []
+    try:
+        from services import winapi_net
+
+        entries = winapi_net.all_ipv4()
+    except Exception:
+        log.debug("WinAPI manzillari o'qilmadi", exc_info=True)
+
+    if not entries:
+        for name, addresses in _interfaces().items():
+            if any(hint in name.lower() for hint in _VIRTUAL_HINTS):
+                continue
+            for item in addresses:
+                if item.family != socket.AF_INET:
+                    continue
+                ip = item.address or ""
+                if ip and not ip.startswith(("127.", "169.254.")):
+                    entries.append((name, ip))
+
+    if not entries and primary_ip:
+        entries = [("", primary_ip)]
+
+    # Asosiy manzil boshiga: `sorted` barqaror, ya'ni qolganlarning
+    # tartibi o'zgarmaydi.
+    if primary_ip:
+        entries.sort(key=lambda item: item[1] != primary_ip)
+    return entries
 
 
 def snapshot(public_ip_timeout: float = 0.0) -> dict:

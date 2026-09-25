@@ -17,6 +17,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 from config import APP_VERSION, DEVICE_ID_FILE, INVENTORY_CODE
 from core.errors import ClientError, DeviceNotRegistered
+from services import system_info
 from services.api_client import ApiClient
 from services.app_state import AppState, DeviceInfo, ExamOption, Staff
 from services.repositories import AuthRepository, DeviceRepository, ProctoringRepository
@@ -153,15 +154,39 @@ class AuthService(QObject):
         log.info("Kirish: %s (%s)", staff.username, staff.role_name or "-")
         return staff
 
-    def handshake(self) -> DeviceInfo:
+    def handshake(self, *, refresh_machine: bool = False) -> DeviceInfo:
         """
         Kompyuter, bino, kameralar va bugungi imtihonlar ro'yxati.
 
         Bu chaqiruv oqimning "kalitini" beradi: usiz qaysi binoda
         turganimizni ham, qaysi imtihonlar ochiqligini ham bilmaymiz.
+
+        MASHINA IDENTIFIKATORI HAM SHU YERDA yuboriladi (MAC, IP) va
+        server uni `Computer.mac_address` bilan solishtiradi. Alohida
+        endpoint qilinmadi: tekshiruv natijasi handshake bergan
+        kontekstga (bino, kompyuter) bog'liq va ikkinchi so'rov ikkala
+        javobning bir-biriga mos kelishini kafolatlay olmasdi -
+        oradagi soniyalarda administrator kompyuterni ko'chirishi
+        mumkin.
+
+        `refresh_machine=True` - MAC/IP keshdan emas, QAYTADAN
+        o'lchanadi. "Yangilash" tugmasi aynan shuni so'raydi:
+        operator tarmoq kabelini almashtirgan yoki adapterni yoqqan
+        bo'lishi mumkin va eski qiymat bilan yangilash hech narsani
+        o'zgartirmasdi.
         """
+        machine = self._machine_identity(refresh=refresh_machine)
+        # Sahifalar shu yerdan o'qiydi (`AppState.machine`): ekranda
+        # ko'rinadigan MAC/IP serverga yuborilgani bilan AYNAN bir xil
+        # bo'lishi kerak, aks holda "panelda boshqa, ekranda boshqa"
+        # degan tushuntirib bo'lmaydigan holat chiqadi.
+        if machine:
+            self._state.machine = dict(machine)
+        hardware = self._hardware_report()
         try:
-            data = self._client_repo.handshake(app_version=APP_VERSION) or {}
+            data = self._client_repo.handshake(
+                app_version=APP_VERSION, hardware=hardware, machine=machine
+            ) or {}
         except DeviceNotRegistered:
             # Server bu `device_id` ni bilmaydi. Sabab odatda serverda:
             # token o'chirilgan (baza tozalangan, qurilma qayta
@@ -178,21 +203,32 @@ class AuthService(QObject):
             log.warning("Saqlangan device_id serverda topilmadi - qayta ro'yxatdan o'tilmoqda")
             self.reset_device()
             self.ensure_device()
-            data = self._client_repo.handshake(app_version=APP_VERSION) or {}
+            data = self._client_repo.handshake(
+                app_version=APP_VERSION, hardware=hardware, machine=machine
+            ) or {}
 
         device_data = data.get("device") or {}
         computer = data.get("computer") or {}
         device = DeviceInfo(
             device_id=device_data.get("device_id") or "",
             status=device_data.get("status") or "unregistered",
+            number=computer.get("number"),
             inventory_code=computer.get("inventory_code", ""),
+            computer_label=computer.get("label", "") or computer.get("inventory_code", ""),
             zone_id=computer.get("zone_id"),
             zone_name=computer.get("zone_name", ""),
             cameras=list(data.get("cameras") or []),
+            machine=dict(data.get("machine") or {}),
         )
         self._state.device = device
         self._state.config = data.get("config") or {}
         self._state.exams = [ExamOption.from_api(item) for item in (data.get("exams") or [])]
+        if not device.machine_allowed:
+            log.warning(
+                "Mashina tekshiruvidan o'tmadi (%s): %s",
+                device.machine.get("status") or "-",
+                device.machine_message,
+            )
         log.info(
             "Handshake: bino=%s kamera=%s imtihon=%s",
             device.zone_name or "-",
@@ -200,6 +236,46 @@ class AuthService(QObject):
             len(self._state.exams),
         )
         return device
+
+    @staticmethod
+    def _machine_identity(*, refresh: bool = False) -> dict:
+        """
+        MAC va IP - bitta adapterdan (`system_info.machine_identity`).
+
+        Xato YUTILADI: manzilni aniqlab bo'lmasa handshake baribir
+        ketadi va server tekshiruvni "noma'lum" deb belgilaydi. Bu
+        yerda to'xtash noto'g'ri bo'lardi - qaror serverda, client
+        esa faqat o'lchaydi.
+        """
+        try:
+            return system_info.machine_identity(refresh=refresh)
+        except Exception:
+            log.warning("Mashina identifikatori aniqlanmadi", exc_info=True)
+            return {}
+
+    @staticmethod
+    def _hardware_report() -> dict:
+        """
+        Apparat xabari (GPU va unumdorlik profili).
+
+        Import KECHIKTIRILGAN va xato YUTILADI: `proctoring/` — AI
+        qatlami va u imtihon oqimining ishlashi uchun shart emas
+        (`proctoring/__init__.py` shartnomasi). Apparat aniqlanmasa
+        handshake apparatsiz ketadi va operator hech narsani
+        sezmaydi; server esa eski qiymatni saqlab qoladi.
+
+        Kutish YO'Q (`timeout=0`): aniqlash dastur ishga tushganda
+        fon thread'ida boshlangan va login formasini to'ldirish
+        vaqtida odatda tugaydi. Tugmagan bo'lsa - keyingi
+        handshake yozadi.
+        """
+        try:
+            from proctoring.hardware import report
+
+            return report()
+        except Exception:
+            log.debug("Apparat xabari tayyorlanmadi", exc_info=True)
+            return {}
 
     # ------------------------------------------------------------------
     def logout(self) -> None:

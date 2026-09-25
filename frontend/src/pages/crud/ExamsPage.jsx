@@ -1,4 +1,4 @@
-import { Chip, Stack, Typography } from '@mui/material'
+import { Chip, Typography } from '@mui/material'
 import ResourcePage from '../../components/data/ResourcePage'
 import { countCell, useExamTypeOptions, useSettingOptions } from './shared'
 import { exams as examsApi } from '../../api/endpoints'
@@ -9,6 +9,8 @@ export default function ExamsPage() {
 
   return (
     <ResourcePage
+      // Barcha viloyatlar uchun bitta yozuv — o'zgartirish respublika darajasida.
+      shared
       title="Imtihonlar"
       subtitle="Tashqi test platformasidagi testlar bilan bog‘lanish"
       queryKey="exams"
@@ -47,28 +49,28 @@ export default function ExamsPage() {
           ),
         },
         {
-          field: 'allowed_domains', headerName: 'Ruxsat etilgan domenlar', flex: 1.2,
-          minWidth: 200, sortable: false,
-          exportValue: (value) => (value || []).join(', '),
-          renderCell: (params) => {
-            const domains = params.value || []
-            if (!domains.length) {
-              return <Typography variant="body2" color="text.disabled">site_url domeni</Typography>
-            }
-            return (
-              <Stack direction="row" spacing={0.5} sx={{ overflow: 'hidden' }}>
-                {/* Kalit indeks bo'yicha: `allowed_domains` — erkin
-                    kiritiladigan ro'yxat va unda takroriy domen bo'lishi
-                    mumkin. Domenning o'zini kalit qilish React'da
-                    "duplicate key" ogohlantirishini beradi va chiplarni
-                    tushirib qoldirishi mumkin. */}
-                {domains.slice(0, 2).map((domain, index) => (
-                  <Chip key={index} size="small" variant="outlined" label={domain} />
-                ))}
-                {domains.length > 2 && <Chip size="small" label={`+${domains.length - 2}`} />}
-              </Stack>
-            )
-          },
+          // Sarlavhaning O'ZI hech qachon serverdan kelmaydi — faqat
+          // niqob (`Authorization: Bear••••••434u`). Ustunning vazifasi
+          // bitta savolga javob berish: shu imtihonda platforma tokeni
+          // sozlanganmi? Sozlanmagan bo'lsa WebView 401 bilan ochiladi
+          // va sabab faqat shu yerdan ko'rinadi.
+          field: 'site_header_masked', headerName: 'Platforma sarlavhasi', flex: 1.2,
+          minWidth: 210, sortable: false,
+          exportValue: (value) => value || 'O‘rnatilmagan',
+          renderCell: (params) => (
+            params.value
+              ? (
+                <Typography
+                  variant="body2"
+                  sx={{ fontFamily: 'monospace', fontSize: 12.5 }}
+                  noWrap
+                  title={params.value}
+                >
+                  {params.value}
+                </Typography>
+              )
+              : <Chip size="small" variant="outlined" color="warning" label="O‘rnatilmagan" />
+          ),
         },
         {
           field: 'sessions_count', headerName: 'Sessiya', width: 105, sortable: false,
@@ -105,27 +107,36 @@ export default function ExamsPage() {
           helperText: 'ntest tizimidagi imtihon identifikatori',
         },
         {
-          name: 'site_url', label: 'Test platformasi URL', required: true,
-          pattern: 'url', maxLength: 500, colSpan: 12, section: 'WebView',
+          name: 'site_url', label: 'Tekshiruv API manzili', required: true,
+          pattern: 'url', maxLength: 500, colSpan: 12, section: 'Test platformasi',
+          // BU MANZILNI SERVER CHAQIRADI, client emas: JSHSHIR
+          // kiritilganda backend shu manzilga `?imie=<jshshir>` bilan
+          // GET yuboradi va javobdagi `test_link` ni oladi. WebView
+          // esa aynan o'sha havolani ochadi — ya'ni bu maydon
+          // "test sahifasi" emas, "tekshiruv endpointi".
+          helperText:
+            'Server shu manzilga ?imie=<JSHSHIR> bilan GET yuboradi. Test sahifasi javobdagi test_link’dan ochiladi',
         },
         {
-          name: 'allowed_domains', label: 'Ruxsat etilgan domenlar (JSON massiv)',
-          type: 'json', colSpan: 12, section: 'WebView', emptyValue: [],
-          helperText:
-            'Masalan: ["ntest.uzbmb.uz"]. Client shu ro‘yxatni WebView allowlist sifatida ishlatadi — ' +
-            'boshqa saytlar bloklanadi. Bo‘sh qoldirilsa site_url domeni olinadi.',
+          name: 'site_header', label: 'Platforma sarlavhasi', type: 'password',
+          maxLength: 4096, colSpan: 12, section: 'Test platformasi',
+          // Server sarlavhani HECH QACHON qaytarmaydi — faqat niqob
+          // (`site_header_masked`). Bo'sh qoldirilsa mavjud qiymat
+          // o'zgarmaydi (`clearable: false`).
+          helperText: (isEdit) =>
+            isEdit
+              ? 'Bo‘sh qoldirilsa — sarlavha o‘zgarmaydi. Namuna: Authorization: Bearer <token>'
+              : 'To‘liq ko‘rinishda: Authorization: Bearer <token>. Shifrlangan saqlanadi va faqat serverda ishlatiladi',
+          clearable: false,
           validate: (value) => {
-            if (!value?.trim()) return null
-            try {
-              const parsed = JSON.parse(value)
-              if (!Array.isArray(parsed)) return 'Massiv bo‘lishi kerak: ["domain.uz"]'
-              if (parsed.some((item) => typeof item !== 'string' || !item.trim())) {
-                return 'Har bir element bo‘sh bo‘lmagan matn bo‘lishi kerak'
-              }
-              return null
-            } catch {
-              return 'JSON formati noto‘g‘ri'
+            const raw = (value || '').trim()
+            if (!raw) return null
+            if (/[\r\n]/.test(raw)) return 'Sarlavha bitta qatordan iborat bo‘lishi kerak'
+            const index = raw.indexOf(':')
+            if (index <= 0 || !raw.slice(index + 1).trim()) {
+              return 'Format: Authorization: Bearer <token>'
             }
+            return null
           },
         },
         {

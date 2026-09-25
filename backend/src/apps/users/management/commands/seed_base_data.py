@@ -30,12 +30,20 @@ ROLE_MATRIX: dict[str, tuple[int, bool, list[str]]] = {
         [
             "dashboard.view", "sessions.view", "sessions.warn", "sessions.terminate",
             "technical.view", "technical.resolve", "devices.view",
+            # Dalilni ko'rish AYNAN proktorga kerak: chetlashtirish
+            # qarorini u chiqaradi va uni asoslash uchun videoni
+            # ko'rishi shart. Kuzatuv siyosatini o'zgartirish huquqi
+            # esa unda YO'Q - u qoidani qo'llaydi, o'zgartirmaydi.
+            "evidence.view", "controls.proctoring_view",
+            # Talabgor "qaysi kompyuterda o'tirishi kerak edi?" —
+            # proktor buni ko'radi, lekin bronni o'zgartirmaydi.
+            "bookings.view",
         ],
     ),
     "Monitoring": (
         3,
         False,
-        ["dashboard.view", "sessions.view", "technical.view", "devices.view"],
+        ["dashboard.view", "sessions.view", "technical.view", "devices.view", "bookings.view"],
     ),
     "Kuzatuvchi": (4, False, ["dashboard.view", "sessions.view"]),
     # Imtihon markazidagi ish o'rni: talabgorni qabul qiladi va uning
@@ -47,6 +55,9 @@ ROLE_MATRIX: dict[str, tuple[int, bool, list[str]]] = {
         [
             "client.operate", "client.identity", "client.exit",
             "sessions.view", "technical.view",
+            # Operator talabgorni stolga YO'NALTIRADI va buning uchun
+            # bron ro'yxatini ko'rishi kerak.
+            "bookings.view",
         ],
     ),
 }
@@ -101,16 +112,77 @@ class Command(BaseCommand):
                 code=code, defaults={"name": name, "severity": severity, "is_active": True}
             )
 
+        # CLIENT'DA ICHKI KATALOG BOR (`client/services/threat_rules.py`)
+        # va u serverdan MUSTAQIL ishlaydi — bu jadval bo'sh bo'lsa ham
+        # AnyDesk, VirtualBox va qolganlari aniqlanadi. Bu yozuvlar ikki
+        # vazifani bajaradi: panelda ro'yxat ko'rinib tursin (aks holda
+        # administrator "aniqlash sozlanmagan" deb o'ylardi) va yangi
+        # dastur qo'shish FORMATI namuna bilan ko'rsatilsin.
+        #
+        # Shuning uchun ular faqat jarayon nomi bilan emas, ichki
+        # katalogdagi kabi QAYTA NOMLASHGA CHIDAMLI belgilar bilan
+        # yoziladi: nom bo'yicha qidiruv `AnyDesk.exe` ni `note.exe`
+        # deb nomlash bilan bekor bo'ladi.
         rdp_defaults = [
-            ("AnyDesk", "anydesk", ["AnyDesk.exe"]),
-            ("TeamViewer", "teamviewer", ["TeamViewer.exe", "TeamViewer_Service.exe"]),
-            ("RustDesk", "rustdesk", ["rustdesk.exe"]),
-            ("Chrome Remote Desktop", "crd", ["remoting_host.exe"]),
-            ("RDP", "mstsc", ["mstsc.exe"]),
+            {
+                "code": "anydesk", "name": "AnyDesk", "category": "remote",
+                "process_names": ["AnyDesk.exe"],
+                "publishers": ["AnyDesk Software GmbH"],
+                "original_filenames": ["AnyDesk.exe"],
+                "service_names": ["AnyDesk"], "ports": [7070],
+            },
+            {
+                "code": "teamviewer", "name": "TeamViewer", "category": "remote",
+                "process_names": ["TeamViewer.exe", "TeamViewer_Service.exe"],
+                "publishers": ["TeamViewer"],
+                "original_filenames": ["TeamViewer.exe", "TeamViewer_Service.exe"],
+                "service_names": ["TeamViewer"], "ports": [5938],
+            },
+            {
+                "code": "rustdesk", "name": "RustDesk", "category": "remote",
+                "process_names": ["rustdesk.exe"],
+                # Imzo egasi dastur nomiga o'xshamaydi — aynan shu
+                # sababdan uni faqat nom bo'yicha qidirish yaramaydi.
+                "publishers": ["Purslane Ltd"],
+                "original_filenames": ["rustdesk.exe"],
+                "service_names": ["RustDesk"],
+                "ports": [21115, 21116, 21117, 21118, 21119],
+            },
+            {
+                "code": "crd", "name": "Chrome Remote Desktop", "category": "remote",
+                "process_names": ["remoting_host.exe"],
+                # "Google LLC" imzosi ATAYLAB yo'q: u Chrome'ning
+                # o'zini ham tutardi.
+                "original_filenames": [
+                    "remoting_host.exe", "remote_assistance_host.exe",
+                ],
+                "products": ["Chrome Remote Desktop"],
+                "service_names": ["chromoting"],
+            },
+            {
+                "code": "mstsc", "name": "Remote Desktop Connection", "category": "remote",
+                "process_names": ["mstsc.exe"],
+                "original_filenames": ["mstsc.exe"],
+                "products": ["Remote Desktop Connection"],
+            },
+            {
+                "code": "virtualbox", "name": "Oracle VirtualBox", "category": "vm",
+                "process_names": ["VirtualBox.exe", "VBoxSVC.exe"],
+                "publishers": ["innotek GmbH"],
+                "original_filenames": ["VirtualBox.exe", "VBoxSVC.exe"],
+                "products": ["VirtualBox"], "service_names": ["VBoxSDS"],
+            },
+            {
+                "code": "vmware", "name": "VMware Workstation", "category": "vm",
+                "process_names": ["vmware.exe", "vmware-vmx.exe"],
+                "publishers": ["VMware, Inc."],
+                "original_filenames": ["vmware.exe", "vmware-vmx.exe"],
+                "service_names": ["VMwareHostd"],
+            },
         ]
-        for name, code, processes in rdp_defaults:
+        for entry in rdp_defaults:
             RdpObject.objects.update_or_create(
-                code=code, defaults={"name": name, "process_names": processes, "is_active": True}
+                code=entry.pop("code"), defaults={**entry, "is_active": True}
             )
 
         hotkey_defaults = [
@@ -192,11 +264,17 @@ class Command(BaseCommand):
                 Q(inventory_code=code)
                 | Q(mac_address=mac_address)
                 | Q(zone=zone, ip_address=ip_address)
+                # To'rtinchi shartli cheklov: raqam bino ichida
+                # unikal. Demo ikki marta ishga tushirilsa, o'sha
+                # raqam bilan ikkinchi qator tranzaksiyani
+                # bekor qilardi.
+                | Q(zone=zone, number=index)
             )
             if taken.exists():
                 continue
             Computer.objects.create(
                 zone=zone,
+                number=index,
                 inventory_code=code,
                 ip_address=ip_address,
                 mac_address=mac_address,
@@ -214,7 +292,6 @@ class Command(BaseCommand):
                 "key": "demo", "external_code": "demo-2026",
                 "exam_type": exam_type,
                 "site_url": "https://ntest.uzbmb.uz/login",
-                "allowed_domains": ["ntest.uzbmb.uz"],
                 "is_active": True,
             },
         )

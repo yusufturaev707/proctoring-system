@@ -41,6 +41,7 @@ export const sessions = {
   screenshots: (id, params) => api.get(`/sessions/${id}/screenshots/`, { params }).then((r) => r.data),
   storedScreenshots: (id, params) =>
     api.get(`/sessions/${id}/stored-screenshots/`, { params }).then((r) => r.data),
+  evidence: (id, params) => api.get(`/sessions/${id}/evidence/`, { params }).then((r) => r.data),
   warn: (id, payload) => api.post(`/sessions/${id}/warn/`, payload).then((r) => r.data),
   terminate: (id, payload) => api.post(`/sessions/${id}/terminate/`, payload).then((r) => r.data),
 }
@@ -68,6 +69,55 @@ export const screenshotFile = {
   },
 }
 
+/**
+ * Dalil fayli (kadr yoki klip) — blob sifatida.
+ *
+ * `screenshotFile` bilan bir xil sabab: brauzer `<img>`/`<video>`
+ * so'roviga `Authorization` sarlavhasini qo'shmaydi, tokenni URL'ga
+ * qo'yish esa uni brauzer tarixiga va nginx access log'iga chiqaradi.
+ *
+ * Baytlarni baribir nginx uzatadi (Django faqat `X-Accel-Redirect`
+ * qaytaradi) — bu yerda o'zgaradigan narsa faqat autentifikatsiya.
+ *
+ * MUHIM: chaqiruvchi `URL.revokeObjectURL(url)` qilishi SHART. Klip
+ * ~2 MB va bir necha o'nlab dalilni ko'rgan proktorning brauzeri
+ * usiz yuzlab megabaytni ushlab qolardi.
+ */
+export const evidenceFile = {
+  objectUrl: async (id) => {
+    const response = await api.get(`/evidence/${id}/file/`, { responseType: 'blob' })
+    return URL.createObjectURL(response.data)
+  },
+}
+
+/**
+ * FaceID kadri (kirishdagi yoki test davomidagi) — blob sifatida.
+ *
+ * `evidenceFile` bilan bir xil sabab: `<img>` so'roviga brauzer
+ * `Authorization` sarlavhasini qo'shmaydi.
+ *
+ * TALAB BO'YICHA yuklanadi, ro'yxat bilan birga EMAS: har ochish
+ * serverda audit yozuvi qoldiradi (`evidence_view`) va 100 ta
+ * kichkina rasmni avtomatik yuklash jurnalni foydasiz qilardi.
+ *
+ * MUHIM: chaqiruvchi `URL.revokeObjectURL(url)` qilishi SHART.
+ */
+export const faceLogFile = {
+  /**
+   * `kind`: 'live' — kameradagi kadr, 'reference' — hujjat rasmi.
+   *
+   * Ikkinchisi FAQAT kirish tekshiruvida bo'ladi: test davomida
+   * etalon pasport rasmi emas, kirishda tasdiqlangan kadr.
+   */
+  objectUrl: async (id, kind = 'live') => {
+    const response = await api.get(`/face-logs/${id}/file/`, {
+      params: kind === 'reference' ? { kind } : undefined,
+      responseType: 'blob',
+    })
+    return URL.createObjectURL(response.data)
+  },
+}
+
 export const technicalProblems = {
   ...crud('/technical-problems/'),
   resolve: (id, payload) => api.post(`/technical-problems/${id}/resolve/`, payload).then((r) => r.data),
@@ -83,16 +133,39 @@ export const permissions = { list: list('/permissions/') }
 export const regions = crud('/regions/')
 export const zones = crud('/zones/')
 export const computers = crud('/computers/')
-export const cameras = crud('/cameras/')
+export const cameras = {
+  ...crud('/cameras/'),
+  /** Kamerani HOZIR tekshiradi (RTSP) va yangi holatni qaytaradi. */
+  check: (id) => api.post(`/cameras/${id}/check/`).then((r) => r.data),
+}
 export const examTypes = crud('/exam-types/')
 export const exams = crud('/exams/')
 export const examSchedules = crud('/exam-schedules/')
+
+/**
+ * Kompyuter bronlari — test sessiyasida kim qaysi kompyuterda o'tiradi.
+ *
+ * Biriktirish PATCH EMAS, alohida amal (`assign`): server band joy,
+ * buzilgan kompyuter va sessiya doirasini tekshiradi va auditga
+ * yozadi. `assign` talabgorning eski joyini o'zi bo'shatadi (ko'chirish).
+ */
+export const computerBookings = {
+  ...crud('/computer-bookings/'),
+  stats: (params) => api.get('/computer-bookings/stats/', { params }).then((r) => r.data),
+  generate: (payload) => api.post('/computer-bookings/generate/', payload).then((r) => r.data),
+  assign: (payload) => api.post('/computer-bookings/assign/', payload).then((r) => r.data),
+  release: (id) => api.post(`/computer-bookings/${id}/release/`).then((r) => r.data),
+  // Joylar xaritasi: binolar ("vagonlar") va bitta binoning o'rindiqlari.
+  zones: (params) => api.get('/computer-bookings/zones/', { params }).then((r) => r.data),
+  seats: (params) => api.get('/computer-bookings/seats/', { params }).then((r) => r.data),
+}
 export const auditLogs = { list: list('/audit-logs/') }
 
 export const deviceTokens = {
   ...crud('/device-tokens/'),
   approve: (id) => api.post(`/device-tokens/${id}/approve/`).then((r) => r.data),
   revoke: (id, reason) => api.post(`/device-tokens/${id}/revoke/`, { reason }).then((r) => r.data),
+  stats: () => api.get('/device-tokens/stats/').then((r) => r.data),
 }
 
 export const settings = {
@@ -105,6 +178,8 @@ export const settings = {
 }
 
 export const allowedIps = crud('/allowed-ips/')
+export const proctoringPolicies = crud('/proctoring-policies/')
+export const riskWeights = crud('/risk-weights/')
 export const exitPasswords = crud('/exit-passwords/')
 export const cocoGroups = crud('/coco-groups/')
 export const cocoObjects = crud('/coco-objects/')

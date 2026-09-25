@@ -15,11 +15,53 @@ logger = logging.getLogger(__name__)
 # Domen xatolari
 # --------------------------------------------------------------------------
 class DomainError(APIException):
-    """Biznes-qoida buzilishi. `code` React tomonda tarjima kaliti bo'ladi."""
+    """
+    Biznes-qoida buzilishi. `code` React tomonda tarjima kaliti bo'ladi.
+
+    `extra` — javobning `error.details` qismiga tushadigan TUZILGAN
+    ma'lumot. Matn odam uchun, `extra` esa dastur uchun: masalan
+    "talabgor boshqa kompyuterga biriktirilgan" xatosida client
+    qaysi kompyuterga borish kerakligini matndan ajratib olmaydi —
+    raqam, bino va viloyat alohida maydonlarda keladi.
+    """
 
     status_code = status.HTTP_400_BAD_REQUEST
     default_detail = "So'rovni bajarib bo'lmadi"
     default_code = "domain_error"
+
+    def __init__(self, detail=None, code=None, *, extra: dict | None = None):
+        super().__init__(detail, code)
+        self.extra = extra
+
+
+class CameraStreamUnavailable(DomainError):
+    """Kamera oqimidan kadr olib bo'lmadi (paneldagi jonli ko'rish)."""
+
+    status_code = status.HTTP_502_BAD_GATEWAY
+    default_detail = "Kamera oqimidan kadr olib bo'lmadi"
+    default_code = "camera_stream_unavailable"
+
+
+class CameraViewerUnavailable(DomainError):
+    """Serverda dekoder (OpenCV) yo'q - jonli ko'rish o'rnatilmagan."""
+
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    default_detail = "Serverda OpenCV o'rnatilmagan (opencv-python-headless)"
+    default_code = "camera_viewer_unavailable"
+
+
+class CameraViewerBusy(DomainError):
+    """Shu jarayonda jonli ko'rishlar chegarasi to'lgan."""
+
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    default_detail = "Hozir juda ko'p jonli ko'rish ochiq - biroz kuting"
+    default_code = "camera_viewer_busy"
+
+
+class CameraInactive(DomainError):
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = "Kamera faol emas yoki o'chirilgan"
+    default_code = "camera_inactive"
 
 
 class SessionNotFound(DomainError):
@@ -140,6 +182,23 @@ class ExternalPlatformUnavailable(DomainError):
     default_code = "external_platform_unavailable"
 
 
+class CandidateNotFound(DomainError):
+    """
+    Tashqi platforma talabgorni UMUMAN topmadi (`status != 1`).
+
+    `CandidateNotEligible` dan ATAYLAB ajratilgan va bu operator
+    uchun ikki boshqa harakat: bu yerda JSHSHIR xato kiritilgan
+    bo'lishi mumkin (raqamni tekshirish kerak), u yerda esa raqam
+    to'g'ri va sabab platformada (ro'yxatda yo'q, imtihon kuni
+    emas). Bitta xato kodi bilan operator qaysi biri ekanini
+    bilmasdi.
+    """
+
+    status_code = status.HTTP_404_NOT_FOUND
+    default_detail = "Talabgor test platformasida topilmadi"
+    default_code = "candidate_not_found"
+
+
 class CandidateNotEligible(DomainError):
     status_code = status.HTTP_403_FORBIDDEN
     default_detail = "Talabgorda ushbu imtihonga ruxsat yo'q"
@@ -158,6 +217,70 @@ class ExamNotOpen(DomainError):
     status_code = status.HTTP_403_FORBIDDEN
     default_detail = "Imtihonga kirish oynasi hozir ochiq emas"
     default_code = "exam_not_open"
+
+
+class SeatNotBooked(DomainError):
+    """
+    Test sessiyasida bron YURITILADI, lekin talabgor hech qaysi
+    kompyuterga biriktirilmagan.
+
+    Tashqi platformaga so'rov KETMAYDI: joyi yo'q talabgor bu binoda
+    imtihon topshira olmaydi va uning ma'lumotini so'rash kerak emas.
+    """
+
+    status_code = status.HTTP_403_FORBIDDEN
+    default_detail = "Talabgor bu test sessiyasida hech qaysi kompyuterga biriktirilmagan"
+    default_code = "seat_not_booked"
+
+
+class WrongComputer(DomainError):
+    """
+    Talabgor BOSHQA kompyuterga biriktirilgan.
+
+    `extra.seat` — u borishi kerak bo'lgan joy (raqam, bino, viloyat),
+    `extra.current` — hozirgi mashina. Client ikkalasini yonma-yon
+    ko'rsatadi: operator talabgorni to'g'ri stolga yo'naltiradi.
+    """
+
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = "Talabgor boshqa kompyuterga biriktirilgan"
+    default_code = "wrong_computer"
+
+
+class SeatOutOfService(DomainError):
+    """Talabgorning kompyuteri shu sessiyada BUZILGAN deb belgilangan."""
+
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = (
+        "Talabgorga biriktirilgan kompyuter buzilgan deb belgilangan — "
+        "administrator uni boshqa kompyuterga ko'chirishi kerak"
+    )
+    default_code = "seat_out_of_service"
+
+
+class SeatUnavailable(DomainError):
+    """Panel/API: tanlangan joy band, buzilgan yoki sessiya doirasida emas."""
+
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = "Bu kompyuterga biriktirib bo'lmaydi"
+    default_code = "seat_unavailable"
+
+
+class SeatInUse(DomainError):
+    """
+    Talabgor shu joyda IMTIHONDA — bronni bo'shatib ham, ko'chirib ham bo'lmaydi.
+
+    Yo'l ikkita va ikkalasi ham sessiya orqali: talabgor «Yakunlash» ni
+    bosadi yoki administrator uni CHETLASHTIRADI — ikkalasida joy o'zi
+    bo'shaydi (`bookings.release_after_session`).
+    """
+
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = (
+        "Talabgor hozir imtihonda — joyni bo'shatib bo'lmaydi. "
+        "Avval sessiyani chetlashtiring."
+    )
+    default_code = "seat_in_use"
 
 
 class ScreenshotRejected(DomainError):
@@ -224,6 +347,7 @@ CONSTRAINT_MESSAGES = {
     "unique_zone_region_number": "Bu viloyatda shunday raqamli bino allaqachon mavjud",
     "unique_computer_zone_ip": "Bu binoda shunday IP manzilli kompyuter allaqachon mavjud",
     "unique_computer_inventory_code": "Bunday inventar kodi allaqachon ishlatilgan",
+    "unique_computer_zone_number": "Bu binoda shu raqamli kompyuter allaqachon bor",
     "unique_computer_mac": "Bunday MAC manzilli kompyuter allaqachon ro'yxatdan o'tgan",
     "unique_camera_mac": "Bunday MAC manzilli kamera allaqachon ro'yxatdan o'tgan",
     "unique_exam_name": "Bunday nomli imtihon allaqachon mavjud",
@@ -295,7 +419,7 @@ def api_exception_handler(exc, context):
 
     if isinstance(detail, dict) and "detail" in detail:
         message = str(detail["detail"])
-        details = None
+        details = getattr(exc, "extra", None)
         code = getattr(detail["detail"], "code", code)
     else:
         details = _flatten(detail)

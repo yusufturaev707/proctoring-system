@@ -22,6 +22,14 @@ from PyQt6.QtWidgets import QWidget
 
 from ui.styles import COLORS
 
+#: Karta tepasidagi logotip balandligi — OYNA balandligining ulushi,
+#: shu chegaralar ichida. Qat'iy piksel emas: 1366x768 da 100 px
+#: logotip kartani ekrandan pastga surib yuborardi, 4K da esa 60 px
+#: nuqtaga aylanardi. 768 px oynada ~75 px, 1080 px da ~100 px.
+_LOGO_RATIO = 0.095
+_LOGO_MIN = 56
+_LOGO_MAX = 112
+
 
 class _Particle:
     """Fon animatsiyasi uchun zarracha (referens loyihadagi yondashuv)."""
@@ -58,6 +66,29 @@ class BrandBackdrop(QWidget):
         self._backdrop_timer = QTimer(self)
         self._backdrop_timer.timeout.connect(self._tick)
         self._backdrop_timer.start(33)
+
+    def make_logo(self):
+        """
+        Karta tepasidagi logotip — OQ rangda.
+
+        Fon to'q yashil gradient va asl (to'q yashil) logotip unda
+        ko'rinmay qolardi. Bir rangli oq belgi ikkala sahifada (tarmoq
+        tekshiruvi va login) bir xil joyda turadi: ular ketma-ket
+        ochiladi va logotip "sakrasa" operator ekran almashganini
+        sezib qolardi.
+        """
+        from ui.widgets.brand import BrandLogo
+
+        self._logo = BrandLogo(_LOGO_MIN, tint="#FFFFFF")
+        return self._logo
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        logo = getattr(self, "_logo", None)
+        if logo is not None:
+            logo.set_logo_height(
+                max(_LOGO_MIN, min(_LOGO_MAX, int(self.height() * _LOGO_RATIO)))
+            )
 
     def _tick(self) -> None:
         # Ko'rinmayotgan sahifani qayta chizish - bekorga sarflangan CPU.

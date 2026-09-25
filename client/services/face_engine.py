@@ -28,6 +28,7 @@ from config import (
     FACE_MATCH_THRESHOLD,
     FACE_MODEL_NAME,
     FACE_MODEL_ROOT,
+    FACE_REQUIRE_GPU,
 )
 from core.bundle_paths import is_frozen
 from core.singleton import SingletonMeta
@@ -35,17 +36,43 @@ from core.singleton import SingletonMeta
 log = logging.getLogger(__name__)
 
 
-def cosine_to_percent(similarity: float) -> int:
+def similarity_score(similarity: float) -> int:
     """
-    Cosine similarity [-1..1] -> foiz [0..100].
+    Cosine similarity -> ball [0..100]: `max(0, cos) * 100`.
 
-    Backend `score` ni 0..100 oralig'ida kutadi (`FaceVerifySerializer`).
-    Manfiy o'xshashlik "umuman boshqa odam" degani, shuning uchun 0 ga
-    siqiladi. sqrt (gamma 0.5) - past qiymatlarni cho'zib, operatorga
-    farqni ko'rsatish uchun; chegara baribir cosine ustida tekshiriladi.
+    FORMULA SERVERNIKI BILAN AYNAN BIR XIL
+    (`apps/common/utils/vectors.py:similarity_score`) va bu majburiy:
+    chegara serverdan keladi (`Setting.faceid_min_score_student` /
+    `faceid_min_score_exam`), solishtirishni esa client bajaradi.
+    Ikki xil shkala bo'lsa, bitta chegara ikki joyda ikki xil
+    ma'noni anglatardi va farqni faqat log'dan topish mumkin bo'lardi.
+
+    MANFIY COSINE 0 GA SIQILADI: manfiy o'xshashlik "boshqa odam"
+    degan xulosadan nariga hech narsa qo'shmaydi. Shu tufayli ball
+    "necha foiz o'xshash" degan savolga to'g'ridan-to'g'ri javob
+    beradi — 0 umuman o'xshamaydi, 100 aynan o'sha kadr.
+
+    Ikki marta o'zgargan: `sqrt(cos)*100` (faqat ekran uchun edi) ->
+    `(cos+1)/2*100` (butunlay boshqa odamga 50 ball berardi va
+    panelda "yarmi o'xshash" bo'lib ko'rinardi) -> hozirgisi.
     """
     value = max(0.0, min(1.0, float(similarity or 0.0)))
-    return int(round((value ** 0.5) * 100))
+    return max(0, min(100, int(round(value * 100))))
+
+
+def score_to_cosine(score) -> float:
+    """
+    Ball [0..100] -> cosine [0..1]. `similarity_score` ning teskarisi.
+
+    AI qatlamiga kerak: `behavior_analyzer` xom cosine bilan ishlaydi
+    (har kadrda ball hisoblash bekorga yumaloqlash bo'lardi), chegara
+    esa serverdan ball ko'rinishida keladi.
+    """
+    try:
+        value = max(0.0, min(100.0, float(score)))
+    except (TypeError, ValueError):
+        return float(FACE_MATCH_THRESHOLD)
+    return value / 100.0
 
 
 class FaceEngineLoader(QThread):
@@ -62,14 +89,24 @@ class FaceEngineLoader(QThread):
 
     def run(self) -> None:
         try:
+            from proctoring.hardware import cuda_runtime
+
             engine = FaceEngine()
             requested = engine.providers()
             expected = "GPU (CUDA)" if "CUDAExecutionProvider" in requested else "CPU"
             self.progress.emit("Model yuklanmoqda ({})...".format(expected))
             engine.initialize()
-            # Xabar HAQIQIY qurilmani aytadi: CUDA so'ralib, sessiya
-            # CPU'da ochilgan bo'lishi mumkin.
-            self.finished_loading.emit(True, "Model tayyor - {}".format(engine.device_name))
+
+            # XABAR NOSOZLIKNI YASHIRMAYDI. Mashinada karta bor,
+            # lekin model CPU'da yuklangan bo'lsa, "Model tayyor -
+            # CPU" degan qator hech qanday savol tug'dirmasdi va
+            # operator kuzatuvning bir necha barobar sekin
+            # ishlayotganini hech qachon bilmasdi.
+            message = "Model tayyor - {}".format(engine.device_name)
+            cuda = cuda_runtime.prepare()
+            if not engine.uses_gpu and cuda.listed:
+                message += " (GPU ishlatilmadi)"
+            self.finished_loading.emit(True, message)
         except Exception as exc:
             log.exception("FaceEngine yuklashda xato")
             self.finished_loading.emit(False, "Model yuklanmadi: {}".format(str(exc)[:120]))
@@ -89,7 +126,6 @@ class FaceEngine(metaclass=SingletonMeta):
         self._use_gpu = False
         #: `prepare()` dan keyin sessiya HAQIQATDA ishlatayotgan provayderlar.
         self._active_providers: list = []
-        self._threshold = float(FACE_MATCH_THRESHOLD)
 
     # ------------------------------------------------------------------
     @property
@@ -97,14 +133,9 @@ class FaceEngine(metaclass=SingletonMeta):
         return self._initialized
 
     @property
-    def threshold(self) -> float:
-        return self._threshold
-
-    def set_threshold(self, value: float) -> None:
-        try:
-            self._threshold = max(0.0, min(1.0, float(value)))
-        except (TypeError, ValueError):
-            pass
+    def uses_gpu(self) -> bool:
+        """Sessiya HAQIQATDA GPU'da ishlayaptimi (so'ralgani emas)."""
+        return self._initialized and self._use_gpu
 
     @property
     def device_name(self) -> str:
@@ -119,22 +150,23 @@ class FaceEngine(metaclass=SingletonMeta):
     @staticmethod
     def providers() -> list:
         """
-        ONNX Runtime provayderlari.
+        ONNX Runtime provayderlari — CUDA faqat HAQIQATDA ishlasa.
 
-        `CUDAExecutionProvider` ro'yxatda bo'lishi u ISHLASHINI anglatmaydi
-        (CUDA DLL'lari yetishmasligi mumkin), lekin bu holatda
-        InsightFace o'zi CPU'ga tushadi - shuning uchun ro'yxatga qo'shamiz.
+        Ilgari bu yerda `ort.get_available_providers()` ro'yxatida
+        `CUDAExecutionProvider` borligi yetarli deb hisoblanardi va
+        izohda "bu holatda InsightFace o'zi CPU'ga tushadi" deb
+        yozilgandi. U tushardi ham — LEKIN JIMGINA: log'da bitta
+        qator qolar, ekranda esa "Model tayyor" ko'rinardi va
+        mashinada GPU borligi hech qanday farq qilmasdi.
+
+        Endi ro'yxatni `cuda_runtime` beradi: u CUDA kutubxonalarini
+        oldindan yuklaydi (ular `pip` paketlari ichida yotadi va
+        Windows ularni o'z-o'zidan topmaydi) va topilmasa AYNAN
+        qaysi fayl yetishmayotganini aytadi.
         """
-        try:
-            import onnxruntime as ort
+        from proctoring.hardware import cuda_runtime
 
-            available = ort.get_available_providers()
-            log.info("ONNX provayderlari: %s", available)
-            if "CUDAExecutionProvider" in available:
-                return ["CUDAExecutionProvider", "CPUExecutionProvider"]
-        except Exception:
-            log.warning("onnxruntime provayderlarini o'qib bo'lmadi", exc_info=True)
-        return ["CPUExecutionProvider"]
+        return cuda_runtime.providers()
 
     def initialize(self) -> None:
         """Modelni yuklaydi. FAQAT fon thread'idan chaqiriladi."""
@@ -142,9 +174,32 @@ class FaceEngine(metaclass=SingletonMeta):
             return
         from insightface.app import FaceAnalysis
 
+        from proctoring.hardware import cuda_runtime
+
+        cuda = cuda_runtime.prepare()
         providers = self.providers()
         self._use_gpu = "CUDAExecutionProvider" in providers
+        # `ctx_id` InsightFace'ga qaysi qurilmani ishlatishni aytadi
+        # (-1 = CPU). Uni provayderlar ro'yxatidan MUSTAQIL qo'yish
+        # mumkin emas: CPU provayderi bilan `ctx_id=0` model
+        # tayyorlashda GPU'ni qidiradi va xato beradi.
         ctx_id = 0 if self._use_gpu else -1
+
+        if not self._use_gpu and cuda.listed:
+            # GPU UCHUN YIG'ILGAN PAKET, LEKIN ISHLAMADI. Bu eng
+            # chalkash holat: administrator `onnxruntime-gpu` ni
+            # o'rnatgan va hammasi joyida deb hisoblaydi.
+            log.error("GPU ishlatilmaydi. %s", cuda.reason)
+        if not self._use_gpu and FACE_REQUIRE_GPU:
+            # QAT'IY REJIM ixtiyoriy va standart bo'yicha O'CHIRIQ:
+            # CPU'da kuzatuv sekin, lekin ishlaydi va butun imtihonni
+            # to'xtatish bundan battar. Yoqilgan bo'lsa - xato
+            # yuqoriga chiqadi va ekranda "Model yuklanmadi" bo'lib
+            # ko'rinadi (`FaceEngineLoader`).
+            raise RuntimeError(
+                "GPU talab qilingan (FACE_REQUIRE_GPU), lekin ishlatib "
+                "bo'lmadi. {}".format(cuda.reason)
+            )
 
         bundled = FACE_MODEL_ROOT / "models" / FACE_MODEL_NAME
         if not bundled.exists():
@@ -282,6 +337,16 @@ class FaceEngine(metaclass=SingletonMeta):
             return 0.0
         return float(np.dot(left, right))
 
-    def matches(self, reference: np.ndarray, probe: np.ndarray) -> tuple[bool, float]:
-        score = self.similarity(reference, probe)
-        return score >= self._threshold, score
+    @classmethod
+    def compare(cls, reference: np.ndarray, probe: np.ndarray) -> int:
+        """
+        Ikkita embedding -> BALL (0..100).
+
+        CHEGARA BU YERDA YO'Q va bo'lmasligi ham kerak: u imtihonga
+        biriktirilgan sozlamadan keladi va kirish bilan test davomidagi
+        qiymatlar boshqacha bo'lishi mumkin
+        (`min_score_initial` / `min_score_exam`). Dvigatel ichida
+        saqlangan chegara ikkalasidan ham "g'olib" chiqib, jimgina
+        noto'g'ri qaror berardi.
+        """
+        return similarity_score(cls.similarity(reference, probe))

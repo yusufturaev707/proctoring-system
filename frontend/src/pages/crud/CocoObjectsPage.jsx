@@ -28,7 +28,9 @@ export default function CocoObjectsPage() {
 
   return (
     <ResourcePage
-      title="COCO obyektlar"
+      // Barcha viloyatlar uchun bitta yozuv — o'zgartirish respublika darajasida.
+      shared
+      title="Taqiqlangan obyektlar"
       subtitle="Kadrda aniqlanadigan taqiqlangan obyektlar"
       queryKey="coco-objects"
       api={cocoObjectsApi}

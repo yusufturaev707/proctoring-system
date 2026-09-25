@@ -11,6 +11,9 @@ const DEFAULTS = {
   mode: 'system',      // 'light' | 'dark' | 'system'
   density: 'comfortable',
   reduceMotion: false,
+  // Yon panel yig'ilgan (faqat ikonkalar). Keng ekranda ham foydali:
+  // jonli kuzatuv va jadval sahifalari ~190 px qo'shimcha joy oladi.
+  sidebarCollapsed: false,
 }
 
 function loadPreferences() {
@@ -21,6 +24,7 @@ function loadPreferences() {
       mode: ['light', 'dark', 'system'].includes(raw.mode) ? raw.mode : DEFAULTS.mode,
       density: ['comfortable', 'compact'].includes(raw.density) ? raw.density : DEFAULTS.density,
       reduceMotion: Boolean(raw.reduceMotion),
+      sidebarCollapsed: Boolean(raw.sidebarCollapsed),
     }
   } catch {
     return { ...DEFAULTS }

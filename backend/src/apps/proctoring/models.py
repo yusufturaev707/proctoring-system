@@ -21,6 +21,57 @@ from django.utils.translation import gettext_lazy as _
 from apps.common.models import PublicIDModel, TimeStampedModel
 
 
+class ProctoringState(models.TextChoices):
+    """
+    AI kuzatuvining hayot sikli - `ExamSession.status` dan MUSTAQIL.
+
+    Modul darajasida (sinf ichida emas), chunki uni uch joy o'qiydi:
+    model, client API va serverdagi tekshiruvlar. Sinf ichida bo'lsa,
+    ularning har biri `ExamSession` ni import qilishga majbur bo'lardi -
+    holbuki ular faqat holat nomlarini bilishi kerak.
+
+    O'tishlar:
+
+        idle -> camera_check -> ready -> starting -> active
+                     |                                 |
+                     v                        degraded / paused
+                  failed                               |
+                                            finishing -> completed
+
+    `degraded` - kuzatuv ISHLAYAPTI, lekin to'liq emas (bitta kamera
+    yo'q, GPU CPU'ga tushdi, FPS past). Bu holat ATAYLAB imtihonni
+    to'xtatmaydi: aks holda har bir texnik nosozlik aybsiz talabgorning
+    imtihonini buzardi. Qaror siyosatda (`camera_lost_action`).
+    """
+
+    IDLE = "idle", _("Boshlanmagan")
+    CAMERA_CHECK = "camera_check", _("Kamera tekshiruvida")
+    READY = "ready", _("Tayyor")
+    STARTING = "starting", _("Ishga tushmoqda")
+    ACTIVE = "active", _("Faol")
+    DEGRADED = "degraded", _("Cheklangan rejim")
+    PAUSED = "paused", _("To'xtatib turilgan")
+    FINISHING = "finishing", _("Yakunlanmoqda")
+    COMPLETED = "completed", _("Yakunlangan")
+    FAILED = "failed", _("Muvaffaqiyatsiz")
+
+
+#: Kuzatuv HAQIQATDA ishlab turgan holatlar.
+#
+# Ro'yxat shu yerda, chunki uni uch joy o'qiydi: dalil qabul qilish
+# (`evidence/upload/` faqat shu holatlarda ishlaydi), diagnostika va
+# yakunlash vazifasi. Uchta joyda takrorlansa, ular albatta ajralib
+# ketadi - va o'shanda dalil jimgina rad etila boshlaydi.
+PROCTORING_RUNNING_STATES = frozenset(
+    {
+        ProctoringState.ACTIVE,
+        ProctoringState.DEGRADED,
+        ProctoringState.PAUSED,
+        ProctoringState.FINISHING,
+    }
+)
+
+
 class ExamSession(PublicIDModel):
     """
     Imtihon sessiyasi — tizimning markaziy obyekti.
@@ -77,16 +128,22 @@ class ExamSession(PublicIDModel):
 
     # --- Tashqi platformadagi sessiya ---
     #
-    # `external_session_token` — AYNAN SHU token WebView'ni ochadi. U
-    # tashqi platformaniki va bizning `token_hash` (proktorlik sessiyasi)
-    # bilan hech qanday aloqasi yo'q: boshqa tizim, boshqa domen, boshqa
-    # hayot sikli. Ikkalasi bir-birini almashtira olmaydi.
+    # `external_test_link` — AYNAN SHU havola WebView'ni ochadi
+    # (`data.test_link`). Token uning ICHIDA va uni platformaning
+    # o'zi shunday beradi; bizning `token_hash` (proktorlik
+    # sessiyasi) bilan hech qanday aloqasi yo'q: boshqa tizim,
+    # boshqa domen, boshqa hayot sikli.
     #
-    # Shifrlangan saqlanadi: bu tirik kredensial, uni deshifrlash faqat
-    # `exam/access/` javobini yig'ishda bir marta kerak bo'ladi. JSHSHIR
-    # dan farqli o'laroq bu maydon bo'yicha qidiruv ham, saralash ham
+    # Shifrlangan saqlanadi: bu tirik kredensial, uni deshifrlash
+    # faqat `exam/access/` javobini yig'ishda bir marta kerak
+    # bo'ladi. Bu maydon bo'yicha qidiruv ham, saralash ham
     # qilinmaydi, ya'ni shifrlash hech nimani qiyinlashtirmaydi.
-    external_session_token_enc = models.TextField(blank=True, default="")
+    #
+    # NIMA UCHUN SESSIYAGA MUZLATILADI: havola JSHSHIR tekshiruvida
+    # bir marta olinadi (FaceID'dan OLDIN) va WebView ochilguncha
+    # bir necha daqiqa o'tadi. Uni qayta so'rash platformada yangi
+    # havola yaratib, eskisini bekor qilishi mumkin.
+    external_test_link_enc = models.TextField(blank=True, default="")
     external_status = models.CharField(
         _("Tashqi platformadagi status"), max_length=32, blank=True, default=""
     )
@@ -144,6 +201,38 @@ class ExamSession(PublicIDModel):
     screenshot_count = models.PositiveIntegerField(default=0)
     #: 0–100. Hodisalar jiddiyligidan hisoblanadi, proktorni tartiblash uchun.
     risk_score = models.PositiveSmallIntegerField(default=0, db_index=True)
+    #: `{hodisa_turi: ball}` - ballning TUSHUNTIRISHI.
+    #
+    # Yagona `risk_score` proktorga "72" deb aytadi va boshqa hech
+    # narsa demaydi. Chetlashtirish qarori esa asoslanishi kerak:
+    # "72 ball, shundan 40 tasi telefon, 20 tasi ikkinchi odam" -
+    # bu tekshirib bo'ladigan da'vo, "72" esa yo'q. Apellyatsiyada
+    # aynan shu farq hal qiluvchi.
+    risk_breakdown = models.JSONField(default=dict, blank=True)
+
+    # --- AI proktorlik holati ---
+    #
+    # `status` dan ALOHIDA va bu ataylab: `status` "imtihon qanday
+    # ketyapti" (jarayonda / tugadi / chetlashtirildi), bu esa
+    # "kuzatuv qanday ishlayapti" degan savolga javob beradi.
+    # Ularni birlashtirish "kamera uzildi = imtihon tugadi" degan
+    # noto'g'ri xulosaga olib kelardi - holbuki kamera uzilishi
+    # ko'pincha 15 soniyalik USB nosozligi.
+    proctoring_state = models.CharField(
+        max_length=12, choices=ProctoringState.choices,
+        default=ProctoringState.IDLE, db_index=True,
+    )
+    #: Oxirgi kamera tekshiruvi natijasi (`camera/check/` javobi).
+    #
+    # Sessiyada saqlanadi, chunki imtihon boshlashga ruxsat AYNAN
+    # shunga qarab beriladi va bu qaror keyin tekshirilishi kerak:
+    # "nega bu mashinada ikkinchi kamerasiz boshlandi?".
+    camera_check = models.JSONField(default=dict, blank=True)
+    #: Client tanlagan unumdorlik profili (`high`/`medium`/`low`/`cpu`).
+    #
+    # Bayonnoma uchun muhim: CPU rejimida kuzatuv chastotasi past va
+    # "hech narsa aniqlanmadi" xulosasining vazni ham past bo'ladi.
+    ai_profile = models.CharField(max_length=8, blank=True, default="")
 
     terminated_by = models.ForeignKey(
         "users.User", on_delete=models.SET_NULL, blank=True, null=True, related_name="terminated_sessions"
@@ -158,11 +247,11 @@ class ExamSession(PublicIDModel):
         return " ".join(part for part in parts if part).strip()
 
     @property
-    def external_session_token(self) -> str:
-        """Tashqi platforma tokeni (deshifrlangan). WebView shu bilan ochiladi."""
+    def external_test_link(self) -> str:
+        """Test havolasi (deshifrlangan). WebView AYNAN shuni ochadi."""
         from apps.common.utils.crypto import decrypt
 
-        return decrypt(self.external_session_token_enc) or ""
+        return decrypt(self.external_test_link_enc) or ""
 
     @property
     def external_access_open(self) -> bool:
@@ -293,6 +382,38 @@ class ProctoringEvent(models.Model):
         FACE_MISMATCH = "face_mismatch", _("Yuz mos kelmadi")
         MULTIPLE_FACES = "multiple_faces", _("Bir nechta yuz")
         OBJECT_DETECTED = "object_detected", _("Taqiqlangan obyekt")
+        # --- AI proktorlik: shaxs ---
+        FACE_OCCLUDED = "face_occluded", _("Yuz qisman yopilgan")
+        FACE_TOO_FAR = "face_too_far", _("Yuz juda uzoqda")
+        FACE_TOO_CLOSE = "face_too_close", _("Yuz juda yaqin")
+        STUDENT_LEFT_FRAME = "student_left_frame", _("Talabgor kadrdan chiqdi")
+        SECOND_PERSON = "second_person", _("Kadrda ikkinchi odam")
+        # --- AI proktorlik: nigoh va poza ---
+        LOOKING_AWAY = "looking_away", _("Chetga qaradi")
+        PROLONGED_LOOKING_AWAY = "prolonged_looking_away", _("Uzoq vaqt chetga qaradi")
+        EXCESSIVE_HEAD_MOVEMENT = "excessive_head_movement", _("Bosh harakati ko'p")
+        EYES_CLOSED = "eyes_closed", _("Ko'zlar yumuq")
+        HAND_BELOW_DESK = "hand_below_desk", _("Qo'l stol ostida")
+        SUSPICIOUS_HAND_MOVEMENT = "suspicious_hand_movement", _("Shubhali qo'l harakati")
+        UNAUTHORIZED_DEVICE = "unauthorized_device", _("Ruxsatsiz qurilma")
+        # --- AI proktorlik: birlashtirilgan (fusion) ---
+        #
+        # Bular ALOHIDA turlar va tarkibiy hodisalarni ALMASHTIRMAYDI:
+        # "telefon aniqlandi" yozuvi o'z o'rnida qoladi, bu esa uning
+        # ustidagi xulosa. Dalil zanjiri shu tarzda buzilmaydi -
+        # apellyatsiyada "nima uchun yuqori shubha?" degan savolga
+        # tarkibiy hodisalar bilan javob berish mumkin.
+        HIGH_SUSPICION_PHONE = "high_suspicion_phone", _("Yuqori shubha - telefon")
+        HIGH_SUSPICION_PERSON = "high_suspicion_person", _("Yuqori shubha - begona shaxs")
+        HIGH_SUSPICION_IDENTITY = "high_suspicion_identity", _("Yuqori shubha - shaxs almashtirilgan")
+        # --- AI proktorlik: kuzatuvning o'z holati ---
+        #
+        # Kuzatuv NOSOZLIGI ham hodisa. Usiz bayonnomada bo'shliq
+        # paydo bo'ladi va uni "hech narsa bo'lmagan" deb o'qish
+        # mumkin - holbuki u "hech narsa KO'RILMAGAN" degani.
+        CAMERA_DEGRADED = "camera_degraded", _("Kamera sifati pasaydi")
+        CAMERA_RECONNECTED = "camera_reconnected", _("Kamera qayta ulandi")
+        PROCTORING_DEGRADED = "proctoring_degraded", _("Kuzatuv cheklangan rejimda")
         # --- Tarmoq / tizim ---
         NETWORK_LOST = "network_lost", _("Tarmoq uzildi")
         NETWORK_RESTORED = "network_restored", _("Tarmoq tiklandi")
@@ -326,6 +447,42 @@ class ProctoringEvent(models.Model):
     # Client tomonidan yaratilgan ID — takroriy yuborishda dublikatni to'sadi.
     client_event_id = models.CharField(max_length=64, blank=True, default="")
 
+    # --- AI proktorlik maydonlari ---
+    #
+    # Nima uchun aynan shu beshtasi ustun bo'ldi, qolgani `payload` da:
+    # bu qiymatlar bo'yicha FILTRLANADI va SARALANADI (proktor "ishonchi
+    # 90 dan yuqori va 5 soniyadan uzoq hodisalarni ko'rsat" deydi),
+    # JSON ichidagi kalit bo'yicha esa bu so'rov indekssiz ketardi.
+    # Qolgan hamma narsa (bbox, landmark, tarkibiy hodisalar) `payload`
+    # da qoladi - ular faqat bitta hodisani ochib ko'rganda kerak.
+    #
+    # Barchasi NULL bo'lishi mumkin: qurilma hodisalari (`window_blur`
+    # va h.k.) ularga umuman ega emas. PostgreSQL'da NULL ustun
+    # qo'shish metadata amali, ya'ni partitsiyalangan jadval qayta
+    # yozilmaydi.
+    duration_ms = models.PositiveIntegerField(blank=True, null=True)
+    #: 0-100. Model ishonchi (`confidence`), foizga keltirilgan.
+    confidence = models.PositiveSmallIntegerField(default=0)
+    #: Qaysi kamera ko'rgan - `primary` yoki `secondary`.
+    #
+    # AI hodisalarida MAJBURIY yoziladi: ikki kamerali o'rnatishda
+    # "kim ko'rdi" savolisiz hodisani tekshirib bo'lmaydi. Stol
+    # kamerasidagi telefon va yuz kamerasidagi telefon butunlay
+    # boshqa vazn.
+    camera_role = models.CharField(max_length=10, blank=True, default="")
+    #: ByteTrack izi - bir obyektning bir necha hodisasini bog'laydi.
+    track_id = models.PositiveIntegerField(blank=True, null=True)
+    #: `EvidenceArtifact` ga havola. FK ATAYLAB EMAS.
+    #
+    # Bu jadval partitsiyalangan va kuniga milliardlab qator oladi.
+    # Partitsiyalangan jadvaldan chiqadigan FK har bir INSERT'da
+    # tekshiruv so'rovi qo'shadi va `bulk_create` ning butun ma'nosini
+    # yo'qotadi. Yaxlitlik dastur tomonida ta'minlanadi: dalil AVVAL
+    # yoziladi, hodisa KEYIN - teskarisida ochilmaydigan havola qoladi
+    # (skrinshot yo'lidagi "avval fayl, keyin qator" qoidasi bilan
+    # bir xil mantiq).
+    evidence_id = models.BigIntegerField(blank=True, null=True)
+
     def __str__(self):
         return f"{self.type}@{self.occurred_at:%H:%M:%S}"
 
@@ -355,7 +512,33 @@ class ProctoringEvent(models.Model):
 
 
 class FaceVerificationLog(models.Model):
-    """Har bir yuz tekshiruvi. Chetlashtirish qarori shu log bilan asoslanadi."""
+    """
+    Har bir yuz tekshiruvi. Chetlashtirish qarori shu log bilan asoslanadi.
+
+    SOLISHTIRISH CLIENTDA bajariladi (`services/face_engine.py`): ikkala
+    embedding ham o'sha yerda bo'ladi — etalon FaceID bosqichida
+    olingan, jonli vektor esa hozirgi kadrdan. Server chegarani
+    (`Setting.faceid_min_score_*`) va oqibatni (hisoblagich,
+    chetlashtirish) qo'llaydi. Shuning uchun `source` odatda `client`:
+    u "ballni kim hisobladi" degan savolga javob beradi va uni
+    bayonnomada ko'rsatib turish shart.
+
+    SESSIYA BO'SH BO'LISHI MUMKIN va bu ataylab. Kirishdagi tekshiruv
+    sessiya YARATILISHIDAN oldin bo'ladi: talabgor kamera oldida
+    turibdi, sessiya esa faqat moslik tasdiqlangach ochiladi. Ya'ni
+    "kira olmadi" holatini sessiyaga bog'lab bo'lmaydi — aynan o'sha
+    holat esa eng qimmatli yozuv (boshqa odam urinib ko'rdimi?).
+    Shuning uchun sessiyasiz qator `pinfl`, `exam` va `zone` ni O'ZIDA
+    saqlaydi: usiz uni na topib, na hudud bo'yicha cheklab bo'lardi.
+
+    RASM QATORDA EMAS, DISKDA. `image_path` — storage ildiziga NISBIY
+    yo'l (`ProctoringScreenshot` va `EvidenceArtifact` bilan bir xil
+    qoida: ildiz ko'chganda hamma qator bir vaqtda yaroqsiz
+    bo'lmasligi va API javobida server strukturasi oshkor
+    bo'lmasligi kerak). Muddati `image_purge_after` da — tozalash
+    vazifasi siyosatni qayta o'qimasligi kerak, chunki u sessiya
+    tugagach o'zgargan bo'lishi mumkin.
+    """
 
     class Stage(models.TextChoices):
         INITIAL = "initial", _("Kirishda")
@@ -369,8 +552,36 @@ class FaceVerificationLog(models.Model):
 
     id = models.BigAutoField(primary_key=True)
     session = models.ForeignKey(
-        "proctoring.ExamSession", on_delete=models.CASCADE, related_name="face_logs"
+        "proctoring.ExamSession",
+        on_delete=models.CASCADE,
+        related_name="face_logs",
+        null=True,
+        blank=True,
     )
+
+    # --- Sessiyasiz qator uchun kontekst ---
+    #
+    # Sessiya bor bo'lsa ham to'ldiriladi: qator O'ZI ma'noga ega
+    # bo'lishi kerak (`EvidenceArtifact.event_type` bilan bir xil
+    # sabab — sessiya anonimlashtirilgach ham "qaysi imtihon, qaysi
+    # bino" savoli javobsiz qolmaydi).
+    exam = models.ForeignKey(
+        "exams.Exam",
+        on_delete=models.PROTECT,
+        related_name="face_logs",
+        null=True,
+        blank=True,
+    )
+    zone = models.ForeignKey(
+        "regions.Zone",
+        on_delete=models.SET_NULL,
+        related_name="face_logs",
+        null=True,
+        blank=True,
+    )
+    #: Sessiya anonimlashtirilganda BO'SHATILADI (`purge_expired_artifacts`).
+    pinfl = models.CharField(max_length=14, blank=True, default="", db_index=True)
+
     stage = models.CharField(max_length=16, choices=Stage.choices, default=Stage.PERIODIC)
     source = models.CharField(max_length=16, choices=Source.choices, default=Source.CLIENT)
 
@@ -379,7 +590,26 @@ class FaceVerificationLog(models.Model):
     passed = models.BooleanField(default=False, db_index=True)
     faces_detected = models.PositiveSmallIntegerField(default=1)
 
+    #: S3 yo'li uchun (hozircha ishlatilmaydi, fayl tizimi yo'li ustun).
     image_key = models.CharField(max_length=500, blank=True, default="")
+    #: `faceid/{exam}/{session|pending}/...` — storage ildiziga NISBIY.
+    image_path = models.CharField(max_length=500, blank=True, default="")
+    #: ETALON (pasport) rasmi — FAQAT kirishdagi tekshiruvda.
+    #
+    # Ilgari u hech qayerda saqlanmasdi: platformadan kelib, client
+    # xotirasida solishtirishga ishlatilar va yo'qolardi. Panelda esa
+    # ballning O'ZI hech narsani isbotlamaydi — apellyatsiyada
+    # "47 ball" degan yozuv emas, IKKI RASM kerak: hujjatdagi odam va
+    # kameradagi odam yonma-yon. Shuning uchun kirish tekshiruvida
+    # client ikkala kadrni ham yuboradi.
+    #
+    # Test davomidagi tekshiruvlarda u BO'SH qoladi va bu ataylab:
+    # u yerda etalon pasport rasmi emas, kirishda tasdiqlangan kadr
+    # va uni har 10 soniyada qayta saqlash bir xil rasmni yuzlab
+    # marta diskka yozardi.
+    reference_image_path = models.CharField(max_length=500, blank=True, default="")
+    image_purge_after = models.DateTimeField(blank=True, null=True, db_index=True)
+
     occurred_at = models.DateTimeField(db_index=True)
     received_at = models.DateTimeField(auto_now_add=True)
 
@@ -398,6 +628,9 @@ class FaceVerificationLog(models.Model):
                 name="idx_facelog_failed",
                 condition=models.Q(passed=False),
             ),
+            # Sessiyasiz urinishlar FAQAT shu indeks bo'yicha topiladi:
+            # "shu JSHSHIR bugun necha marta urinib, kira olmadi?".
+            models.Index(fields=["pinfl", "-occurred_at"], name="idx_facelog_pinfl_time"),
         ]
 
 
@@ -516,6 +749,253 @@ class ProctoringScreenshot(models.Model):
         return f"Screenshot<{self.pk}> {self.file_path}"
 
 
+class EvidenceArtifact(models.Model):
+    """
+    Shubhali hodisaning DALILI: kadr yoki qisqa video klip.
+
+    NIMA UCHUN `ProctoringScreenshot` YETMAYDI (ular yonma-yon yashaydi):
+
+      * skrinshot MUNTAZAM olinadi (har 10 s) va u "imtihon qanday
+        o'tdi" degan umumiy manzarani beradi; dalil esa HODISAGA
+        bog'langan va u "aynan nima ko'rindi" degan savolga javob
+        beradi. Ikkalasining hayot sikli, hajmi va saqlash muddati
+        boshqacha;
+      * dalilda hodisa konteksti bor - qaysi kamera, qaysi model,
+        qanday ishonch, qayerda ramka chizilgan. Skrinshot jadvaliga
+        bu ustunlarni qo'shish uning har bir qatorini (kuniga
+        yuz minglab) bekorga kengaytirardi;
+      * dalil VIDEO ham bo'lishi mumkin, skrinshot esa hech qachon.
+
+    IKKI FORMAT, IKKI SAQLASH MUDDATI. Kadr ~150 KB, klip ~1.2 MB -
+    ya'ni 500 mashinali bino kuniga ~5 GB klip yig'adi. Ularni bitta
+    muddat bilan saqlash diskni klip hisobiga to'ldiradi va kadrlarni
+    ham birga olib ketadi. Muddat `ProctoringPolicy` da alohida
+    (`evidence_clip_retention_days` / `evidence_frame_retention_days`),
+    bu yerda esa allaqachon hisoblangan `purge_after` yotadi -
+    tozalash vazifasi siyosatni qayta o'qimasligi kerak (u sessiya
+    tugagach o'zgargan bo'lishi mumkin).
+
+    FAYL YO'LI NISBIY - `ProctoringScreenshot` dagi bilan aynan bir xil
+    sabab: storage ildizi ko'chganda barcha qatorlar bir vaqtda
+    yaroqsiz bo'lmasligi va API javobida server katalog strukturasi
+    oshkor bo'lmasligi kerak.
+
+    YOZISH TARTIBI: avval fayl, keyin qator, keyin HODISA. Uchinchisi
+    muhim - `ProctoringEvent.evidence_id` FK emas, ya'ni ochilmaydigan
+    havoladan DB himoya qilmaydi. Teskari tartibda proktor "dalilni
+    ko'rish" tugmasini bosib 404 olardi.
+    """
+
+    class Kind(models.TextChoices):
+        FRAME = "frame", _("Kadr")
+        CLIP = "clip", _("Video klip")
+
+    class Storage(models.TextChoices):
+        FS = "fs", _("Fayl tizimi")
+        S3 = "s3", _("Obyekt storage")
+
+    id = models.BigAutoField(primary_key=True)
+    session = models.ForeignKey(
+        "proctoring.ExamSession",
+        on_delete=models.CASCADE,
+        related_name="evidence",
+        verbose_name=_("Sessiya"),
+    )
+    kind = models.CharField(_("Turi"), max_length=8, choices=Kind.choices, default=Kind.FRAME)
+    storage = models.CharField(
+        _("Saqlash"), max_length=4, choices=Storage.choices, default=Storage.FS
+    )
+
+    #: `{exam_id}/{session_id}/evidence/{captured_at}_{n}.{ext}` - ildizga NISBATAN.
+    file_path = models.CharField(_("Fayl yo'li"), max_length=500, blank=True, default="")
+    #: S3 yo'li uchun (fayl tizimi rejimida bo'sh qoladi).
+    object_key = models.CharField(max_length=500, blank=True, default="")
+    content_hash = models.CharField(_("SHA-256"), max_length=64, blank=True, default="", db_index=True)
+    size_bytes = models.PositiveIntegerField(_("Hajmi (bayt)"), default=0)
+    mime_type = models.CharField(_("MIME turi"), max_length=64, default="image/jpeg")
+    width = models.PositiveSmallIntegerField(default=0)
+    height = models.PositiveSmallIntegerField(default=0)
+    #: Klip uzunligi. Kadr uchun `0`.
+    duration_ms = models.PositiveIntegerField(default=0)
+
+    # --- Hodisa konteksti ---
+    #
+    # `event_type` MATN sifatida takrorlanadi (hodisaga FK yo'q):
+    # `ProctoringEvent` partitsiyalangan va unga FK qo'yish
+    # `bulk_create` ni buzadi. Takrorlanish ongli - dalil hodisasiz
+    # ham ma'noga ega bo'lishi kerak (hodisa retention bilan
+    # partitsiyadan chiqib ketishi mumkin, dalil esa qoladi).
+    event_type = models.CharField(_("Hodisa turi"), max_length=48, blank=True, default="", db_index=True)
+    camera_role = models.CharField(_("Kamera roli"), max_length=10, blank=True, default="")
+    confidence = models.PositiveSmallIntegerField(_("Ishonch"), default=0)
+    #: `[{"cls": "cell phone", "conf": 0.94, "bbox": [x1,y1,x2,y2], "track_id": 7}]`
+    #
+    # Ramkalar RASMGA CHIZILMAYDI, alohida saqlanadi. Chizilgan rasm
+    # o'zgartirilgan dalil bo'lardi: apellyatsiyada "bu ramkani kim
+    # qo'ygan?" degan savolga javob berib bo'lmasdi. Panel ularni
+    # rasm ustiga overlay qilib ko'rsatadi va istalgan payt
+    # o'chirib qo'yish mumkin.
+    boxes = models.JSONField(default=list, blank=True)
+
+    captured_at = models.DateTimeField(_("Olingan vaqti"), db_index=True)
+    received_at = models.DateTimeField(auto_now_add=True)
+    #: Client yuklashni yakunladimi (S3 presigned PUT yoki multipart).
+    is_committed = models.BooleanField(default=False, db_index=True)
+    purge_after = models.DateTimeField(blank=True, null=True, db_index=True)
+
+    def __str__(self):
+        return f"Evidence<{self.pk}> {self.kind} {self.event_type}"
+
+    class Meta:
+        verbose_name = _("Dalil")
+        verbose_name_plural = _("Dalillar")
+        db_table = "evidence_artifact"
+        ordering = ["-captured_at", "-id"]
+        constraints = [
+            # Fayl yo'li takrorlanmasligi kerak - bir fayl ikki qatorga
+            # bog'lansa, birinchi tozalash ikkinchisini ochilmaydigan
+            # holga keltiradi. Shartli: S3 rejimida `file_path` bo'sh
+            # bo'ladi va bo'sh qatorlar bir-biriga xalaqit bermasligi
+            # kerak.
+            models.UniqueConstraint(
+                fields=["file_path"],
+                condition=~models.Q(file_path=""),
+                name="unique_evidence_file_path",
+            ),
+            models.UniqueConstraint(
+                fields=["object_key"],
+                condition=~models.Q(object_key=""),
+                name="unique_evidence_object_key",
+            ),
+            # Saqlash usuli va yo'l MOS bo'lishi shart: "fayl tizimi,
+            # lekin yo'lsiz" qatori tozalash vazifasini jimgina
+            # o'tkazib yuborardi va fayl diskda abadiy qolardi.
+            models.CheckConstraint(
+                condition=(
+                    models.Q(storage="fs") & ~models.Q(file_path="")
+                    | models.Q(storage="s3") & ~models.Q(object_key="")
+                ),
+                name="evidence_storage_path_present",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["session", "-captured_at"], name="idx_evidence_session_time"),
+            # Retention shu indeks bo'yicha yuradi.
+            models.Index(fields=["is_committed", "purge_after"], name="idx_evidence_purge"),
+            # "Shu sessiyadagi telefon dalillari" - sessiya kartochkasidagi filtr.
+            models.Index(fields=["session", "event_type"], name="idx_evidence_session_type"),
+        ]
+
+
+class LocalRecording(models.Model):
+    """
+    MASHINADA qoladigan yozuv: ekran videosi yoki kamera klipi.
+
+    NIMA UCHUN FAYL SERVERGA YUBORILMAYDI. Ekran yozuvi 3 soatlik
+    imtihonda ~360 MB, kamera klipi ~1-3 MB va ular hodisa sayin
+    yig'iladi. 500 mashinali bino kuniga ~500 GB degani - bu hech
+    qanday kanalga ham, diskka ham sig'maydi. Skrinshot esa
+    avvalgidek YUBORILADI: u ~60 KB va proktorga imtihon davomida,
+    real vaqtda kerak.
+
+    Ya'ni bu jadval FAYLNI emas, uning MANZILINI saqlaydi: qaysi
+    mashinada, qaysi yo'lda, qancha hajm va davomiylik. Proktor
+    yoki tekshiruv komissiyasi shu yozuvga qarab mashinani topadi
+    va faylni o'sha yerdan oladi.
+
+    YO'L ABSOLYUT VA BU ISTISNO. `ProctoringScreenshot.file_path` va
+    `EvidenceArtifact.file_path` ataylab NISBIY (storage ildizi
+    ko'chsa qatorlar yaroqsiz bo'lmasligi uchun) - lekin u yerda
+    ildiz BIZNIKI va u bitta. Bu yerda fayl BOSHQA mashinada
+    yotibdi va uning ildizi har mashinada boshqacha bo'lishi mumkin
+    (eng bo'sh disk tanlanadi). Nisbiy yo'l "qayerdan qidiray?"
+    degan savolni javobsiz qoldirardi.
+
+    MASHINA BELGISI QATORDA TAKRORLANADI (`machine_mac`,
+    `device_id`). Sessiyadan ham topsa bo'lardi, lekin yozuv
+    sessiyadan UZOQROQ yashaydi: hodisalar partitsiyadan chiqib
+    ketadi, qurilma boshqa binoga ko'chiriladi, sessiya esa
+    retention bilan tozalanadi. Faylni topish uchun kerak bo'lgan
+    ma'lumot yozuvning O'ZIDA qolishi kerak.
+    """
+
+    class Kind(models.TextChoices):
+        SCREEN = "screen", _("Ekran yozuvi")
+        CLIP = "clip", _("Kamera klipi")
+
+    id = models.BigAutoField(primary_key=True)
+    session = models.ForeignKey(
+        "proctoring.ExamSession",
+        on_delete=models.CASCADE,
+        related_name="local_recordings",
+        verbose_name=_("Sessiya"),
+    )
+    kind = models.CharField(
+        _("Turi"), max_length=8, choices=Kind.choices, default=Kind.SCREEN, db_index=True
+    )
+
+    #: Mashinadagi TO'LIQ yo'l (`D:\ProctoringArchive\...\screen.mp4`).
+    local_path = models.CharField(_("Mashinadagi yo'l"), max_length=500)
+    size_bytes = models.BigIntegerField(_("Hajmi (bayt)"), default=0)
+    duration_ms = models.PositiveIntegerField(_("Davomiyligi (ms)"), default=0)
+    width = models.PositiveSmallIntegerField(default=0)
+    height = models.PositiveSmallIntegerField(default=0)
+    #: Yozilgan kadrlar soni va tashlab yuborilganlari - yozuv
+    #: sifatining o'lchovi. Ko'p tashlangan kadr "mashina yetishmadi"
+    #: degani va u apellyatsiyada javob bo'ladi.
+    frames = models.PositiveIntegerField(default=0)
+    frames_dropped = models.PositiveIntegerField(default=0)
+
+    # --- Qaysi mashinada ---
+    device_id = models.CharField(_("Qurilma"), max_length=64, blank=True, default="", db_index=True)
+    machine_mac = models.CharField(_("MAC manzil"), max_length=32, blank=True, default="")
+
+    # --- Klip konteksti (ekran yozuvida bo'sh) ---
+    #
+    # `EvidenceArtifact` dagi bilan bir xil maydonlar va bu ongli
+    # takrorlanish: klip endi ikki joyda bo'lishi mumkin - eski
+    # o'rnatishlarda serverda, yangisida mashinada. Panel ikkalasini
+    # bir xil ko'rsatishi kerak.
+    event_type = models.CharField(_("Hodisa turi"), max_length=48, blank=True, default="", db_index=True)
+    camera_role = models.CharField(_("Kamera roli"), max_length=10, blank=True, default="")
+    confidence = models.PositiveSmallIntegerField(_("Ishonch"), default=0)
+
+    captured_at = models.DateTimeField(_("Olingan vaqti"), db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"LocalRecording<{self.pk}> {self.kind} {self.local_path}"
+
+    @property
+    def file_url(self) -> str:
+        """
+        `file://` ko'rinishi - panelda nusxalash uchun.
+
+        Brauzer uni OCHA OLMAYDI (xavfsizlik cheklovi) va bu
+        kutilgan: manzil odam uchun, mashinani topib borish uchun.
+        """
+        if not self.local_path:
+            return ""
+        return "file:///{}".format(self.local_path.replace("\\", "/").lstrip("/"))
+
+    class Meta:
+        verbose_name = _("Mashinadagi yozuv")
+        verbose_name_plural = _("Mashinadagi yozuvlar")
+        db_table = "local_recording"
+        ordering = ["-captured_at", "-id"]
+        constraints = [
+            # Bitta fayl - bitta qator. Client qayta urinishi (tarmoq
+            # xatosi) ikkinchi qator yaratmasligi kerak: panelda u
+            # "ikkita yozuv bor" bo'lib ko'rinardi.
+            models.UniqueConstraint(
+                fields=["session", "local_path"], name="unique_local_recording_path"
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["session", "-captured_at"], name="idx_localrec_session"),
+        ]
+
+
 class TechnicalProblem(TimeStampedModel):
     """Texnik muammo — qo'shimcha vaqt berish qarori shu yerda qayd etiladi."""
 
@@ -579,6 +1059,32 @@ class AuditLog(models.Model):
         SETTING_CHANGE = "setting_change", _("Sozlama o'zgarishi")
         DEVICE_REVOKE = "device_revoke", _("Qurilmani bloklash")
         CLIENT_ANOMALY = "client_anomaly", _("Client anomaliyasi")
+        # Kamera kredensiali desktop client'ga berildi.
+        #
+        # Bu YOZUV MAJBURIY: RTSP paroli kameraning ichida yashaydi va
+        # uni serverdan bekor qilib bo'lmaydi. Ya'ni "kim, qachon,
+        # qaysi mashinada, qaysi kameraning kalitini oldi" degan
+        # savolga javob beradigan yagona manba shu jurnal - parol
+        # sizib chiqqan taqdirda tergov faqat shu yerdan boshlanadi.
+        CAMERA_CREDENTIAL_ISSUE = "camera_credential_issue", _("Kamera kredensiali berildi")
+        CAMERA_LIVE_VIEW = "camera_live_view", _("Kamera tasviri ko'rildi")
+        # Kuzatuv ishga tushdi - imtihonning haqiqiy boshlanish nuqtasi.
+        #
+        # Aynan shu yozuv "imtihon qanday sharoitda boshlandi" degan
+        # savolga javob beradi: kamera tekshiruvi qanday holatda edi,
+        # qanday unumdorlik profili ishladi. Apellyatsiyada "kuzatuv
+        # to'liq ishlaganmi?" degan savol shu yerdan boshlanadi.
+        #
+        # YAKUNLASH audit'ga TUSHMAYDI: u har bir sessiyada bo'ladi
+        # va jurnalni shovqinga aylantirardi; sessiyaning yakunlangani
+        # `ExamSession.finished_at` da allaqachon bor.
+        PROCTORING_START = "proctoring_start", _("Kuzatuv boshlandi")
+        # Dalil (kadr yoki video klip) ochib ko'rildi.
+        #
+        # Talabgorning tasviriga har bir kirish qayd etiladi: bu
+        # shaxsiy ma'lumot va unga kirish faktining o'zi tekshirilishi
+        # kerak bo'lgan harakat.
+        EVIDENCE_VIEW = "evidence_view", _("Dalil ko'rildi")
         RESTORE = "restore", _("Tiklash")
         EXPORT = "export", _("Eksport")
 

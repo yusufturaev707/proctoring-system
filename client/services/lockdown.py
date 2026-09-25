@@ -88,14 +88,50 @@ def _normalize(code: str) -> str:
     return "+".join(parts)
 
 
+def resolve_hotkeys(server: Optional[list], default: Optional[list]) -> list:
+    """
+    Qaysi ro'yxat qo'llanadi: serverniki yoki `.env` standarti.
+
+    IKKI QATLAM. `.env` dagi `BLOCKED_HOTKEYS` dastur ishga tushishi
+    bilan, preflight'dan OLDIN qo'llanadi - server javob bermasa ham
+    mashina qulfsiz qolmasligi kerak. Server ro'yxati kelsa (preflight,
+    handshake, imtihon profili) u standartni ALMASHTIRADI, ustiga
+    qo'shilmaydi: bino yoki imtihon profilidan olib tashlangan tugma
+    bloklangan holda qolib ketmasligi kerak (masalan chet tili
+    imtihonida ruxsat etilgan kombinatsiya).
+
+    BO'SH SERVER RO'YXATI = "ADMINISTRATOR SOZLAMAGAN", "hech narsani
+    bloklama" EMAS. Uchta sabab:
+
+      * server bo'sh ro'yxatni uch xil holatda beradi - profilda tugma
+        tanlanmagan, faol `Setting` umuman yo'q (`_default_config`) va
+        eski server (kalit yo'q) - va ularning HECH BIRI ongli qaror
+        emas;
+      * kiosk rejimida "hech narsa bloklanmasin" o'z-o'ziga zid: Alt+Tab
+        va Win ochiq kiosk - kiosk emas. Bunday mashina kerak bo'lsa
+        u `.env` da hal qilinadi (`KIOSK_MODE=false` yoki bo'sh
+        `BLOCKED_HOTKEYS`), ya'ni ochiq va mashina darajasida;
+      * xato narxi nosimmetrik: keraksiz bloklangan tugma operatorni
+        noqulay qiladi, tasodifan ochilgan Alt+Tab esa imtihonni
+        ochiq qoldiradi.
+
+    `None` (kalit umuman kelmagan) ham xuddi shunday. Ro'yxat nusxasi
+    qaytadi - chaqiruvchi uni o'zgartirsa `config` buzilmasligi kerak.
+    """
+    chosen = server if server else default
+    return [code for code in (chosen or []) if str(code or "").strip()]
+
+
 class _Lockdown:
     """
     Qulflash holati - yagona nusxa (`lockdown`).
 
-    Holatni saqlash SHART: siyosat ikki marta keladi (preflight va
-    handshake) va ikkinchisi birinchisini ALMASHTIRISHI kerak, ustiga
+    Holatni saqlash SHART: siyosat to'rt marta keladi (`.env`
+    standarti ishga tushishda, keyin preflight, handshake va imtihon
+    profili) va har biri oldingisini ALMASHTIRISHI kerak, ustiga
     qo'shmasligi. Aks holda bino sozlamasidan o'chirilgan tugma
-    bloklangan holda qolardi.
+    bloklangan holda qolardi. Qaysi ro'yxat qo'llanishini
+    `resolve_hotkeys` hal qiladi.
     """
 
     def __init__(self) -> None:

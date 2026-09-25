@@ -53,10 +53,18 @@ class UserListSerializer(serializers.ModelSerializer):
 class UserDetailSerializer(UserListSerializer):
     permissions = serializers.SerializerMethodField()
     has_face_profile = serializers.SerializerMethodField()
+    #: Panel uchun: "nega hech narsa ko'rinmayapti?" degan savolga ochiq
+    #: javob (`User.lacks_region`) va viloyat tanlash maydonlarini
+    #: qulflash kerakmi (`is_region_scoped`). Ikkalasi ham server
+    #: qoidasining nusxasi — frontend o'zi hisoblasa, rol matritsasi
+    #: o'zgarganda ajralib ketardi.
+    lacks_region = serializers.BooleanField(read_only=True)
+    is_region_scoped = serializers.BooleanField(read_only=True)
 
     class Meta(UserListSerializer.Meta):
         fields = UserListSerializer.Meta.fields + (
             "telegram_id", "permissions", "has_face_profile", "last_login_ip", "updated_at",
+            "lacks_region", "is_region_scoped",
         )
 
     def get_permissions(self, obj) -> list[str]:
@@ -106,6 +114,8 @@ class UserWriteSerializer(serializers.ModelSerializer):
 
         Superuser bu tekshiruvdan o'tadi.
         """
+        self._validate_scope_shape(attrs)
+
         actor = getattr(self.context.get("request"), "user", None)
         if actor is None or not actor.is_authenticated or actor.is_superuser:
             return attrs
@@ -115,6 +125,17 @@ class UserWriteSerializer(serializers.ModelSerializer):
             if getattr(region, "pk", None) != actor.region_id:
                 raise serializers.ValidationError(
                     {"region": "Faqat o'z viloyatingizga xodim qo'sha olasiz"}
+                )
+            # Respublika roli viloyat chegarasini BUTUNLAY olib tashlaydi
+            # (`User.is_region_scoped`). Ruxsatlar tekshiruvi buni
+            # ushlamasdi: kam ruxsatli respublika roli (masalan faqat
+            # `sessions.view`) viloyat adminining o'zida ham bor, ya'ni u
+            # yangi hisob orqali barcha viloyatlarning sessiyalarini
+            # ko'ra olardi.
+            role = attrs.get("role")
+            if role is not None and role.is_global:
+                raise serializers.ValidationError(
+                    {"role": "Respublika darajasidagi rolni faqat respublika administratori beradi"}
                 )
 
         role = attrs.get("role")
@@ -139,6 +160,32 @@ class UserWriteSerializer(serializers.ModelSerializer):
                 {"is_staff": "Xodimga admin panel huquqini faqat superuser beradi"}
             )
         return attrs
+
+    def _validate_scope_shape(self, attrs):
+        """
+        Hisobning o'zi izchil bo'lishi — kim yaratayotganidan qat'i nazar.
+
+          * viloyat darajasidagi rol VILOYATSIZ bo'lmaydi: bunday hisob
+            admin panelda hech narsa ko'rmaydi (`User.lacks_region`), ya'ni
+            u faqat "ishlamaydigan xodim" yaratardi;
+          * bino tanlangan viloyatning binosi bo'lishi shart — aks holda
+            xodim bir viloyatga, binosi boshqasiga yozilardi.
+
+        Tahrirda yuborilmagan maydonlar joriy qiymatdan olinadi: faqat
+        rolni almashtirish ham shu qoidadan o'tadi.
+        """
+        def current(name):
+            return attrs[name] if name in attrs else getattr(self.instance, name, None)
+
+        role, region, zone = current("role"), current("region"), current("zone")
+        if role is not None and not role.is_global and region is None:
+            raise serializers.ValidationError(
+                {"region": "Bu rol viloyat darajasida — viloyatni tanlang"}
+            )
+        if zone is not None and region is not None and zone.region_id != region.pk:
+            raise serializers.ValidationError(
+                {"zone": "Bino tanlangan viloyatga tegishli emas"}
+            )
 
     def create(self, validated_data):
         password = validated_data.pop("password", None)

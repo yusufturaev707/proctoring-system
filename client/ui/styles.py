@@ -239,28 +239,49 @@ QToolTip {{
 
 
 def primary_button_style(height: int = 52) -> str:
-    """Asosiy amal tugmasi - gradient bilan (login, davom etish)."""
+    """
+    Material Design 3 "filled button" — asosiy amal.
+
+    GRADIENT YO'Q va bu ataylab. Ilgari tugma to'q yashildan
+    yashilga o'tuvchi gradient edi va u ikki narsani buzardi:
+
+      * MD3 da to'ldirilgan tugma BITTA rang bo'ladi, holat esa
+        ustiga qo'yiladigan "state layer" bilan ko'rsatiladi.
+        Gradient o'sha qatlamni ko'rinmas qilardi — hover'da
+        tugma o'zgargani sezilmasdi;
+      * chap cheti `primary_dark` bo'lgani uchun tugma umuman
+        to'qroq ko'rinardi va yonidagi yashil nishonlar
+        (`badge_style("success")`) bilan bir oilaga o'xshamasdi.
+
+    Endi holatlar MD3 tartibida: tinch — `primary`, hover — bir
+    pog'ona yorug' (`primary_light`, ya'ni ustiga qo'yilgan oq
+    state layer effekti), bosilganda — to'q (`primary_dark`).
+
+    Burchak radiusi BALANDLIKNING YARMI: MD3 to'ldirilgan tugmasi
+    "pill" shaklida va bu uni oyna ichidagi to'rtburchak
+    kartalardan ajratib turadi — ko'z bosiladigan elementni
+    shakli bo'yicha topadi.
+    """
     return """
         QPushButton {{
-            background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                stop:0 {primary_dark}, stop:1 {primary});
+            background-color: {primary};
             color: {on_primary};
             border: none;
             border-radius: {radius}px;
+            padding: 0 24px;
             font-size: 15px;
             font-weight: 700;
-            letter-spacing: 0.6px;
+            letter-spacing: 0.4px;
             min-height: {height}px;
         }}
         QPushButton:hover {{
-            background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                stop:0 {primary}, stop:1 {primary_light});
+            background-color: {primary_light};
         }}
         QPushButton:pressed {{
-            background: {primary_dark};
+            background-color: {primary_dark};
         }}
         QPushButton:disabled {{
-            background: {border};
+            background-color: {border};
             color: {text_muted};
         }}
     """.format(radius=height // 2, height=height, **COLORS)
@@ -337,6 +358,280 @@ def outlined_button_style(height: int = 44, tone: str = "neutral") -> str:
     )
 
 
+def tonal_button_style(height: int = 44) -> str:
+    """
+    Material Design 3 "filled tonal" tugmasi.
+
+    Uchinchi og'irlik darajasi: to'ldirilgan (asosiy amal) va
+    chizilgan (ikkilamchi) orasida. Aynan shu daraja kerak bo'ladigan
+    joy — sahifadagi YORDAMCHI, lekin tez-tez bosiladigan amal
+    ("Kamerani ishga tushirish"): u asosiy amal ("Davom etish") bilan
+    raqobatlashmasligi, lekin ko'zdan ham qochmasligi kerak.
+    """
+    return """
+        QPushButton {{
+            background-color: {primary_soft};
+            color: {primary_deep};
+            border: none;
+            border-radius: {radius}px;
+            font-size: 14px;
+            font-weight: 700;
+            letter-spacing: 0.2px;
+            padding: 0 22px;
+            min-height: {height}px;
+        }}
+        QPushButton:hover {{
+            background-color: #BBF7D0;
+        }}
+        QPushButton:pressed {{
+            background-color: {primary};
+            color: {on_primary};
+        }}
+        QPushButton:disabled {{
+            background-color: {surface_alt};
+            color: {text_muted};
+        }}
+    """.format(radius=height // 2, height=height, **COLORS)
+
+
+def danger_button_style(height: int = 48) -> str:
+    """
+    MD3 "filled" tugma — QAYTARIB BO'LMAYDIGAN amal uchun (xato rangi).
+
+    Faqat tasdiqlash dialogida va faqat bitta: "Imtihonni yakunlash"
+    talabgorning testga qaytish yo'lini yopadi. Qizil to'ldirilgan
+    tugma boshqa hech qayerda ishlatilmaydi — aks holda u "bu yerda
+    ehtiyot bo'ling" degan signal bo'lishdan to'xtaydi.
+    """
+    return """
+        QPushButton {{
+            background-color: {error};
+            color: {on_primary};
+            border: none;
+            border-radius: {radius}px;
+            font-size: 14px;
+            font-weight: 700;
+            letter-spacing: 0.3px;
+            padding: 0 22px;
+            min-height: {height}px;
+        }}
+        QPushButton:hover {{
+            background-color: #EF4444;
+        }}
+        QPushButton:pressed {{
+            background-color: #B91C1C;
+        }}
+        QPushButton:disabled {{
+            background-color: {error_soft};
+            color: {surface};
+        }}
+    """.format(radius=height // 2, height=height, **COLORS)
+
+
+def text_button_style(height: int = 34) -> str:
+    """
+    MD3 "text button" — karta sarlavhasi yonidagi yordamchi amal.
+
+    IKONKA EMAS, MATN. Ikonka tugmasi bu yerda chiroyliroq ko'rinardi,
+    lekin loyihada ikonka resurslari yo'q va Unicode belgisi (⟳)
+    Windows'ning barcha shrift to'plamlarida mavjud emas — belgi
+    topilmasa tugma BO'SH KVADRAT bo'lib chiqadi. Operator uchun bu
+    "bosiladigan narsami yoki nosozlikmi?" degan savol, ya'ni eng
+    yomon holat. Matn har doim chiziladi.
+    """
+    return """
+        QPushButton {{
+            background-color: transparent;
+            color: {primary_dark};
+            border: none;
+            border-radius: {radius}px;
+            padding: 0 14px;
+            font-size: 13px;
+            font-weight: 700;
+            min-height: {height}px;
+        }}
+        QPushButton:hover {{
+            background-color: {primary_soft};
+        }}
+        QPushButton:pressed {{
+            background-color: {primary};
+            color: {on_primary};
+        }}
+        QPushButton:disabled {{
+            color: {text_muted};
+            background-color: transparent;
+        }}
+    """.format(radius=height // 2, height=height, **COLORS)
+
+
+def chip_style(selected: bool = False, tone: str = "primary") -> str:
+    """
+    MD3 "filter chip" — oldindan ko'rish uchun kamerani tanlash.
+
+    Tanlangan holat RANG BILAN CHEKLANMAYDI: ramka qalinligi va fon
+    birga o'zgaradi. Rang ajratolmaydigan operator uchun faqat rang
+    farqi ma'lumotni yo'qotadi, chegara esa qoladi.
+    """
+    palette = {
+        "primary": (COLORS["primary_soft"], COLORS["primary_deep"], COLORS["primary"]),
+        "neutral": (COLORS["surface_alt"], COLORS["text"], COLORS["border_strong"]),
+    }
+    fill, fg, edge = palette.get(tone, palette["primary"])
+    if selected:
+        return """
+            QPushButton {{
+                background-color: {fill};
+                color: {fg};
+                border: 1.5px solid {edge};
+                border-radius: 16px;
+                padding: 0 16px;
+                min-height: 32px;
+                font-size: 13px;
+                font-weight: 700;
+            }}
+        """.format(fill=fill, fg=fg, edge=edge)
+    return """
+        QPushButton {{
+            background-color: transparent;
+            color: {text_secondary};
+            border: 1px solid {border};
+            border-radius: 16px;
+            padding: 0 16px;
+            min-height: 32px;
+            font-size: 13px;
+            font-weight: 600;
+        }}
+        QPushButton:hover {{
+            background-color: {surface_alt};
+            color: {text};
+        }}
+    """.format(**COLORS)
+
+
+def segmented_button_style(*, selected: bool, position: str = "left") -> str:
+    """
+    Material Design 3 "segmented button" — bir-biriga ULANGAN tanlov.
+
+    NIMA UCHUN CHIP EMAS. Chip mustaqil filtr ("shu belgini yoq/o'chir"),
+    segment esa BIR TO'PLAMDAN BITTASINI tanlash: kamera yoki yuz
+    tekshiruvida, yoki obyekt aniqlashda bo'ladi - ikkalasida ham
+    emas, hech qaysisida ham emas. Ulangan ko'rinish aynan shu
+    "bittasi" ma'nosini beradi, ajratilgan chiplar esa "ikkalasini
+    ham belgilash mumkin" degan taassurot qoldirardi.
+
+    TANLANGAN HOLAT RANG BILAN CHEKLANMAYDI: fon, matn qalinligi va
+    belgi (✓) birga o'zgaradi. Rang ajratolmaydigan operator uchun
+    faqat rang farqi ma'lumotni yo'qotardi (`chip_style` bilan bir
+    xil qoida).
+
+    `position` — segmentning to'plamdagi o'rni: tashqi burchaklar
+    yumaloq, ichkilari to'g'ri. Oraliqdagi CHEGARA BITTA: chapdagi
+    segmentning o'ng ramkasi olib tashlanadi, aks holda ikkita 1px
+    ramka yonma-yon tushib, ajratuvchi chiziq ikki barobar
+    qalinlashardi.
+    """
+    outer = 18
+    left_radius = outer if position in ("left", "single") else 0
+    right_radius = outer if position in ("right", "single") else 0
+    # Oxirgi segmentdan boshqasida o'ng ramka YO'Q: ajratuvchi
+    # chiziqni keyingi segmentning chap ramkasi beradi.
+    right_border = "none" if position in ("left", "middle") else "1px solid {}".format(
+        COLORS["border_strong"] if selected else COLORS["border"]
+    )
+
+    if selected:
+        return """
+            QPushButton {{
+                background-color: {fill};
+                color: {fg};
+                border: 1px solid {edge};
+                border-right: {right_border};
+                border-top-left-radius: {left_radius}px;
+                border-bottom-left-radius: {left_radius}px;
+                border-top-right-radius: {right_radius}px;
+                border-bottom-right-radius: {right_radius}px;
+                padding: 0 12px;
+                min-height: 34px;
+                font-size: 12px;
+                font-weight: 700;
+            }}
+            QPushButton:disabled {{
+                color: {text_muted};
+            }}
+        """.format(
+            fill=COLORS["primary_soft"],
+            fg=COLORS["primary_deep"],
+            edge=COLORS["border_strong"],
+            right_border=right_border,
+            left_radius=left_radius,
+            right_radius=right_radius,
+            text_muted=COLORS["text_muted"],
+        )
+
+    return """
+        QPushButton {{
+            background-color: transparent;
+            color: {text_secondary};
+            border: 1px solid {border};
+            border-right: {right_border};
+            border-top-left-radius: {left_radius}px;
+            border-bottom-left-radius: {left_radius}px;
+            border-top-right-radius: {right_radius}px;
+            border-bottom-right-radius: {right_radius}px;
+            padding: 0 12px;
+            min-height: 34px;
+            font-size: 12px;
+            font-weight: 600;
+        }}
+        QPushButton:hover {{
+            background-color: {surface_alt};
+            color: {text};
+        }}
+        QPushButton:disabled {{
+            color: {text_muted};
+        }}
+    """.format(
+        right_border=right_border,
+        left_radius=left_radius,
+        right_radius=right_radius,
+        **COLORS
+    )
+
+
+def surface_container_style(object_name: str, *, tone: str = "low") -> str:
+    """
+    MD3 "surface container" — kartaning ichidagi ajratilgan blok.
+
+    Selektor obyekt NOMI bo'yicha (`QFrame` bo'yicha emas): `QLabel`
+    ham `QFrame` merosxo'ri va oddiy `QFrame {...}` uslubi konteyner
+    ichidagi har bir matnga ramka chizib qo'yadi
+    (`info_field_style` dagi bilan bir xil tuzoq).
+    """
+    tones = {
+        "low": (COLORS["surface_alt"], COLORS["border"]),
+        "high": (COLORS["primary_soft"], "#BBF7D0"),
+        "error": (COLORS["error_soft"], "#FCA5A5"),
+    }
+    background, border = tones.get(tone, tones["low"])
+    return """
+        QFrame#{name} {{
+            background-color: {bg};
+            border: 1px solid {bd};
+            border-radius: 16px;
+        }}
+    """.format(name=object_name, bg=background, bd=border)
+
+
+def preview_surface_style() -> str:
+    """Video oldindan ko'rish maydoni — MD3 "surface dim" ustida."""
+    return """
+        background-color: #0B1220;
+        border-radius: 20px;
+        color: {text_muted};
+        font-size: 13px;
+    """.format(**COLORS)
+
+
 def info_field_style() -> str:
     """
     MD3 "outlined container" - o'qish uchun mo'ljallangan qiymat bloki.
@@ -356,6 +651,53 @@ def info_field_style() -> str:
             border-radius: 16px;
         }}
     """.format(**COLORS)
+
+
+def code_field_style(height: int = 64) -> str:
+    """
+    MD3 "filled text field" — qat'iy uzunlikdagi raqam uchun.
+
+    Oddiy `QLineEdit` dan uch narsa bilan farq qiladi va uchalasi
+    ham JSHSHIR kiritish holatidan kelib chiqqan:
+
+      * raqamlar MARKAZDA va oralig'i keng — 14 xonali sonni
+        ko'z bilan tekshirish (hujjatdagi bilan solishtirish)
+        chapga tekislangan zich matnda deyarli imkonsiz;
+      * balandlik katta — operator uni yarim qarab, klaviaturaga
+        qaramasdan to'ldiradi;
+      * fokus ramkasi qalinroq (2 px) va fon oqaradi — maydon
+        ekranning markazida turadi va operator unga to'liq
+        qaramasdan yozadi.
+
+    "TO'LDIRILDI" HOLATI RANG BILAN KO'RSATILMAYDI. Ramka fokus
+    paytida allaqachon yashil (MD3 standarti), ya'ni yozib
+    turgan operator uchun ikkinchi yashil hech qanday yangi
+    ma'lumot bermasdi - u faqat "fokus" va "to'ldirildi"
+    signallarini bir-biriga aralashtirardi. O'sha holat MATNDA
+    ko'rsatiladi: hisoblagich ("7 / 14") va yordamchi qator
+    ("Yana 7 ta raqam" -> "Tayyor").
+    """
+    return """
+        QLineEdit {{
+            background-color: {surface_alt};
+            border: 1.5px solid {border};
+            border-radius: 18px;
+            padding: 0 18px;
+            min-height: {height}px;
+            font-size: 26px;
+            font-weight: 600;
+            letter-spacing: 6px;
+            color: {text};
+            selection-background-color: {primary_light};
+        }}
+        QLineEdit:hover {{
+            border-color: {border_strong};
+        }}
+        QLineEdit:focus {{
+            background-color: {surface};
+            border: 2px solid {primary};
+        }}
+    """.format(height=height, **COLORS)
 
 
 def badge_style(kind: str = "success") -> str:

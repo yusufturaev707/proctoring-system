@@ -172,6 +172,9 @@ class RoleViewSet(PermissionRequiredMixin, AuditLogMixin, viewsets.ModelViewSet)
     required_permission = "users.manage"
     required_read_permission = "users.view"
     audit_object_type = "Role"
+    # Rol barcha viloyatlar uchun BITTA: viloyat admini uni tahrirlasa,
+    # boshqa viloyatlardagi xodimlarning huquqlari ham o'zgarardi.
+    republic_write_only = True
     filterset_fields = ["is_active", "is_global"]
     search_fields = ["name"]
 

@@ -81,6 +81,12 @@ class LoginPage(BrandBackdrop):
         outer.addLayout(top_bar)
         outer.addStretch()
 
+        # Logotip KARTA USTIDA, uning ichida emas: karta — forma, belgi
+        # esa butun ekranniki. Balandlik oynaga qarab o'zgaradi
+        # (`BrandBackdrop.resizeEvent`).
+        outer.addWidget(self.make_logo(), alignment=Qt.AlignmentFlag.AlignCenter)
+        outer.addSpacing(26)
+
         card = QFrame()
         card.setObjectName("loginCard")
         card.setFixedWidth(460)
@@ -116,7 +122,14 @@ class LoginPage(BrandBackdrop):
         title = QLabel("Imtihon nazorati")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setFont(QFont("Segoe UI", 22, QFont.Weight.Bold))
-        title.setStyleSheet("color: {}; background: transparent;".format(COLORS["text"]))
+        # O'lcham USLUBDA ham: global `QWidget { font-size: 15px }` qoidasi
+        # `setFont` dan ustun va sarlavha oddiy matn o'lchamiga tushib
+        # qolardi (`dialogs.base.apply_font` izohi).
+        title.setStyleSheet(
+            "color: {}; background: transparent; font-size: 26px; font-weight: 700;".format(
+                COLORS["text"]
+            )
+        )
         layout.addWidget(title)
         layout.addSpacing(4)
 
@@ -154,7 +167,7 @@ class LoginPage(BrandBackdrop):
         outer.addWidget(card, alignment=Qt.AlignmentFlag.AlignCenter)
         outer.addSpacing(12)
 
-        version = QLabel("v{}  ·  Chiqish: Ctrl + Q".format(APP_VERSION))
+        version = QLabel("v{}".format(APP_VERSION))
         version.setAlignment(Qt.AlignmentFlag.AlignCenter)
         version.setStyleSheet("color: rgba(255,255,255,0.45); background: transparent;")
         # Yagona chiqish yo'li ko'rinmas bo'lib qolmasligi kerak:
@@ -193,8 +206,8 @@ class LoginPage(BrandBackdrop):
             parts.append(zone["name"])
         if region.get("name"):
             parts.append(region["name"])
-        if (result or {}).get("public_ip"):
-            parts.append(result["public_ip"])
+        # if (result or {}).get("public_ip"):
+        #     parts.append(result["public_ip"])
         text = "  ·  ".join(parts)
         self._network_label.setText(text)
         self._network_label.setVisible(bool(text))

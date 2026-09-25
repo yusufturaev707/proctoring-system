@@ -7,15 +7,23 @@ yuzani himoya qiladi - u yerda boshqa auth, boshqa throttling va
 boshqa xavf profili.
 """
 
+import io
+import json
+from unittest.mock import patch
+
+from django.conf import settings
 from django.core.cache import cache
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.common.tests.utils import RedisStateMixin
+from PIL import Image
+
 from apps.controls.models import AllowedPublicIp, ClientExitPassword
-from apps.proctoring.models import AuditLog
+from apps.proctoring.models import AuditLog, ExamSession, FaceVerificationLog
 from apps.proctoring.tests import factories
 
 
@@ -291,6 +299,221 @@ class ExitVerifyTests(TestCase):
         self.assertEqual(entry.meta["region"], self.region.name)
 
 
+class FaceEndpointTests(RedisStateMixin, TestCase):
+    """
+    Kirishdagi FaceID yuzasi: MOSLIK va MOS KELMASLIK.
+
+    Ikkalasi ham serverga boradi, lekin natijasi butunlay boshqacha:
+    birinchisi sessiya ochadi, ikkinchisi faqat yozuv qoldiradi va
+    `challenge` ni sarflamaydi.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.client = APIClient()
+        self.exam = factories.make_exam()
+        self.schedule = factories.make_schedule(exam=self.exam)
+        self.device = factories.make_device()
+        self.computer = self.device.computer
+        self.operator = factories.make_user(permissions=["client.operate"])
+        self.auth = bearer(self.operator)
+        # Manba IP ro'yxatda bo'lishi shart: `FaceVerifyView`
+        # `check_source_ip` dan o'tadi. `8.8.8.8` HAQIQIY ommaviy
+        # manzil - RFC 5737 diapazonlarini Python xususiy deb biladi.
+        AllowedPublicIp.objects.create(ip_address="8.8.8.8", zone=self.computer.zone)
+        cache.clear()
+        self.addCleanup(cache.clear)
+
+        from apps.proctoring.services import session as session_service
+
+        self.challenge = session_service.lookup_candidate(
+            pinfl="30000000000001",
+            exam=self.exam,
+            device=self.device,
+            zone=self.computer.zone,
+        )["challenge"]
+
+    @staticmethod
+    def _image() -> SimpleUploadedFile:
+        buffer = io.BytesIO()
+        Image.new("RGB", (160, 120), "red").save(buffer, format="JPEG")
+        return SimpleUploadedFile("face.jpg", buffer.getvalue(), content_type="image/jpeg")
+
+    def _post(self, url_name, payload, *, multipart=False):
+        return self.client.post(
+            reverse(url_name),
+            payload,
+            format="multipart" if multipart else "json",
+            HTTP_AUTHORIZATION=self.auth,
+            HTTP_X_DEVICE_ID=self.device.device_id,
+            REMOTE_ADDR="8.8.8.8",
+        )
+
+    def test_verify_accepts_multipart_with_image(self):
+        """
+        Vektor multipart'da JSON SATR sifatida keladi.
+
+        `multipart/form-data` ichma-ich strukturani ko'tarmaydi - 512
+        float alohida maydon bo'lib kelardi.
+        """
+        response = self._post(
+            "client-face-verify",
+            {
+                "challenge": self.challenge,
+                "embedding": json.dumps([0.1] * 512),
+                "score": "88",
+                "faces_detected": "1",
+                "image": self._image(),
+            },
+            multipart=True,
+        )
+
+        self.assertEqual(response.status_code, 201, response.content)
+        log = FaceVerificationLog.objects.get()
+        self.assertEqual(log.score, 88)
+        self.assertTrue(log.image_path)
+
+    def test_verify_refuses_score_below_threshold(self):
+        response = self._post(
+            "client-face-verify",
+            {
+                "challenge": self.challenge,
+                "embedding": [0.1] * 512,
+                "score": 12,
+                "faces_detected": 1,
+            },
+        )
+        # 403: bu ruxsat masalasi, "noto'g'ri so'rov" emas -
+        # `FaceVerificationFailed` shu bilan qaytadi.
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["error"]["code"], "face_verification_failed")
+        self.assertFalse(ExamSession.objects.exists())
+
+    def test_attempt_records_failure_without_session(self):
+        response = self._post(
+            "client-face-attempt",
+            {
+                "challenge": self.challenge,
+                "score": "31",
+                "faces_detected": "1",
+                "image": self._image(),
+            },
+            multipart=True,
+        )
+
+        self.assertEqual(response.status_code, 201, response.content)
+        data = response.json()["data"]
+        self.assertEqual(data["attempts"], 1)
+
+        log = FaceVerificationLog.objects.get()
+        self.assertIsNone(log.session_id)
+        self.assertFalse(log.passed)
+        self.assertTrue(log.image_path)
+        self.assertFalse(ExamSession.objects.exists())
+
+    def test_attempt_keeps_the_challenge_alive(self):
+        """Muvaffaqiyatsiz urinishdan keyin ham sessiya ochilishi mumkin."""
+        self._post(
+            "client-face-attempt",
+            {"challenge": self.challenge, "score": 31, "faces_detected": 1},
+        )
+        response = self._post(
+            "client-face-verify",
+            {
+                "challenge": self.challenge,
+                "embedding": [0.1] * 512,
+                "score": 92,
+                "faces_detected": 1,
+            },
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+
+
+class PeriodicFaceEndpointTests(RedisStateMixin, TestCase):
+    """Test davomidagi tekshiruv - faqat muvaffaqiyatsiz natija keladi."""
+
+    def setUp(self):
+        super().setUp()
+        self.client = APIClient()
+        self.url = reverse("client-face-periodic")
+        self.device = factories.make_device()
+        self.session = factories.make_session(device=self.device)
+        self.operator = factories.make_user(permissions=["client.operate"])
+
+        from apps.proctoring.services import session as session_service
+
+        self.raw_token = session_service.issue_session_token(self.session)
+        self.auth = bearer(self.operator)
+
+    def _post(self, payload, *, multipart=False):
+        return self.client.post(
+            self.url,
+            payload,
+            format="multipart" if multipart else "json",
+            HTTP_AUTHORIZATION=self.auth,
+            HTTP_X_DEVICE_ID=self.device.device_id,
+            HTTP_X_PROCTORING_SESSION=self.raw_token,
+        )
+
+    def test_embedding_is_not_accepted_anymore(self):
+        """
+        `embedding` maydoni YO'Q: server solishtirmaydi.
+
+        Uni jimgina qabul qilish "kim solishtiryapti?" degan savolni
+        ochiq qoldirardi. Serializer uni e'tiborsiz qoldiradi, ball
+        esa MAJBURIY.
+        """
+        response = self._post({"faces_detected": 1, "embedding": [0.1] * 512})
+        self.assertEqual(response.status_code, 400)
+
+    def test_failed_check_stores_image_and_counts(self):
+        buffer = io.BytesIO()
+        Image.new("RGB", (160, 120), "blue").save(buffer, format="JPEG")
+        response = self._post(
+            {
+                "score": "10",
+                "faces_detected": "1",
+                "passed_since_last": "5",
+                "image": SimpleUploadedFile(
+                    "face.jpg", buffer.getvalue(), content_type="image/jpeg"
+                ),
+            },
+            multipart=True,
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        data = response.json()["data"]
+        self.assertFalse(data["passed"])
+        self.assertEqual(data["fail_count"], 1)
+
+        log = FaceVerificationLog.objects.get()
+        self.assertEqual(log.stage, FaceVerificationLog.Stage.PERIODIC)
+        self.assertEqual(log.source, FaceVerificationLog.Source.CLIENT)
+        self.assertTrue(log.image_path)
+
+    def test_heartbeat_carries_the_check_counter(self):
+        """
+        `face_checks` ni CLIENT yozadi.
+
+        Serverga faqat xatolar keladi, ya'ni jami tekshiruvlar sonini
+        u ko'ra olmaydi. Qiymat heartbeat orqali Redis hash'iga
+        tushadi va write-behind uni `face_check_count` ga ko'chiradi.
+        """
+        response = self.client.post(
+            reverse("client-heartbeat"),
+            {"face_checks": 42, "network_ok": True},
+            format="json",
+            HTTP_AUTHORIZATION=self.auth,
+            HTTP_X_DEVICE_ID=self.device.device_id,
+            HTTP_X_PROCTORING_SESSION=self.raw_token,
+        )
+        self.assertEqual(response.status_code, 200)
+
+        from apps.proctoring.services import state as session_state
+
+        state = session_state.get_state(self.session.pk)
+        self.assertEqual(int(state["face_checks"]), 42)
+
 class EventBatchTests(RedisStateMixin, TestCase):
     """Hodisa oqimi — sessiya tokeni talab qilinadigan yuza."""
 
@@ -378,3 +601,231 @@ class EventBatchTests(RedisStateMixin, TestCase):
         session_service.terminate_session(self.session, reason="sinov")
         response = self._post([{"type": "window_blur", "severity": 1}])
         self.assertEqual(response.status_code, 404)
+
+
+class HandshakeHardwareTests(TestCase):
+    """
+    Handshake apparat haqida nima yozadi.
+
+    Bu yagona kanal: alohida "hardware report" endpointi YO'Q va
+    bo'lmasligi ham kerak - apparat har handshake'da baribir
+    xabar qilinadi, ikkinchi endpoint esa faqat ikkinchi
+    autentifikatsiya yuzasini ochardi.
+    """
+
+    def setUp(self):
+        cache.clear()
+        self.addCleanup(cache.clear)
+
+        self.client = APIClient()
+        self.zone = factories.make_zone()
+        AllowedPublicIp.objects.create(ip_address="8.8.8.8", zone=self.zone)
+        self.computer = factories.make_computer(zone=self.zone)
+        self.device = factories.make_device(computer=self.computer)
+        self.user = factories.make_user(permissions=["client.operate"])
+        self.url = reverse("client-handshake")
+
+    def post(self, payload):
+        return self.client.post(
+            self.url,
+            payload,
+            format="json",
+            HTTP_AUTHORIZATION=bearer(self.user),
+            HTTP_X_DEVICE_ID=self.device.device_id,
+            REMOTE_ADDR="8.8.8.8",
+        )
+
+    def test_records_gpu_and_profile(self):
+        response = self.post(
+            {
+                "app_version": "1.0.0",
+                "gpu_name": "NVIDIA GeForce GTX 1660 SUPER",
+                "performance_profile": "medium",
+            }
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.device.refresh_from_db()
+        self.assertEqual(self.device.gpu_name, "NVIDIA GeForce GTX 1660 SUPER")
+        self.assertEqual(self.device.performance_profile, "medium")
+
+    def test_accepts_minimal_profile(self):
+        """
+        `minimal` — client'dagi eng past profil.
+
+        Ro'yxatdan tushib qolsa, aynan eng zaif mashinalarning
+        handshake'i 400 olardi va ular umuman ishga tusha
+        olmasdi - ya'ni xato eng yomon joyda chiqardi.
+        """
+        response = self.post({"app_version": "1.0.0", "performance_profile": "minimal"})
+
+        self.assertEqual(response.status_code, 200)
+        self.device.refresh_from_db()
+        self.assertEqual(self.device.performance_profile, "minimal")
+
+    def test_rejects_unknown_profile(self):
+        response = self.post({"app_version": "1.0.0", "performance_profile": "turbo"})
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_missing_hardware_keeps_previous_values(self):
+        """
+        Eski client (yoki apparat hali aniqlanmagan) mavjud
+        qiymatni O'CHIRMAYDI.
+
+        Aniqlash fon thread'ida ketadi va birinchi handshake'ga
+        ulgurmasligi mumkin. Bo'sh qiymat yozilsa, panel bir
+        marta aniqlangan mashinani "GPU yo'q" deb ko'rsatardi.
+        """
+        self.device.gpu_name = "NVIDIA RTX 3060"
+        self.device.performance_profile = "high"
+        self.device.save(update_fields=["gpu_name", "performance_profile"])
+
+        response = self.post({"app_version": "1.0.0"})
+
+        self.assertEqual(response.status_code, 200)
+        self.device.refresh_from_db()
+        self.assertEqual(self.device.gpu_name, "NVIDIA RTX 3060")
+        self.assertEqual(self.device.performance_profile, "high")
+
+    def test_info_pc_is_refreshed(self):
+        """
+        Tafsilot `Computer.info_pc` ga tushadi.
+
+        Ro'yxatdan o'tish BIR MARTA bo'ladi va o'shandagi tavsif
+        eskiradi: RAM qo'shiladi, drayver o'rnatiladi. "Nega bu
+        mashinada kuzatuv sekin?" degan savolga javob aynan shu
+        yerda.
+        """
+        self.computer.info_pc = {"os": "Windows-10", "hardware": {}}
+        self.computer.save(update_fields=["info_pc"])
+
+        response = self.post(
+            {
+                "app_version": "1.0.0",
+                "info_pc": {
+                    "os": "Windows-11",
+                    "hardware": {"gpu_warning": "onnxruntime CPU nashri"},
+                },
+            }
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.computer.refresh_from_db()
+        self.assertEqual(self.computer.info_pc["os"], "Windows-11")
+        self.assertEqual(
+            self.computer.info_pc["hardware"]["gpu_warning"], "onnxruntime CPU nashri"
+        )
+
+    def test_empty_info_pc_keeps_previous(self):
+        self.computer.info_pc = {"os": "Windows-10"}
+        self.computer.save(update_fields=["info_pc"])
+
+        response = self.post({"app_version": "1.0.0"})
+
+        self.assertEqual(response.status_code, 200)
+        self.computer.refresh_from_db()
+        self.assertEqual(self.computer.info_pc, {"os": "Windows-10"})
+
+
+class HandshakeMachineTests(TestCase):
+    """
+    Handshake javobidagi `machine` bloki.
+
+    Bu yagona kanal: mashina tekshiruvi natijasi handshake bergan
+    kontekstga (bino, kompyuter) bog'liq va alohida endpoint ikkala
+    javobning bir-biriga mos kelishini kafolatlay olmasdi —
+    oradagi soniyalarda administrator kompyuterni ko'chirishi
+    mumkin.
+    """
+
+    def setUp(self):
+        cache.clear()
+        self.addCleanup(cache.clear)
+
+        self.client = APIClient()
+        self.zone = factories.make_zone()
+        AllowedPublicIp.objects.create(ip_address="8.8.8.8", zone=self.zone)
+        self.computer = factories.make_computer(
+            zone=self.zone, mac_address="AA:BB:CC:DD:EE:10"
+        )
+        self.device = factories.make_device(computer=self.computer)
+        self.user = factories.make_user(permissions=["client.operate"])
+        self.url = reverse("client-handshake")
+
+    def post(self, payload):
+        return self.client.post(
+            self.url,
+            payload,
+            format="json",
+            HTTP_AUTHORIZATION=bearer(self.user),
+            HTTP_X_DEVICE_ID=self.device.device_id,
+            REMOTE_ADDR="8.8.8.8",
+        )
+
+    def machine(self, payload):
+        response = self.post(payload)
+        self.assertEqual(response.status_code, 200)
+        return response.json()["data"]["machine"]
+
+    def test_matching_mac_is_allowed(self):
+        machine = self.machine({"app_version": "1.0.0", "mac_address": "AA:BB:CC:DD:EE:10"})
+
+        self.assertEqual(machine["status"], "ok")
+        self.assertTrue(machine["allowed"])
+
+    def test_unknown_mac_blocks_by_default(self):
+        """
+        `REQUIRE_MAC_MATCH` standart qiymati — `true`.
+
+        Ya'ni ro'yxatda yo'q mashina imtihonni BOSHLAY OLMAYDI.
+        Sabab client'da emas, shu yerda: qaror serverniki va uni
+        client tomonda hisoblash ikkita qoidani yaratardi.
+        """
+        machine = self.machine({"app_version": "1.0.0", "mac_address": "AA:BB:CC:DD:EE:99"})
+
+        self.assertEqual(machine["status"], "not_found")
+        self.assertFalse(machine["allowed"])
+        self.assertIn(self.zone.name, machine["message"])
+
+    def test_missing_mac_also_blocks(self):
+        """
+        MAC yubormaslik tekshiruvni CHETLAB O'TMAYDI.
+
+        Aks holda uni o'chirish uchun maydonni bo'sh qoldirish
+        yetarli bo'lardi. Eski client'lar uchun yo'l —
+        `REQUIRE_MAC_MATCH=false`.
+        """
+        machine = self.machine({"app_version": "1.0.0"})
+
+        self.assertEqual(machine["status"], "unknown")
+        self.assertFalse(machine["allowed"])
+
+    def test_setting_downgrades_block_to_warning(self):
+        """
+        `REQUIRE_MAC_MATCH=false` — natija qaytadi, lekin to'smaydi.
+
+        Dastlabki joylashtirishda inventarizatsiya hali to'liq
+        bo'lmasligi mumkin va majburiy tekshiruv butun markazni
+        to'xtatardi.
+        """
+        with patch.dict(settings.PROCTORING, {"REQUIRE_MAC_MATCH": False}):
+            machine = self.machine(
+                {"app_version": "1.0.0", "mac_address": "AA:BB:CC:DD:EE:99"}
+            )
+
+        self.assertEqual(machine["status"], "not_found")
+        self.assertTrue(machine["allowed"])
+
+    def test_mac_is_never_written_to_computer(self):
+        """Tekshiruv faqat solishtiradi — inventarizatsiyani o'zgartirmaydi."""
+        self.post({"app_version": "1.0.0", "mac_address": "AA:BB:CC:DD:EE:99"})
+
+        self.computer.refresh_from_db()
+        self.assertEqual(self.computer.mac_address, "AA:BB:CC:DD:EE:10")
+
+    def test_invalid_mac_is_rejected_by_length(self):
+        """Serializer chegarasi: 17 belgidan uzun qiymat qabul qilinmaydi."""
+        response = self.post({"app_version": "1.0.0", "mac_address": "A" * 40})
+
+        self.assertEqual(response.status_code, 400)

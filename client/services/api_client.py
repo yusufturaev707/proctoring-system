@@ -108,6 +108,7 @@ class ApiClient(metaclass=SingletonMeta):
         files: Optional[dict] = None,
         data: Optional[dict] = None,
         with_auth: bool = True,
+        timeout: Optional[float] = None,
         _retry: bool = True,
     ) -> Any:
         headers = self._headers(with_auth=with_auth)
@@ -120,6 +121,10 @@ class ApiClient(metaclass=SingletonMeta):
                 files=files,
                 data=data,
                 headers=headers,
+                # `None` - mijozning umumiy qiymati (`API_TIMEOUT`).
+                # Qisqasi faqat kutib bo'lmaydigan joyda beriladi
+                # (dasturdan chiqishda sessiyani yakunlash).
+                timeout=httpx.USE_CLIENT_DEFAULT if timeout is None else timeout,
             )
         except httpx.TimeoutException as exc:
             log.warning("Timeout: %s %s (%s)", method, path, exc)

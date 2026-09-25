@@ -3,7 +3,7 @@ import {
   Alert, AlertTitle, Autocomplete, Box, Button, Checkbox, Chip, CircularProgress,
   Dialog, DialogActions, DialogContent, DialogTitle, Divider, FormControlLabel,
   FormHelperText, Grid, IconButton, InputAdornment, MenuItem, Stack, Switch,
-  TextField, Tooltip, Typography,
+  TextField, Tooltip, Typography, useMediaQuery, useTheme,
 } from '@mui/material'
 import CloseIcon from '@mui/icons-material/CloseOutlined'
 import VisibilityIcon from '@mui/icons-material/VisibilityOutlined'
@@ -48,6 +48,8 @@ export default function ResourceForm({
   context = {},
 }) {
   const isEdit = Boolean(row?.id)
+  const theme = useTheme()
+  const fullScreen = useMediaQuery(theme.breakpoints.down('sm'))
   const fieldNames = useMemo(() => fields.map((field) => field.name), [fields])
 
   const [form, setForm] = useState({})
@@ -176,9 +178,21 @@ export default function ResourceForm({
         }}
         maxWidth={maxWidth}
         fullWidth
+        // Telefonda forma TO'LIQ EKRAN (M3 "full-screen dialog"): o'nta
+        // maydonli forma 16 px chetli oynada klaviatura ochilganda ikki
+        // qatorga tushib qolardi.
+        fullScreen={fullScreen}
         keepMounted={false}
       >
-        <form onSubmit={handleSubmit} noValidate>
+        {/* Forma paper'ning FLEX bolasi: sarlavha va tugmalar joyida qoladi,
+            faqat maydonlar suriladi. Ilgari butun oyna surilardi va uzun
+            formada «Saqlash» tugmasi pastda, ko'rinmay qolardi. */}
+        <Box
+          component="form"
+          onSubmit={handleSubmit}
+          noValidate
+          sx={{ display: 'flex', flexDirection: 'column', minHeight: 0, flex: '1 1 auto' }}
+        >
           <DialogTitle sx={{ pr: 6 }}>
             {title || (isEdit ? 'Tahrirlash' : 'Yangi yozuv')}
             {description && (
@@ -213,7 +227,7 @@ export default function ResourceForm({
                     <Divider sx={{ mb: 2, mt: 0.5 }} />
                   </>
                 )}
-                <Grid container spacing={2.5}>
+                <Grid container spacing={{ xs: 2, sm: 2.5 }}>
                   {items.map((field) => (
                     <Grid item xs={12} sm={field.colSpan || 12} key={field.name}>
                       <FieldControl
@@ -237,7 +251,7 @@ export default function ResourceForm({
             ))}
           </DialogContent>
 
-          <DialogActions sx={{ px: 3, py: 2 }}>
+          <DialogActions sx={{ px: { xs: 2, sm: 3 }, py: 2, pb: { xs: 'calc(16px + env(safe-area-inset-bottom))', sm: 2 } }}>
             {isDirty && (
               <Typography variant="caption" color="text.secondary" sx={{ mr: 'auto' }}>
                 Saqlanmagan o‘zgarishlar bor
@@ -255,7 +269,7 @@ export default function ResourceForm({
               {submitting ? 'Saqlanmoqda…' : 'Saqlash'}
             </Button>
           </DialogActions>
-        </form>
+        </Box>
       </Dialog>
 
       <ConfirmDialog

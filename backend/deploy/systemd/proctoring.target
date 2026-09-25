@@ -1,0 +1,6 @@
+[Unit]
+Description=Proctoring — barcha servislar
+Wants=proctoring-api.service proctoring-ws.service proctoring-celery-ingest.service proctoring-celery-maintenance.service proctoring-celery-beat.service
+
+[Install]
+WantedBy=multi-user.target

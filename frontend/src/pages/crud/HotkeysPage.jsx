@@ -11,6 +11,8 @@ import { hotkeys as hotkeysApi } from '../../api/endpoints'
 export default function HotkeysPage() {
   return (
     <ResourcePage
+      // Barcha viloyatlar uchun bitta yozuv — o'zgartirish respublika darajasida.
+      shared
       title="Tezkor tugmalar"
       subtitle="Imtihon paytida bloklanadigan klaviatura kombinatsiyalari"
       queryKey="hotkeys"

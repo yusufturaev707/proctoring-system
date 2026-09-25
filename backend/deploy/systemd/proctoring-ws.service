@@ -1,0 +1,27 @@
+[Unit]
+Description=Proctoring — WebSocket (uvicorn, ASGI/Channels)
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=proctoring
+Group=proctoring
+WorkingDirectory=/srv/proctoring/backend
+# `.env` ham DJANGO_SETTINGS_MODULE ni beradi (`config/env.py`), lekin bu
+# yerda ochiq yozilgani ustun — `.env` da xato qolsa ham production.
+Environment=DJANGO_SETTINGS_MODULE=config.settings.production
+Environment=PYTHONPATH=/srv/proctoring/backend/src
+ExecStart=/srv/proctoring/backend/.venv/bin/uvicorn config.asgi:application --host 127.0.0.1 --port 8001 --workers 2 --proxy-headers --forwarded-allow-ips 127.0.0.1 --no-access-log
+Restart=always
+RestartSec=5
+# `--no-access-log`: panel xodim JWT'sini query'da yuboradi (nginx'da ham o'chiq).
+# Qattiqlashtirish: kod o'qish uchun, yozish faqat quyidagi kataloglarga.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/srv/proctoring/storage /srv/proctoring/backend/logs /srv/proctoring/backend/var
+
+[Install]
+WantedBy=multi-user.target

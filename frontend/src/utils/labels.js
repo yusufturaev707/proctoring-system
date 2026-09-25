@@ -21,6 +21,28 @@ export const EVENT_LABEL = {
   face_mismatch: 'Yuz mos kelmadi',
   multiple_faces: 'Bir nechta yuz',
   object_detected: 'Taqiqlangan obyekt',
+  // --- AI kuzatuv: shaxs ---
+  face_occluded: 'Yuz qisman yopilgan',
+  face_too_far: 'Yuz juda uzoqda',
+  face_too_close: 'Yuz juda yaqin',
+  student_left_frame: 'Kadrdan chiqdi',
+  second_person: 'Kadrda ikkinchi odam',
+  // --- AI kuzatuv: nigoh va poza ---
+  looking_away: 'Chetga qaradi',
+  prolonged_looking_away: 'Uzoq vaqt chetga qaradi',
+  excessive_head_movement: 'Bosh harakati ko‘p',
+  eyes_closed: 'Ko‘zlar yumuq',
+  hand_below_desk: 'Qo‘l stol ostida',
+  suspicious_hand_movement: 'Shubhali qo‘l harakati',
+  unauthorized_device: 'Ruxsatsiz qurilma',
+  // --- AI kuzatuv: birlashtirilgan xulosa ---
+  high_suspicion_phone: 'Yuqori shubha — telefon',
+  high_suspicion_person: 'Yuqori shubha — begona shaxs',
+  high_suspicion_identity: 'Yuqori shubha — shaxs almashtirilgan',
+  // --- AI kuzatuvning o'z holati ---
+  camera_degraded: 'Kamera sifati pasaydi',
+  camera_reconnected: 'Kamera qayta ulandi',
+  proctoring_degraded: 'Kuzatuv cheklangan rejimda',
   network_lost: 'Tarmoq uzildi',
   network_restored: 'Tarmoq tiklandi',
   client_anomaly: 'Client anomaliyasi',
@@ -35,6 +57,18 @@ export const TP_KIND_LABEL = {
   hardware: 'Uskuna',
   software: 'Dastur',
   other: 'Boshqa',
+}
+
+// Client apparatga qarab o'zi tanlaydigan unumdorlik profili.
+// Ro'yxat `controls.ProctoringPolicy.GpuProfile` bilan bir xil
+// (`auto` dan tashqari - u administrator TANLOVI, client esa
+// O'LCHOV natijasini yuboradi).
+export const AI_PROFILE_LABEL = {
+  high: 'Yuqori (GPU)',
+  medium: 'O‘rta (GPU)',
+  low: 'Past',
+  cpu: 'Faqat CPU',
+  minimal: 'Minimal (faqat yuz)',
 }
 
 export const DEVICE_STATUS_LABEL = {
@@ -78,6 +112,23 @@ export const formatDuration = (seconds) => {
   if (hours) return `${hours}s ${minutes}d`
   if (minutes) return `${minutes}d`
   return `${seconds}s`
+}
+
+/**
+ * Kompyuterning ekrandagi nomi: "№12 · INV-001".
+ *
+ * BITTA JOYDA, chunki u beshta ekranda ko'rinadi (sessiyalar,
+ * jonli kuzatuv, sessiya tafsiloti, qurilma tokenlari, kompyuterlar)
+ * va har birida alohida yozilsa, ular albatta ajralib ketardi -
+ * biri raqamsiz mashinada "№null" chiqarardi, ikkinchisi bo'sh
+ * katak.
+ *
+ * RAQAM OLDINDA: operator mashinani aynan shu bo'yicha qidiradi,
+ * inventar kodi esa buxgalteriya uchun va stikerning orqasida.
+ */
+export const computerLabel = (number, code) => {
+  if (number) return code ? `№${number} · ${code}` : `№${number}`
+  return code || ''
 }
 
 export const formatBytes = (bytes) => {

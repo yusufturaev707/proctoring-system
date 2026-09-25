@@ -25,6 +25,7 @@ import { useResource } from './useResource'
 import { useAuth } from '../../context/AuthContext'
 import { exportCsv } from '../../utils/exportCsv'
 import { useUi } from '../../context/UiContext'
+import { FILTER_FIELD_SX } from './responsive'
 
 /**
  * Model uchun to'liq CRUD sahifasi.
@@ -56,8 +57,12 @@ export default function ResourcePage({
   searchable = true,
   defaultSort,
   staticParams,
+  /** Ro'yxatni o'zi yangilash oralig'i (ms) — `useResource` ga uzatiladi. */
+  refetchInterval = false,
   height = 620,
   rowActions,
+  // Amallar ustuni kengligi: bir nechta tugmali sahifalar uchun.
+  actionsWidth = 170,
   deleteConfirmPhrase,
   deleteDescription = 'Bu amalni qaytarib bo‘lmaydi.',
   getRowLabel = (row) => row?.name || `#${row?.id}`,
@@ -91,10 +96,16 @@ export default function ResourcePage({
    * ko'rishdan oldin kerak.
    */
   banner,
+  /**
+   * Yozuv BARCHA viloyatlar uchun bitta (rol, sozlama, imtihon). Shunda
+   * o'zgartirish faqat respublika darajasida — backend `RepublicLevelWrite`
+   * bilan bir xil qoida (`AuthContext.canShared`).
+   */
+  shared = false,
 }) {
-  const { can } = useAuth()
+  const { can, canShared, user } = useAuth()
   const { notify } = useUi()
-  const canManage = can(permission)
+  const canManage = shared ? canShared(permission) : can(permission)
 
   const resource = useResource({
     key: queryKey,
@@ -103,6 +114,7 @@ export default function ResourcePage({
     defaultFilters,
     staticParams,
     searchable,
+    refetchInterval,
     urlNamespace: '',
   })
   const showSkeleton = useDeferredLoading(resource.isLoading)
@@ -131,6 +143,32 @@ export default function ResourcePage({
           ]
         : filterDefs,
     [filterDefs, restorable],
+  )
+  // Viloyat foydalanuvchisiga viloyat filtri KO'RSATILMAYDI (`regionScope`):
+  // server unga faqat o'z viloyatini beradi va bitta variantli tanlov
+  // ekranda joy egallab, "boshqa viloyatni ham ko'ra olamanmi?" degan
+  // noto'g'ri savol tug'dirardi. Bog'liq bino filtri o'shanda barcha
+  // binolarni ko'rsatadi — ular baribir shu viloyatniki.
+  const visibleFilterDefs = useMemo(
+    () => allFilterDefs.filter((filter) => !(filter.regionScope && user?.is_region_scoped)),
+    [allFilterDefs, user],
+  )
+
+  /**
+   * Filtr qiymati + unga BOG'LIQ filtrlarni tozalash (`resets`).
+   *
+   * Viloyat almashganda eski bino qoldirilsa, so'rov "Andijon viloyati +
+   * Toshkentdagi bino" bo'lib ketardi va jadval sababsiz bo'sh chiqardi.
+   */
+  const changeFilter = useCallback(
+    (filter, value) => {
+      resource.setFilters((prev) => {
+        const next = { ...prev, [filter.name]: value }
+        for (const child of filter.resets || []) next[child] = ''
+        return next
+      })
+    },
+    [resource],
   )
   const [menuAnchor, setMenuAnchor] = useState(null)
   const searchRef = useRef(null)
@@ -240,7 +278,7 @@ export default function ResourcePage({
       {
         field: '__actions',
         headerName: '',
-        width: rowActions ? 170 : 96,
+        width: rowActions ? actionsWidth : 96,
         sortable: false,
         filterable: false,
         align: 'right',
@@ -286,7 +324,7 @@ export default function ResourcePage({
       },
     ]
   }, [
-    baseColumns, canManage, rowActions, resource, openEdit, canDelete, canEdit,
+    baseColumns, canManage, rowActions, actionsWidth, resource, openEdit, canDelete, canEdit,
     toggleField, toggleLabel, getRowLabel, restorable,
   ])
 
@@ -312,14 +350,26 @@ export default function ResourcePage({
 
   const toolbar = (
     <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
-      <Stack direction="row" spacing={1.5} alignItems="center" sx={{ p: 2 }}>
+      {/* Telefonda qidiruv BUTUN qatorni oladi, tugmalar keyingi qatorga
+          o'tadi. Ilgari hammasi bitta qatorda edi va 390 px ekranda
+          qidiruv maydoniga ~110 px qolardi — placeholder "Raq…" bo'lib,
+          nima bo'yicha qidirish mumkinligi ko'rinmasdi. */}
+      <Stack
+        direction="row"
+        alignItems="center"
+        flexWrap="wrap"
+        useFlexGap
+        columnGap={1.5}
+        rowGap={1.25}
+        sx={{ p: { xs: 1.5, sm: 2 } }}
+      >
         {searchable && (
           <TextField
             inputRef={searchRef}
             value={resource.search}
             onChange={(event) => resource.setSearch(event.target.value)}
             placeholder={searchPlaceholder}
-            sx={{ maxWidth: 320 }}
+            sx={{ flex: { xs: '1 1 100%', sm: '0 1 320px' }, maxWidth: { sm: 320 } }}
             InputProps={{
               startAdornment: (
                 <InputAdornment position="start">
@@ -333,11 +383,12 @@ export default function ResourcePage({
                   </IconButton>
                 </InputAdornment>
               ) : (
-                <InputAdornment position="end">
+                // Telefonda klaviatura yorlig'i ma'nosiz — `/` tugmasi yo'q.
+                <InputAdornment position="end" sx={{ display: { xs: 'none', md: 'flex' } }}>
                   <Box
                     component="kbd"
                     sx={{
-                      px: 0.75, py: 0.1, borderRadius: 1, fontSize: 11,
+                      px: 0.75, py: 0.1, borderRadius: '6px', fontSize: 11,
                       border: 1, borderColor: 'divider', color: 'text.disabled',
                       fontFamily: 'monospace', lineHeight: 1.6,
                     }}
@@ -350,7 +401,7 @@ export default function ResourcePage({
           />
         )}
 
-        {allFilterDefs.length > 0 && (
+        {visibleFilterDefs.length > 0 && (
           <Badge badgeContent={activeFilterCount} color="primary">
             <Button
               variant={filtersOpen ? 'contained' : 'outlined'}
@@ -404,27 +455,35 @@ export default function ResourcePage({
           spacing={2}
           flexWrap="wrap"
           useFlexGap
-          sx={{ px: 2, pb: 2, pt: 2, bgcolor: 'surface.subtle' }}
+          sx={{ px: { xs: 1.5, sm: 2 }, pb: 2, pt: 2, bgcolor: 'm3.surfaceContainerLow' }}
         >
-          {allFilterDefs.map((filter) => (
-            <TextField
-              key={filter.name}
-              select={filter.type === 'select'}
-              type={filter.type === 'select' ? undefined : filter.type || 'text'}
-              label={filter.label}
-              value={resource.filters[filter.name] ?? ''}
-              onChange={(event) => resource.setFilter(filter.name, event.target.value)}
-              sx={{ minWidth: 200, maxWidth: 260 }}
-              InputLabelProps={filter.type === 'date' ? { shrink: true } : undefined}
-            >
-              {filter.type === 'select' &&
-                [{ value: '', label: 'Barchasi' }, ...(filter.options || [])].map((option) => (
-                  <MenuItem key={String(option.value)} value={option.value}>
-                    {option.label}
-                  </MenuItem>
-                ))}
-            </TextField>
-          ))}
+          {visibleFilterDefs.map((filter) => {
+            // `options` funksiya bo'lsa — joriy filtrlardan (viloyat ->
+            // shu viloyatning binolari), `formFields` dagi naqsh bilan bir xil.
+            const options = typeof filter.options === 'function'
+              ? filter.options(resource.filters)
+              : filter.options || []
+            return (
+              <TextField
+                key={filter.name}
+                select={filter.type === 'select'}
+                type={filter.type === 'select' ? undefined : filter.type || 'text'}
+                label={filter.label}
+                value={resource.filters[filter.name] ?? ''}
+                onChange={(event) => changeFilter(filter, event.target.value)}
+                sx={FILTER_FIELD_SX}
+                InputLabelProps={filter.type === 'date' ? { shrink: true } : undefined}
+                SelectProps={filter.type === 'select' ? { MenuProps: { PaperProps: { sx: { maxHeight: 420 } } } } : undefined}
+              >
+                {filter.type === 'select' &&
+                  [{ value: '', label: filter.allLabel || 'Barchasi' }, ...options].map((option) => (
+                    <MenuItem key={String(option.value)} value={option.value}>
+                      {option.label}
+                    </MenuItem>
+                  ))}
+              </TextField>
+            )
+          })}
           {activeFilterCount > 0 && (
             <Button color="inherit" startIcon={<ClearIcon />} onClick={resource.resetFilters}>
               Tozalash
@@ -441,7 +500,7 @@ export default function ResourcePage({
         title={title}
         subtitle={subtitle}
         actions={
-          <Stack direction="row" spacing={1} alignItems="center">
+          <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0, maxWidth: '100%' }}>
             {headerActions}
             {canManage && canCreate && (
               <Tooltip title="Klaviaturada: N">

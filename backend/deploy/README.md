@@ -13,6 +13,68 @@ har birining yuklama profili boshqacha.
 > `celery beat` bir nechta ishga tushirilsa, har bir vazifa bir necha marta
 > bajariladi. Bu ingest buffer'ida ma'lumot dublikatiga olib keladi.
 
+## Birinchi o'rnatish (bitta server, Ubuntu)
+
+Katalog tartibi — nginx va systemd fayllari shunga yozilgan:
+
+```
+/srv/proctoring/               repo ildizi (git clone)
+    backend/.env               deploy/env.production.example dan
+    backend/.venv/             deploy.sh yaratadi
+    frontend/dist/             deploy.sh build qiladi (nginx root)
+    storage/screenshots/       SCREENSHOT_ROOT = nginx `alias`
+```
+
+```bash
+# 1. Tizim paketlari va foydalanuvchi
+sudo apt install -y python3.12-venv postgresql redis-server nginx nodejs npm
+sudo useradd --system --home /srv/proctoring --shell /bin/bash proctoring
+sudo git clone <repo> /srv/proctoring && sudo chown -R proctoring: /srv/proctoring
+
+# 2. PostgreSQL va Redis (quyidagi "Infratuzilma" — `noeviction` MAJBURIY)
+sudo -u postgres createuser proctoring -P
+sudo -u postgres createdb -O proctoring proctoring
+
+# 3. .env — sirlarni yaratib to'ldiring (fayl ichida buyruqlar bor)
+sudo -u proctoring cp backend/deploy/env.production.example backend/.env
+sudo -u proctoring nano backend/.env
+
+# 4. systemd — unit'lar va deploy uchun cheklangan sudo
+sudo cp backend/deploy/systemd/* /etc/systemd/system/
+echo 'proctoring ALL=(root) NOPASSWD: /usr/bin/systemctl restart proctoring-*'   | sudo tee /etc/sudoers.d/proctoring
+sudo systemctl daemon-reload && sudo systemctl enable proctoring.target
+
+# 5. nginx — domen, sertifikat va yo'llarni moslang
+sudo cp backend/deploy/proxy_common.conf /etc/nginx/proxy_common.conf
+sudo cp backend/deploy/nginx.conf.example /etc/nginx/sites-available/proctoring
+sudo ln -s /etc/nginx/sites-available/proctoring /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+
+# 6. Deploy (paketlar, check --deploy, migrate, seed, partitsiyalar, build)
+sudo -u proctoring bash backend/deploy/deploy.sh --first-install
+sudo -u proctoring backend/.venv/bin/python backend/manage.py createsuperuser
+```
+
+Keyingi yangilanishlar: `git pull` → `sudo -u proctoring bash backend/deploy/deploy.sh`.
+Skript bo'sh sir yoki `check --deploy` ogohlantirishida TO'XTAYDI; frontend
+atomik almashtiriladi (oldingisi `frontend/dist.old`).
+
+**Uchta qoidani buzmang:**
+
+* **`FIELD_ENCRYPTION_KEY` va `TOKEN_HASH_KEY` — bir marta.** Birinchisi
+  o'zgarsa kamera parollari va imtihon platformasi sarlavhasi o'qilmay
+  qoladi, ikkinchisi barcha faol sessiyalarni bekor qiladi.
+* **`requirements.txt` — UTF-8.** Windows PowerShell 5.1 da
+  `pip freeze > requirements.txt` UTF-16 yozadi va Linux'dagi pip uni
+  `\x00D\x00j...` deb o'qib yiqiladi.
+* **gunicorn faqat `127.0.0.1` da** (`GUNICORN_BIND`). Tarmoqqa ochiq API
+  nginx rate limit'ini chetlab o'tadi, `TRUSTED_PROXY_COUNT=1` da esa
+  soxta `X-Forwarded-For` bilan IP ro'yxatini aldaydi.
+
+FaceID integratsiyasi yoqilsa (`FACEID_API_KEY`), panelda `faceid` xodimini
+yarating: respublika darajasidagi rol, faqat `bookings.view` +
+`bookings.manage` (Administrator emas — kalit o'g'irlansa zarar cheklangan).
+
 ## Ishga tushirish tartibi
 
 ```bash
