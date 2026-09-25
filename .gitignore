@@ -32,4 +32,7 @@ env/
 media/
 staticfiles/
 *.log
-migrations/
+
+
+# **/migrations/*
+# !**/migrations/__init__.py
