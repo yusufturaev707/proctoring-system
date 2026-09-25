@@ -32,3 +32,4 @@ env/
 media/
 staticfiles/
 *.log
+migrations/
