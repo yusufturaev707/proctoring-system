@@ -94,7 +94,7 @@ step "Salomatlik tekshiruvi"
 # serverni "yiqildi" deb ko'rsatardi.
 HOST="$(grep -E '^ALLOWED_HOSTS=' "$BACKEND/.env" | tail -1 | cut -d= -f2- | cut -d, -f1)"
 for _ in $(seq 1 20); do
-  if curl -fsS -H "Host: $HOST" -H "X-Forwarded-Proto: https"        http://127.0.0.1:8000/readyz/ >/dev/null 2>&1; then
+  if curl -fsS -H "Host: $HOST" -H "X-Forwarded-Proto: https"        http://127.0.0.1:8002/readyz/ >/dev/null 2>&1; then
     printf '\033[1;32mTayyor: API javob beryapti (/readyz/).\033[0m\n'
     exit 0
   fi

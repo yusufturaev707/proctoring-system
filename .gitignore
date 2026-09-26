@@ -35,4 +35,3 @@ staticfiles/
 
 # **/migrations/*
 # !**/migrations/__init__.py
-client/
