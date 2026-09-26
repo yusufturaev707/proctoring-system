@@ -189,3 +189,7 @@ storage/
 
 # Celery beat holat fayli (`shelve` uch faylga bo'linadi: .dat/.dir/.bak)
 celerybeat-schedule*
+
+
+**/migrations/*
+!**/migrations/__init__.py
