@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { alpha } from '@mui/material/styles'
 import {
   Alert, Box, Button, ButtonBase, Card, Chip, CircularProgress, Divider, Drawer, IconButton,
@@ -16,6 +16,9 @@ import ReleaseIcon from '@mui/icons-material/PersonRemoveOutlined'
 import MoveIcon from '@mui/icons-material/SwapHorizRounded'
 import WarningIcon from '@mui/icons-material/WarningAmberRounded'
 import LockIcon from '@mui/icons-material/LockOutlined'
+import BackIcon from '@mui/icons-material/ArrowBackRounded'
+import ChevronIcon from '@mui/icons-material/ChevronRightRounded'
+import RegionIcon from '@mui/icons-material/MapOutlined'
 
 import { STATUS_LABEL } from '../../theme'
 import { fromNow } from '../../utils/labels'
@@ -31,8 +34,9 @@ import { fromNow } from '../../utils/labels'
  *
  * Ikki qatlam, poyezddagi kabi:
  *
- *   ZoneRail   — "vagonlar": binolar, viloyat bo'yicha guruhlangan va
- *                har birining bandlik chizig'i bilan;
+ *   ZoneRail   — "vagonlar": avval viloyatlar (DTM ID tartibida), keyin
+ *                tanlangan viloyatning binolari; har birining bandlik
+ *                chizig'i bilan;
  *   SeatGrid   — "vagon ichi": o'rindiqlar raqam tartibida, qatorlarga
  *                bo'lingan, o'rtasida yo'lak.
  *
@@ -78,23 +82,58 @@ const seatLabel = (seat) =>
   seat.computer_number != null ? String(seat.computer_number) : seat.inventory_code || '—'
 
 // --------------------------------------------------------------------------
-// "Vagonlar" — binolar
+// "Vagonlar" — viloyat -> bino
 // --------------------------------------------------------------------------
-export function ZoneRail({ zones, loading, value, onChange }) {
+/**
+ * Binolar ro'yxatidan viloyat kesimi — bitta o'tishda, qo'shimcha
+ * so'rovsiz (`zones/` allaqachon GROUP BY natijasi). Tartib — server
+ * bergan DTM ID tartibi.
+ */
+export function groupRegions(zones) {
+  const map = new Map()
+  for (const zone of zones) {
+    let region = map.get(zone.region)
+    if (!region) {
+      region = {
+        region: zone.region, region_name: zone.region_name, region_dtm_id: zone.region_dtm_id,
+        zones: 0, total: 0, booked: 0, free: 0, broken: 0, broken_booked: 0,
+      }
+      map.set(zone.region, region)
+    }
+    region.zones += 1
+    for (const key of ['total', 'booked', 'free', 'broken', 'broken_booked']) region[key] += zone[key]
+  }
+  return [...map.values()].sort((a, b) => (a.region_dtm_id ?? 0) - (b.region_dtm_id ?? 0))
+}
+
+/**
+ * Chap panel — IKKI BOSQICH: viloyatlar, keyin tanlangan viloyatning
+ * binolari. Ilgari hamma binolar bitta ro'yxatda edi va umumiy sessiyada
+ * yuzlab bino orasidan kerakligini topish uchun uzoq aylantirish kerak
+ * edi. Viloyat bitta bo'lsa (viloyat xodimi) birinchi bosqich
+ * o'tkazib yuboriladi — tanlaydigan narsa yo'q.
+ */
+export function ZoneRail({ zones, loading, regionId, zoneId, onRegion, onZone }) {
   const theme = useTheme()
   const compact = useMediaQuery(theme.breakpoints.down('md'))
   const [query, setQuery] = useState('')
 
-  const filtered = useMemo(() => {
-    const needle = query.trim().toLowerCase()
-    return needle
-      ? zones.filter((zone) => `${zone.zone_name} ${zone.region_name}`.toLowerCase().includes(needle))
-      : zones
-  }, [zones, query])
+  const regions = useMemo(() => groupRegions(zones), [zones])
+  const region = regions.find((item) => item.region === regionId) || null
+  const singleRegion = regions.length === 1
+  const level = region ? 'zones' : 'regions'
+  const regionZones = useMemo(
+    () => (region ? zones.filter((zone) => zone.region === region.region) : []),
+    [zones, region],
+  )
 
-  // Viloyat sarlavhasi faqat bir nechta viloyat bo'lsa — viloyat xodimi
-  // uchun u har bir bino ustida takrorlanadigan shovqin bo'lardi.
-  const multiRegion = new Set(zones.map((zone) => zone.region)).size > 1
+  // Qidiruv faqat joriy bosqichda; bosqich almashsa tozalanadi.
+  useEffect(() => setQuery(''), [level, regionId])
+  const needle = query.trim().toLowerCase()
+  const items = level === 'regions'
+    ? regions.filter((item) => !needle || `${item.region_name} ${item.region_dtm_id}`.toLowerCase().includes(needle))
+    : regionZones.filter((item) => !needle || `${item.zone_name} ${item.zone_number}`.toLowerCase().includes(needle))
+  const count = level === 'regions' ? regions.length : regionZones.length
 
   if (loading) {
     return (
@@ -106,6 +145,8 @@ export function ZoneRail({ zones, loading, value, onChange }) {
     )
   }
 
+  const back = region && !singleRegion ? () => onRegion(null) : null
+
   // TELEFONDA — gorizontal lenta (poyezd sxemasidagi vagon raqamlari):
   // vertikal ro'yxat zalni ekrandan pastga surib yuborardi.
   if (compact) {
@@ -116,25 +157,65 @@ export function ZoneRail({ zones, loading, value, onChange }) {
           scrollSnapType: 'x proximity', scrollbarWidth: 'none', '&::-webkit-scrollbar': { display: 'none' },
         }}
       >
-        {zones.map((zone) => (
-          <ZoneChip key={zone.zone} zone={zone} active={zone.zone === value} onClick={() => onChange(zone.zone)} />
-        ))}
+        {back && (
+          <ButtonBase
+            onClick={back}
+            aria-label="Viloyatlarga qaytish"
+            sx={{
+              flexShrink: 0, px: 1.5, borderRadius: '14px', gap: 0.5, fontSize: 13, fontWeight: 650,
+              bgcolor: 'm3.surfaceContainerHigh', color: 'text.secondary',
+            }}
+          >
+            <BackIcon sx={{ fontSize: 18 }} /> {region.region_name}
+          </ButtonBase>
+        )}
+        {level === 'regions'
+          ? regions.map((item) => (
+            <RailChip key={item.region} item={item} title={item.region_name} onClick={() => onRegion(item.region)} />
+          ))
+          : regionZones.map((item) => (
+            <RailChip
+              key={item.zone} item={item} title={item.zone_name}
+              active={item.zone === zoneId} onClick={() => onZone(item.zone)}
+            />
+          ))}
       </Box>
     )
   }
 
-  let lastRegion = null
   return (
     <Card sx={{ p: 1.25, position: { lg: 'sticky' }, top: { lg: 24 } }}>
-      <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 1, pt: 0.5, pb: 1 }}>
-        <ApartmentIcon fontSize="small" color="action" />
-        <Typography variant="subtitle2" sx={{ flex: 1 }}>Binolar</Typography>
-        <Chip size="small" label={zones.length} />
+      <Stack direction="row" alignItems="center" spacing={0.75} sx={{ px: 0.5, pt: 0.25, pb: 1, minHeight: 40 }}>
+        {back ? (
+          <Tooltip title="Viloyatlarga qaytish">
+            <IconButton size="small" onClick={back} aria-label="Viloyatlarga qaytish">
+              <BackIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        ) : (
+          <Box sx={{ width: 30, display: 'grid', placeItems: 'center' }}>
+            {level === 'regions'
+              ? <RegionIcon fontSize="small" color="action" />
+              : <ApartmentIcon fontSize="small" color="action" />}
+          </Box>
+        )}
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography variant="subtitle2" noWrap>
+            {level === 'regions' ? 'Viloyatlar' : region.region_name}
+          </Typography>
+          {level === 'zones' && (
+            <Typography variant="caption" color="text.secondary" display="block" noWrap>
+              Binoni tanlang
+            </Typography>
+          )}
+        </Box>
+        <Chip size="small" label={count} />
       </Stack>
-      {zones.length > 6 && (
+      {count > 6 && (
         <TextField
           size="small"
-          placeholder="Bino yoki viloyat…"
+          fullWidth
+          placeholder={level === 'regions' ? 'Viloyat…' : 'Bino…'}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           sx={{ mb: 1, px: 0.5 }}
@@ -143,24 +224,31 @@ export function ZoneRail({ zones, loading, value, onChange }) {
           }}
         />
       )}
-      <Box sx={{ maxHeight: { lg: 'calc(100vh - 260px)' }, overflowY: 'auto', pr: 0.25 }}>
-        {filtered.map((zone) => {
-          const header = multiRegion && zone.region_name !== lastRegion
-          lastRegion = zone.region_name
-          return (
-            <Box key={zone.zone}>
-              {header && (
-                <Typography
-                  sx={{ px: 1.25, pt: 1.25, pb: 0.5, fontSize: 12, fontWeight: 650, color: 'text.secondary' }}
-                >
-                  {zone.region_name}
-                </Typography>
-              )}
-              <ZoneItem zone={zone} active={zone.zone === value} onClick={() => onChange(zone.zone)} />
-            </Box>
-          )
-        })}
-        {!filtered.length && (
+      <Box sx={{ maxHeight: { lg: 'calc(100vh - 240px)' }, overflowY: 'auto', pr: 0.25 }}>
+        {level === 'regions'
+          ? items.map((item) => (
+            <RailItem
+              key={item.region}
+              item={item}
+              badge={item.region_dtm_id}
+              title={item.region_name}
+              meta={`${item.zones} bino · ${item.free} bo‘sh`}
+              trailing={<ChevronIcon fontSize="small" sx={{ color: 'text.secondary' }} />}
+              onClick={() => onRegion(item.region)}
+            />
+          ))
+          : items.map((item) => (
+            <RailItem
+              key={item.zone}
+              item={item}
+              badge={item.zone_number ?? <ApartmentIcon sx={{ fontSize: 18 }} />}
+              title={item.zone_name}
+              meta={`${item.free} bo‘sh · ${item.booked}/${item.total - item.broken} band`}
+              active={item.zone === zoneId}
+              onClick={() => onZone(item.zone)}
+            />
+          ))}
+        {!items.length && (
           <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>
             Topilmadi
           </Typography>
@@ -182,8 +270,8 @@ function OccupancyBar({ zone, height = 6 }) {
   )
 }
 
-function ZoneItem({ zone, active, onClick }) {
-  const usable = zone.total - zone.broken
+/** Ro'yxat qatori — viloyat ham, bino ham (MD3 list item + bandlik chizig'i). */
+function RailItem({ item, badge, title, meta, trailing, active, onClick }) {
   return (
     <ButtonBase
       onClick={onClick}
@@ -198,31 +286,30 @@ function ZoneItem({ zone, active, onClick }) {
       <Stack direction="row" spacing={1.25} alignItems="center" sx={{ mb: 1 }}>
         <Box
           sx={{
-            width: 34, height: 34, borderRadius: '10px', display: 'grid', placeItems: 'center', flexShrink: 0,
-            bgcolor: active ? 'background.paper' : 'm3.surfaceContainerHigh',
+            minWidth: 34, height: 34, px: 0.5, borderRadius: '10px', display: 'grid', placeItems: 'center',
+            flexShrink: 0, bgcolor: active ? 'background.paper' : 'm3.surfaceContainerHigh',
             fontWeight: 750, fontSize: 13, color: 'm3.onSecondaryContainer',
           }}
         >
-          {zone.zone_number ?? <ApartmentIcon sx={{ fontSize: 18 }} />}
+          {badge}
         </Box>
         <Box sx={{ minWidth: 0, flex: 1 }}>
-          <Typography noWrap sx={{ fontSize: 13.5, fontWeight: active ? 700 : 600 }}>{zone.zone_name}</Typography>
-          <Typography noWrap variant="caption" color="text.secondary" display="block">
-            {zone.free} bo‘sh · {zone.booked}/{usable} band
-          </Typography>
+          <Typography noWrap sx={{ fontSize: 13.5, fontWeight: active ? 700 : 600 }}>{title}</Typography>
+          <Typography noWrap variant="caption" color="text.secondary" display="block">{meta}</Typography>
         </Box>
-        {zone.broken_booked > 0 && (
-          <Tooltip title={`${zone.broken_booked} ta talabgor buzilgan kompyuterda — ko‘chirish kerak`}>
+        {item.broken_booked > 0 && (
+          <Tooltip title={`${item.broken_booked} ta talabgor buzilgan kompyuterda — ko‘chirish kerak`}>
             <WarningIcon color="error" sx={{ fontSize: 20 }} />
           </Tooltip>
         )}
+        {trailing}
       </Stack>
-      <OccupancyBar zone={zone} />
+      <OccupancyBar zone={item} />
     </ButtonBase>
   )
 }
 
-function ZoneChip({ zone, active, onClick }) {
+function RailChip({ item, title, active, onClick }) {
   return (
     <ButtonBase
       onClick={onClick}
@@ -234,13 +321,13 @@ function ZoneChip({ zone, active, onClick }) {
       }}
     >
       <Stack direction="row" spacing={0.75} alignItems="center" sx={{ mb: 0.75 }}>
-        <Typography noWrap sx={{ fontSize: 13, fontWeight: 700, flex: 1 }}>{zone.zone_name}</Typography>
-        {zone.broken_booked > 0 && <WarningIcon color="error" sx={{ fontSize: 16 }} />}
+        <Typography noWrap sx={{ fontSize: 13, fontWeight: 700, flex: 1 }}>{title}</Typography>
+        {item.broken_booked > 0 && <WarningIcon color="error" sx={{ fontSize: 16 }} />}
       </Stack>
       <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.75 }}>
-        {zone.free} bo‘sh · {zone.booked} band
+        {item.free} bo‘sh · {item.booked} band
       </Typography>
-      <OccupancyBar zone={zone} height={4} />
+      <OccupancyBar zone={item} height={4} />
     </ButtonBase>
   )
 }
@@ -334,70 +421,186 @@ function SeatShape({ state, selected, mini, dimmed }) {
   )
 }
 
-function SeatTile({ seat, selected, dimmed, pulse, onClick, size }) {
-  const state = seatState(seat)
-  const arrival = ARRIVAL[seat.session_status]
-  const tooltip = [
-    seat.computer_label,
-    state === 'free' && 'Bo‘sh',
-    (state === 'booked' || state === 'broken_booked') && `Band: ${seat.pinfl}`,
-    (state === 'broken' || state === 'broken_booked') && 'Kompyuter buzilgan',
-    seat.session_status && `Sessiya: ${STATUS_LABEL[seat.session_status] || seat.session_status}`,
-    // Joy bir sessiyada bir necha talabgorga xizmat qiladi: clientda
-    // «Yakunlash» bosilganda bron o'zi bo'shaydi (`release_after_session`).
-    seat.finished_count > 0 && `Yakunlaganlar: ${seat.finished_count}`,
-  ].filter(Boolean).join(' · ')
+/**
+ * O'rindiq TEZKOR YO'LDA chiziladi: 500 kompyuterli bino ham bir zumda.
+ *
+ * Ilgari har o'rindiq MUI `Tooltip` + `ButtonBase` (ripple bilan) +
+ * to'rt-besh `sx` Box + `Typography` edi va har bosishda 500 tasi ham
+ * qaytadan chizilardi: emotion har birining stilini qayta seriyalar,
+ * har `Tooltip` o'z Popper tinglovchilarini ulardi. Endi:
+ *
+ *   * o'rindiq — oddiy `<button>` va data-atributlar; butun ko'rinish
+ *     BITTA stil blokida (`seatStyles`, zal konteynerida, har holat uchun
+ *     bir marta) - o'rindiq sonidan qat'i nazar;
+ *   * `memo`: tanlov o'zgarsa faqat ikki o'rindiq (eski va yangi)
+ *     qayta chiziladi;
+ *   * tooltip BITTA (`HoverTip`), hodisa delegatsiyasi bilan;
+ *   * ekrandan tashqaridagi qatorlar chizilmaydi (`content-visibility`).
+ *
+ * Ko'rinish `SeatShape` bilan AYNAN bir xil (belgilar paneli hali uni
+ * ishlatadi) - rang yoki shaklni o'zgartirsangiz, ikkala joyda ham.
+ */
+const SEAT_ICON = { booked: PersonIcon, broken: BuildIcon, broken_booked: WarningIcon }
 
+const seatTooltip = (seat, state) => [
+  seat.computer_label,
+  state === 'free' && 'Bo‘sh',
+  (state === 'booked' || state === 'broken_booked') && `Band: ${seat.pinfl}`,
+  (state === 'broken' || state === 'broken_booked') && 'Kompyuter buzilgan',
+  seat.session_status && `Sessiya: ${STATUS_LABEL[seat.session_status] || seat.session_status}`,
+  // Joy bir sessiyada bir necha talabgorga xizmat qiladi: clientda
+  // «Yakunlash» bosilganda bron o'zi bo'shaydi (`release_after_session`).
+  seat.finished_count > 0 && `Yakunlaganlar: ${seat.finished_count}`,
+].filter(Boolean).join(' · ')
+
+const SeatTile = memo(function SeatTile({ seat, selected, dimmed, pulse, onSelect }) {
+  const state = seatState(seat)
+  const Icon = SEAT_ICON[state]
+  const arrival = ARRIVAL[seat.session_status]
   return (
-    <Tooltip title={tooltip} disableInteractive>
-      <ButtonBase
-        onClick={onClick}
-        aria-label={tooltip}
-        aria-pressed={selected}
-        sx={{
-          position: 'relative', width: size.w, height: size.h, borderRadius: '12px', flexShrink: 0,
-          '&:hover .seat-shape, &:focus-visible .seat-shape': { transform: 'translateY(-2px)' },
-          ...(pulse && {
-            '@keyframes seatPulse': {
-              '0%, 100%': { transform: 'scale(1)' },
-              '50%': { transform: 'scale(1.07)' },
-            },
-            animation: 'seatPulse 1.6s ease-in-out infinite',
-          }),
-        }}
-      >
-        <Box className="seat-shape" sx={{ position: 'absolute', inset: 0, transition: 'transform 140ms' }}>
-          <SeatShape state={state} selected={selected} dimmed={dimmed} />
-        </Box>
-        <Stack
-          alignItems="center"
-          spacing={0.25}
-          sx={{ position: 'relative', pt: '7px', opacity: dimmed ? 0.45 : 1 }}
-        >
-          <Typography
-            sx={{
-              fontSize: size.font, fontWeight: 800, lineHeight: 1, letterSpacing: '-0.02em',
-              color: state === 'free' ? 'text.primary' : state === 'booked' ? 'm3.onPrimaryContainer' : 'error.main',
-              textDecoration: state === 'broken' ? 'line-through' : 'none',
-              maxWidth: size.w - 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-            }}
-          >
-            {seatLabel(seat)}
-          </Typography>
-          {state === 'booked' && <PersonIcon sx={{ fontSize: size.icon, color: 'primary.main' }} />}
-          {state === 'broken' && <BuildIcon sx={{ fontSize: size.icon, color: 'error.main' }} />}
-          {state === 'broken_booked' && <WarningIcon sx={{ fontSize: size.icon, color: 'error.main' }} />}
-        </Stack>
-        {arrival && (
-          <Box
-            sx={{
-              position: 'absolute', top: 3, right: -3, width: 12, height: 12, borderRadius: '50%',
-              border: 2, borderColor: 'background.paper',
-              bgcolor: arrival === 'active' ? 'success.main' : arrival === 'done' ? 'info.main' : 'error.main',
-            }}
-          />
-        )}
-      </ButtonBase>
+    <button
+      type="button"
+      className="seat"
+      data-state={state}
+      data-selected={selected || undefined}
+      data-dimmed={dimmed || undefined}
+      data-pulse={pulse || undefined}
+      aria-label={seatTooltip(seat, state)}
+      aria-pressed={selected}
+      onClick={() => onSelect(seat)}
+    >
+      <span className="seat-shape" />
+      <span className="seat-body">
+        <span className="seat-num">{seatLabel(seat)}</span>
+        {Icon && <Icon className="seat-icon" fontSize="inherit" />}
+      </span>
+      {arrival && <span className="seat-dot" data-arrival={arrival} />}
+    </button>
+  )
+})
+
+/** Zalning barcha o'rindiqlari uchun BITTA stil bloki. */
+function seatStyles(theme, size, rowWidth) {
+  const { m3 } = theme.palette
+  const error = theme.palette.error.main
+  const brokenTone = {
+    bgcolor: alpha(error, theme.palette.mode === 'light' ? 0.07 : 0.16),
+    borderColor: error,
+    borderStyle: 'dashed',
+    // Buzilgan joy — qiya chiziqlar: rangsiz ekranda ham ajraladi.
+    backgroundImage: `repeating-linear-gradient(135deg, transparent 0 6px, ${alpha(error, 0.12)} 6px 8px)`,
+    '&::before': { bgcolor: alpha(error, 0.55) },
+  }
+  return {
+    '@keyframes seatPulse': {
+      '0%, 100%': { transform: 'scale(1)' },
+      '50%': { transform: 'scale(1.07)' },
+    },
+    '& .seat-row': {
+      display: 'flex', alignItems: 'center', gap: '10px',
+      // Ekrandan tashqaridagi qator chizilmaydi; o'lchami oldindan
+      // aytiladi - aks holda skroll chizig'i sakrardi.
+      contentVisibility: 'auto',
+      containIntrinsicSize: `auto ${rowWidth}px auto ${size.h}px`,
+    },
+    '& .seat-gap': { width: size.w, flexShrink: 0 },
+    '& .seat-aisle': {
+      ...theme.typography.caption, width: size.aisle, textAlign: 'center', flexShrink: 0,
+      color: theme.palette.text.disabled, fontWeight: 700,
+    },
+    '& .seat': {
+      position: 'relative', display: 'block', flexShrink: 0, width: size.w, height: size.h,
+      p: 0, m: 0, border: 0, borderRadius: '12px', background: 'none', cursor: 'pointer',
+      font: 'inherit', color: 'inherit', outline: 0, WebkitTapHighlightColor: 'transparent',
+    },
+    '& .seat[data-pulse]': { animation: 'seatPulse 1.6s ease-in-out infinite' },
+    '& .seat-shape': {
+      position: 'absolute', inset: '7px 0 0 0', borderRadius: '9px 9px 14px 14px',
+      border: '2px solid', bgcolor: m3.surfaceContainerLowest, borderColor: m3.outline,
+      transition: theme.transitions.create(['box-shadow', 'opacity', 'transform'], { duration: 140 }),
+      // Suyanchiq
+      '&::before': {
+        content: '""', position: 'absolute', left: '14%', right: '14%', top: -8, height: 5,
+        borderRadius: 999, bgcolor: m3.outlineVariant,
+      },
+    },
+    '& .seat:hover .seat-shape, & .seat:focus-visible .seat-shape': { transform: 'translateY(-2px)' },
+    '& .seat[data-state="booked"] .seat-shape': {
+      bgcolor: m3.primaryContainer, borderColor: theme.palette.primary.main,
+      '&::before': { bgcolor: theme.palette.primary.main },
+    },
+    '& .seat[data-state="broken"] .seat-shape, & .seat[data-state="broken_booked"] .seat-shape': brokenTone,
+    '& .seat[data-selected] .seat-shape': {
+      boxShadow: `0 0 0 3px ${theme.palette.background.paper}, 0 0 0 5px ${theme.palette.primary.main}`,
+    },
+    '& .seat[data-dimmed] .seat-shape': { opacity: 0.35 },
+    '& .seat-body': {
+      position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center',
+      gap: '2px', pt: '7px',
+    },
+    '& .seat[data-dimmed] .seat-body': { opacity: 0.45 },
+    '& .seat-num': {
+      fontFamily: theme.typography.fontFamily, fontSize: size.font, fontWeight: 800, lineHeight: 1,
+      letterSpacing: '-0.02em', color: theme.palette.text.primary,
+      maxWidth: size.w - 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+    },
+    '& .seat[data-state="booked"] .seat-num': { color: m3.onPrimaryContainer },
+    '& .seat[data-state="broken"] .seat-num, & .seat[data-state="broken_booked"] .seat-num': { color: error },
+    '& .seat[data-state="broken"] .seat-num': { textDecoration: 'line-through' },
+    '& .seat-icon': { fontSize: size.icon, color: error },
+    '& .seat[data-state="booked"] .seat-icon': { color: theme.palette.primary.main },
+    '& .seat-dot': {
+      position: 'absolute', top: 3, right: -3, width: 12, height: 12, borderRadius: '50%',
+      border: `2px solid ${theme.palette.background.paper}`, bgcolor: theme.palette.error.main,
+    },
+    '& .seat-dot[data-arrival="active"]': { bgcolor: theme.palette.success.main },
+    '& .seat-dot[data-arrival="done"]': { bgcolor: theme.palette.info.main },
+  }
+}
+
+/**
+ * Zal uchun BITTA tooltip. Holati shu komponentda: sichqoncha
+ * o'rindiqdan o'rindiqqa o'tganda zal (500 o'rindiq) qayta chizilmaydi.
+ * Matn o'rindiqning `aria-label` idan — ekran o'quvchisi bilan bir manba.
+ */
+function HoverTip({ containerRef }) {
+  const [tip, setTip] = useState(null)
+  useEffect(() => {
+    const node = containerRef.current
+    if (!node) return undefined
+    const show = (event) => {
+      const el = event.target.closest?.('.seat')
+      setTip((prev) => {
+        if (!el) return null
+        return prev?.el === el ? prev : { el, text: el.getAttribute('aria-label') }
+      })
+    }
+    const hide = () => setTip(null)
+    node.addEventListener('mouseover', show)
+    node.addEventListener('focusin', show)
+    node.addEventListener('mouseleave', hide)
+    node.addEventListener('focusout', hide)
+    node.addEventListener('scroll', hide, true)
+    return () => {
+      node.removeEventListener('mouseover', show)
+      node.removeEventListener('focusin', show)
+      node.removeEventListener('mouseleave', hide)
+      node.removeEventListener('focusout', hide)
+      node.removeEventListener('scroll', hide, true)
+    }
+  }, [containerRef])
+  // O'rindiq ro'yxatdan chiqib ketsa (bino almashdi) - tooltip osilib qolmasin.
+  const open = Boolean(tip?.el?.isConnected)
+  return (
+    <Tooltip
+      open={open}
+      title={tip?.text || ''}
+      disableHoverListener
+      disableFocusListener
+      disableTouchListener
+      slotProps={{ popper: { anchorEl: tip?.el } }}
+    >
+      <span style={{ position: 'absolute', width: 0, height: 0 }} />
     </Tooltip>
   )
 }
@@ -411,33 +614,71 @@ function SeatTile({ seat, selected, dimmed, pulse, onClick, size }) {
 export function SeatGrid({ seats, selectedId, onSelect, moveMode, highlightId }) {
   const theme = useTheme()
   const xs = useMediaQuery(theme.breakpoints.down('sm'))
-  const size = xs ? { w: 56, h: 60, font: 16, icon: 16 } : { w: 62, h: 64, font: 17, icon: 17 }
+  const size = useMemo(
+    () => (xs
+      ? { w: 56, h: 60, font: 16, icon: 16, aisle: 22 }
+      : { w: 62, h: 64, font: 17, icon: 17, aisle: 30 }),
+    [xs],
+  )
   const gap = 10
-  const aisle = xs ? 22 : 30
 
   // Ustunlar soni KARTANING haqiqiy kengligidan — ekran nuqtasidan emas:
   // yon panel yoyilgan/yig'ilgani va bino ro'yxati bir xil ekranda zalga
   // har xil joy qoldiradi. Ekran nuqtasiga qarab tanlanganda 1440 px da
   // 10 ustun sig'masdan o'ng qator kesilib qolgan edi.
-  const [width, setWidth] = useState(0)
-  const measureRef = useCallback((node) => {
-    if (!node) return
-    const observer = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width))
+  //
+  // Holatda USTUNLAR SONI saqlanadi, piksel kenglik emas: oyna
+  // cho'zilganda har piksel uchun zalni qayta chizish shart emas.
+  const containerRef = useRef(null)
+  const [cols, setCols] = useState(4)
+  useEffect(() => {
+    const node = containerRef.current
+    if (!node) return undefined
+    const observer = new ResizeObserver(([entry]) => {
+      const fit = Math.floor((entry.contentRect.width - size.aisle + gap) / (size.w + gap))
+      // Juft son (yo'lak o'rtada), 4..12 oralig'ida.
+      setCols(Math.max(4, Math.min(12, fit - (fit % 2))) || 4)
+    })
     observer.observe(node)
-  }, [])
-  const fit = Math.floor((width - aisle + gap) / (size.w + gap))
-  // Juft son (yo'lak o'rtada), 4..12 oralig'ida.
-  const cols = Math.max(4, Math.min(12, fit - (fit % 2))) || 4
+    return () => observer.disconnect()
+  }, [size])
   const half = cols / 2
+  const rowWidth = cols * size.w + cols * gap + size.aisle
+
+  // Sahifa `onSelect` ni har chizishda yangidan yaratadi; o'rindiqlarga
+  // BARQAROR funksiya beriladi, aks holda `memo` hech narsani to'smasdi.
+  const onSelectRef = useRef(onSelect)
+  onSelectRef.current = onSelect
+  const select = useCallback((seat) => onSelectRef.current(seat), [])
 
   const rows = useMemo(() => {
     const out = []
     for (let i = 0; i < seats.length; i += cols) out.push(seats.slice(i, i + cols))
     return out
   }, [seats, cols])
+  const styles = useMemo(() => seatStyles(theme, size, rowWidth), [theme, size, rowWidth])
+
+  const renderSeat = (seat, index) => {
+    if (!seat) return <span key={`gap-${index}`} className="seat-gap" />
+    const target = moveMode && seatState(seat) === 'free'
+    return (
+      <SeatTile
+        key={seat.id}
+        seat={seat}
+        selected={seat.id === selectedId}
+        // Ko'chirish rejimida faqat bo'sh joylar "tirik": qolganlari
+        // xiralashadi, bo'shlar esa tebranadi — tanlash kerak bo'lgan
+        // narsa o'zi ko'zga tashlanadi.
+        dimmed={Boolean(moveMode && !target && seat.id !== selectedId)}
+        pulse={Boolean(target || seat.id === highlightId)}
+        onSelect={select}
+      />
+    )
+  }
 
   return (
-    <Box ref={measureRef} sx={{ overflowX: 'auto', pb: 1 }}>
+    <Box ref={containerRef} sx={{ overflowX: 'auto', pb: 1, position: 'relative', ...styles }}>
+      <HoverTip containerRef={containerRef} />
       <Stack spacing={1.75} alignItems="center" sx={{ minWidth: 'fit-content', mx: 'auto', pt: 1 }}>
         {/* Zalning OLDI — proktor stoli. Poyezd sxemasidagi "harakat
             yo'nalishi" bilan bir xil vazifa: operator talabgorga
@@ -462,43 +703,19 @@ export function SeatGrid({ seats, selectedId, onSelect, moveMode, highlightId })
           // Oxirgi qator to'lmagan bo'lsa bo'sh katak bilan to'ldiriladi:
           // aks holda yo'lak chapga siljib, ustunlar qator-qator
           // mos kelmay qolardi.
-          const padded = [...row, ...Array(cols - row.length).fill(null)]
+          const padded = row.length < cols ? [...row, ...Array(cols - row.length).fill(null)] : row
           return (
-            <Stack key={rowIndex} direction="row" spacing={1.25} alignItems="center">
+            <div key={rowIndex} className="seat-row">
               {padded.slice(0, half).map((seat, index) => renderSeat(seat, index))}
               {/* Yo'lak — qator raqami bilan. */}
-              <Box sx={{ width: xs ? 22 : 30, textAlign: 'center', flexShrink: 0 }}>
-                <Typography variant="caption" color="text.disabled" fontWeight={700}>
-                  {rowIndex + 1}
-                </Typography>
-              </Box>
+              <span className="seat-aisle">{rowIndex + 1}</span>
               {padded.slice(half).map((seat, index) => renderSeat(seat, half + index))}
-            </Stack>
+            </div>
           )
         })}
       </Stack>
     </Box>
   )
-
-  function renderSeat(seat, index) {
-    if (!seat) return <Box key={`gap-${index}`} sx={{ width: size.w, flexShrink: 0 }} />
-    const state = seatState(seat)
-    const target = moveMode && state === 'free'
-    return (
-      <SeatTile
-        key={seat.id}
-        seat={seat}
-        size={size}
-        selected={seat.id === selectedId}
-        // Ko'chirish rejimida faqat bo'sh joylar "tirik": qolganlari
-        // xiralashadi, bo'shlar esa tebranadi — tanlash kerak bo'lgan
-        // narsa o'zi ko'zga tashlanadi.
-        dimmed={moveMode && !target && seat.id !== selectedId}
-        pulse={target || seat.id === highlightId}
-        onClick={() => onSelect(seat)}
-      />
-    )
-  }
 }
 
 // --------------------------------------------------------------------------

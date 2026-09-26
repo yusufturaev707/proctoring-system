@@ -423,6 +423,18 @@ export function useResource({
     error: query.error,
     refetch: query.refetch,
 
+    /**
+     * Joriy ro'yxatni TORAYTIRADIGAN parametrlar (filtr, qidiruv,
+     * `staticParams`) — sahifa va tartibsiz. Ommaviy amalning "filtrga
+     * mos hammasi" rejimi serverga aynan shularni yuboradi
+     * (`BulkSelectionMixin`), ya'ni ekrandagi ro'yxat bilan bir xil to'plam.
+     */
+    scopeParams: (() => {
+      const { page, page_size: pageSizeParam, cursor: cursorParam, ordering, ...rest } =
+        buildParams(0, null)
+      return rest
+    })(),
+
     // Jadval holati
     paginationModel,
     setPaginationModel,

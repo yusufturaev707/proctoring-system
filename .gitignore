@@ -17,7 +17,6 @@ Desktop.ini
 # parollari kaliti). Namunasi `.env.example` da va u commit qilinadi.
 .env
 .env.local
-client/
 backend/.env
 backend/.env.local
 backend/.venv

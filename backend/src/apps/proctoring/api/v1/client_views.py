@@ -314,8 +314,9 @@ class AccessAttemptView(APIView):
         region = verdict["region"] or {}
 
         access_logger.info(
-            "KIRISH URINISHI | mac=%s lan_ip=%s public_ip=%s manba_ip=%s host=%s v%s "
+            "KIRISH URINISHI | uuid=%s mac=%s lan_ip=%s public_ip=%s manba_ip=%s host=%s v%s "
             "| ruxsat=%s bino=%s | login_sahifasi=%s | kod=%s",
+            data.get("machine_uuid") or "-",
             data.get("mac_address") or "-",
             data.get("ip_address") or "-",
             public_ip or "-",
@@ -336,9 +337,10 @@ class AccessAttemptView(APIView):
         if bool(data.get("entered_login")) != bool(verdict["allowed"]):
             access_logger.warning(
                 "ZIDLIK: client login_sahifasi=%s, server ruxsat=%s "
-                "(mac=%s public_ip=%s)",
+                "(uuid=%s mac=%s public_ip=%s)",
                 "OCHILDI" if data.get("entered_login") else "OCHILMADI",
                 "HA" if verdict["allowed"] else "YO'Q",
+                data.get("machine_uuid") or "-",
                 data.get("mac_address") or "-",
                 public_ip or "-",
             )
@@ -359,19 +361,18 @@ class HandshakeView(ClientBaseView):
         Tekshiruv natijasidan QAROR chiqaradi.
 
         Ajratish ataylab: `verify_machine` faqat tavsiflaydi
-        ("MAC mos kelmadi"), ruxsat esa o'rnatish sozlamasiga ham
-        bog'liq (`REQUIRE_MAC_MATCH`). Ikkalasini birlashtirish
+        ("UUID mos kelmadi"), ruxsat esa o'rnatish sozlamasiga ham
+        bog'liq (`REQUIRE_MACHINE_MATCH`). Ikkalasini birlashtirish
         tekshiruv mantig'ini sozlamaga bog'lab qo'yardi va uni
         alohida sinab bo'lmasdi.
 
-        `unknown` (client MAC yubormadi) ham to'siq: aks holda
-        tekshiruvni chetlab o'tish uchun maydonni bo'sh yuborish
-        yetarli bo'lardi. Eski client'lar uchun yo'l -
-        `REQUIRE_MAC_MATCH=false`.
+        `unknown` (client identifikator yubormadi) ham to'siq: aks
+        holda tekshiruvni chetlab o'tish uchun maydonni bo'sh yuborish
+        yetarli bo'lardi. Yumshatish - `REQUIRE_MACHINE_MATCH=false`.
         """
         if machine.get("status") == device_services.MACHINE_OK:
             return True
-        return not settings.PROCTORING["REQUIRE_MAC_MATCH"]
+        return not settings.PROCTORING["REQUIRE_MACHINE_MATCH"]
 
     @extend_schema(request=HandshakeSerializer, responses={200: None})
     def post(self, request):
@@ -396,6 +397,13 @@ class HandshakeView(ClientBaseView):
                 # aynan shu ko'rsatiladi (server ko'rgan manzil NAT
                 # ortida butun bino uchun bitta bo'lishi mumkin).
                 reported_lan_ip=data.get("ip_address", ""),
+                # Panelda kompyuter yozuvidagi UUID yonida ko'rinadi -
+                # administrator nomuvofiqlikda to'g'ri qiymatni shu
+                # yerdan oladi.
+                reported_machine_uuid=data.get("machine_uuid", ""),
+                # Apparat izi formati o'tishi (MAC -> UUID) shu bilan
+                # isbotlanadi (`is_fingerprint_upgrade`).
+                reported_mac=data.get("mac_address", ""),
                 gpu_name=data.get("gpu_name", ""),
                 performance_profile=data.get("performance_profile", ""),
             )
@@ -413,26 +421,46 @@ class HandshakeView(ClientBaseView):
                     request=request,
                 )
 
-        # Mashina tekshiruvi: client aytgan MAC shu binoning
-        # ro'yxatidami. Natija HAR handshake'da qayta hisoblanadi -
-        # administrator kompyuterni qo'shgach, operator "Yangilash"
-        # ni bosishi va darhol davom etishi kerak.
+        # Mashina tekshiruvi: client ishlab turgan ona plata (Machine
+        # UUID) qurilma biriktirilgan kompyutermi. Natija HAR
+        # handshake'da qayta hisoblanadi - administrator yozuvni
+        # to'g'rilagach, operator "Yangilash" ni bosib darhol davom
+        # etishi kerak.
         machine = device_services.verify_machine(
-            device, mac_address=data.get("mac_address", "")
+            device,
+            machine_uuid=data.get("machine_uuid", ""),
+            mac_address=data.get("mac_address", ""),
         )
+        if machine.get("bound") and computer is not None:
+            # UUID'ni bir martalik bog'lash - kompyuter yozuvining
+            # O'ZGARISHI, ya'ni auditda qolishi shart ("bu UUID qayerdan
+            # paydo bo'ldi?" degan savolga javob).
+            record_audit(
+                actor=request.user,
+                action="update",
+                object_type="Computer",
+                object_id=computer.pk,
+                meta={
+                    "machine_uuid_bound": machine["machine_uuid"],
+                    "by_mac": machine["mac_address"],
+                    "device_id": device.device_id if device else "",
+                },
+                request=request,
+            )
         machine["allowed"] = self._machine_allowed(machine)
         if not machine["allowed"]:
             # Audit yozuvi bu yerda YOZILMAYDI va bu ataylab:
             # ko'chirilgan qurilma `record_handshake` da allaqachon
-            # `fingerprint_changed` anomaliyasini beradi (MAC
-            # `hardware_fingerprint` tarkibida), operator esa
+            # `fingerprint_changed` anomaliyasini beradi (Machine UUID
+            # `hardware_fingerprint` ning o'zi), operator esa
             # nosozlikni ko'rib "Yangilash" ni ketma-ket bosadi -
             # har bosishda audit yozuvi qoldirish jurnalni
             # foydasiz qilardi.
             logger.warning(
-                "Mashina tekshiruvidan o'tmadi (%s): device=%s mac=%s",
+                "Mashina tekshiruvidan o'tmadi (%s): device=%s uuid=%s mac=%s",
                 machine["status"],
                 device.device_id if device else "-",
+                machine.get("machine_uuid") or "-",
                 machine.get("mac_address") or "-",
             )
 
@@ -1022,6 +1050,7 @@ class CandidateLookupView(ClientBaseView):
             zone=zone,
             ip_address=ip_address,
             # Jismoniy mashina — kompyuter broni shu bilan solishtiriladi.
+            machine_uuid=serializer.validated_data.get("machine_uuid", ""),
             mac_address=serializer.validated_data.get("mac_address", ""),
         )
         return Response(result)
@@ -1502,6 +1531,8 @@ class ScreenshotCommitView(SessionRequiredView):
                 width=item["width"],
                 height=item["height"],
                 captured_at=item["captured_at"],
+                question_id=item.get("question_id") or "",
+                question_number=item.get("question_number"),
             )
         return Response(
             {"accepted": len(serializer.validated_data["screenshots"])},
@@ -1541,6 +1572,8 @@ class ScreenshotUploadView(SessionRequiredView):
             session=self.session,
             upload=serializer.validated_data["file"],
             captured_at=serializer.validated_data["captured_at"],
+            question_id=serializer.validated_data.get("question_id") or "",
+            question_number=serializer.validated_data.get("question_number"),
         )
 
         # `file_path` javobda YO'Q: u serverning ichki katalog
@@ -1552,6 +1585,8 @@ class ScreenshotUploadView(SessionRequiredView):
                 "file_size": screenshot.file_size,
                 "mime_type": screenshot.mime_type,
                 "captured_at": screenshot.captured_at,
+                "question_id": screenshot.question_id,
+                "question_number": screenshot.question_number,
             },
             status=status.HTTP_201_CREATED,
         )

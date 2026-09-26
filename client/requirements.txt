@@ -19,12 +19,12 @@ Pillow==12.3.0
 python-dotenv==1.2.3
 psutil==7.2.2
 
-# Kiosk rejimi: global klaviatura hook'i (Alt+Tab, Win, PrintScreen...).
-# Windows'da administrator huquqi TALAB QILINMAYDI - past darajali hook
-# oddiy foydalanuvchi ostida ham o'rnatiladi. Linux'da root kerak,
-# macOS'da esa umuman ishlamaydi (`services/lockdown.py` buni o'zi
-# aniqlaydi va jimgina o'tkazib yuboradi).
-keyboard==0.13.5
+# Kiosk rejimining global klaviatura hook'i uchun paket YO'Q: u xom
+# `WH_KEYBOARD_LL` (`services/keyboard_hook.py`, ctypes). `keyboard`
+# kutubxonasi olib tashlangan - modifikatorlarni ushlab-qayta yuborishi
+# Alt+Shift'ni buzardi, Alt+Space'da System Menu ochilishiga yo'l
+# qo'yardi va Windows olib tashlagan hook'ni tiklay olmasdi
+# (`services/lockdown.py` docstring'i).
 
 # ONNX Runtime - FAQAT BITTASINI o'rnating:
 #

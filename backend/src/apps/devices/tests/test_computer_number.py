@@ -84,6 +84,7 @@ class ComputerNumberApiTests(TestCase):
                 "zone": self.zone.pk,
                 "number": 7,
                 "inventory_code": "PC-TEST-7",
+                "machine_uuid": "4C4C4544-0038-4A10-805A-C7C04F4B3A07",
                 "ip_address": "192.168.55.7",
                 "mac_address": "AA:BB:CC:11:22:33",
             },
@@ -108,6 +109,7 @@ class ComputerNumberApiTests(TestCase):
                 "zone": self.zone.pk,
                 "number": 0,
                 "inventory_code": "PC-TEST-0",
+                "machine_uuid": "4C4C4544-0038-4A10-805A-C7C04F4B3A08",
                 "ip_address": "192.168.55.8",
                 "mac_address": "AA:BB:CC:11:22:34",
             },
@@ -124,6 +126,7 @@ class ComputerNumberApiTests(TestCase):
                 "zone": self.zone.pk,
                 "number": 9,
                 "inventory_code": "PC-TEST-9",
+                "machine_uuid": "4C4C4544-0038-4A10-805A-C7C04F4B3A09",
                 "ip_address": "192.168.55.9",
                 "mac_address": "AA:BB:CC:11:22:35",
             },
@@ -137,3 +140,58 @@ class ComputerNumberApiTests(TestCase):
         # Xato matni CHEKLOV NOMIDAN emas, odam tilida
         # (`common/exceptions.py` dagi lug'at).
         self.assertIn("raqamli kompyuter", response.content.decode())
+
+
+class ComputerMachineUuidApiTests(TestCase):
+    """Panel formasi: UUID asosiy, kanonik shaklda, unikal; MAC ixtiyoriy."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.zone = factories.make_zone()
+        self.user = factories.make_user(permissions=["devices.view", "devices.manage"])
+        self.auth = bearer(self.user)
+        self.seq = 0
+
+    def create(self, **payload):
+        self.seq += 1
+        return self.client.post(
+            reverse("computer-list"),
+            {"zone": self.zone.pk, "number": 100 + self.seq,
+             "inventory_code": "PC-UUID-{}".format(self.seq), **payload},
+            format="json",
+            HTTP_AUTHORIZATION=self.auth,
+        )
+
+    def test_uuid_required_and_canonical_mac_optional(self):
+        self.assertEqual(self.create().status_code, 400)
+        response = self.create(machine_uuid="{4c4c4544-0038-4a10-805a-c7c04f4b3a11}")
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.json()["data"]["machine_uuid"], "4C4C4544-0038-4A10-805A-C7C04F4B3A11")
+        self.assertEqual(response.json()["data"]["mac_address"], "")
+
+    def test_duplicate_and_placeholder_rejected(self):
+        factories.make_computer(zone=self.zone, machine_uuid="4C4C4544-0038-4A10-805A-C7C04F4B3A12")
+        duplicate = self.create(machine_uuid="4c4c4544-0038-4a10-805a-c7c04f4b3a12")
+        self.assertEqual(duplicate.status_code, 400)
+        self.assertIn("machine_uuid", duplicate.json()["error"]["details"])
+        placeholder = self.create(machine_uuid="03000200-0400-0500-0006-000700080009")
+        self.assertEqual(placeholder.status_code, 400)
+
+    def test_two_computers_without_mac_do_not_collide(self):
+        self.assertEqual(self.create(machine_uuid="4C4C4544-0038-4A10-805A-C7C04F4B3A13").status_code, 201)
+        second = self.client.post(
+            reverse("computer-list"),
+            {"zone": self.zone.pk, "number": 150, "inventory_code": "PC-UUID-B",
+             "machine_uuid": "4C4C4544-0038-4A10-805A-C7C04F4B3A14", "mac_address": ""},
+            format="json",
+            HTTP_AUTHORIZATION=self.auth,
+        )
+        self.assertEqual(second.status_code, 201, second.content)
+
+    def test_legacy_computer_can_be_edited_without_uuid(self):
+        legacy = factories.make_computer(zone=self.zone, machine_uuid=None)
+        response = self.client.patch(
+            reverse("computer-detail", args=[legacy.pk]), {"number": 55},
+            format="json", HTTP_AUTHORIZATION=self.auth,
+        )
+        self.assertEqual(response.status_code, 200, response.content)

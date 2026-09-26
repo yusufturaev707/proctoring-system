@@ -161,8 +161,9 @@ class AuthService(QObject):
         Bu chaqiruv oqimning "kalitini" beradi: usiz qaysi binoda
         turganimizni ham, qaysi imtihonlar ochiqligini ham bilmaymiz.
 
-        MASHINA IDENTIFIKATORI HAM SHU YERDA yuboriladi (MAC, IP) va
-        server uni `Computer.mac_address` bilan solishtiradi. Alohida
+        MASHINA IDENTIFIKATORI HAM SHU YERDA yuboriladi (Machine UUID;
+        MAC va IP - ikkilamchi) va server uni `Computer.machine_uuid`
+        bilan solishtiradi. Alohida
         endpoint qilinmadi: tekshiruv natijasi handshake bergan
         kontekstga (bino, kompyuter) bog'liq va ikkinchi so'rov ikkala
         javobning bir-biriga mos kelishini kafolatlay olmasdi -

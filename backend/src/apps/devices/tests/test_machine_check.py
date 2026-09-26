@@ -171,3 +171,122 @@ class VerifyMachineTests(TestCase):
         self.assertFalse(
             Computer.objects.filter(mac_address="AA:BB:CC:DD:EE:77").exists()
         )
+
+
+class VerifyMachineUuidTests(TestCase):
+    """
+    Asosiy yo'l - Machine UUID. MAC o'zgarsa ham mashina tanilishi,
+    UUID'siz eski yozuv esa MAC orqali BIR MARTA bog'lanishi kerak.
+    """
+
+    UUID = "4C4C4544-0038-4A10-805A-C7C04F4B3A21"
+
+    def setUp(self):
+        self.zone = factories.make_zone()
+        self.computer = factories.make_computer(
+            zone=self.zone, machine_uuid=self.UUID, mac_address="AA:BB:CC:DD:EE:21"
+        )
+        self.device = factories.make_device(computer=self.computer)
+
+    def test_uuid_match_passes_even_if_mac_changed(self):
+        result = services.verify_machine(
+            self.device, machine_uuid=self.UUID.lower(), mac_address="11:22:33:44:55:66"
+        )
+        self.assertEqual((result["status"], result["basis"]), (services.MACHINE_OK, "uuid"))
+
+    def test_foreign_uuid_is_not_found_even_if_mac_matches(self):
+        """UUID berilgan bo'lsa MAC hal qilmaydi - MAC endi identifikator emas."""
+        result = services.verify_machine(
+            self.device, machine_uuid="4C4C4544-0038-4A10-805A-C7C04F4B3A99",
+            mac_address="AA:BB:CC:DD:EE:21",
+        )
+        self.assertEqual(result["status"], services.MACHINE_NOT_FOUND)
+        self.assertIn(self.UUID, result["message"])
+        self.computer.refresh_from_db()
+        self.assertEqual(self.computer.machine_uuid, self.UUID)
+
+    def test_uuid_of_another_computer_is_mismatch(self):
+        other = factories.make_computer(zone=self.zone)
+        result = services.verify_machine(self.device, machine_uuid=other.machine_uuid)
+        self.assertEqual(result["status"], services.MACHINE_MISMATCH)
+        self.assertEqual(result["computer_code"], other.inventory_code)
+
+    def test_legacy_record_is_bound_once_by_matching_mac(self):
+        legacy = factories.make_computer(
+            zone=self.zone, machine_uuid=None, mac_address="AA:BB:CC:DD:EE:22"
+        )
+        device = factories.make_device(computer=legacy)
+        uuid = "4C4C4544-0038-4A10-805A-C7C04F4B3A22"
+
+        result = services.verify_machine(device, machine_uuid=uuid, mac_address="aa-bb-cc-dd-ee-22")
+
+        self.assertEqual(result["status"], services.MACHINE_OK)
+        self.assertTrue(result["bound"])
+        legacy.refresh_from_db()
+        self.assertEqual(legacy.machine_uuid, uuid)
+        # Ikkinchi marta - oddiy moslik, qayta bog'lash emas.
+        again = services.verify_machine(device, machine_uuid=uuid, mac_address="")
+        self.assertEqual((again["status"], again["bound"]), (services.MACHINE_OK, False))
+
+    def test_legacy_record_is_not_bound_when_mac_differs(self):
+        legacy = factories.make_computer(
+            zone=self.zone, machine_uuid=None, mac_address="AA:BB:CC:DD:EE:23"
+        )
+        device = factories.make_device(computer=legacy)
+
+        result = services.verify_machine(
+            device, machine_uuid="4C4C4544-0038-4A10-805A-C7C04F4B3A23",
+            mac_address="AA:BB:CC:DD:EE:77",
+        )
+
+        self.assertEqual(result["status"], services.MACHINE_NOT_FOUND)
+        legacy.refresh_from_db()
+        self.assertIsNone(legacy.machine_uuid)
+
+    def test_uuid_taken_elsewhere_is_not_bound(self):
+        """Bitta UUID ikki yozuvda bo'lolmaydi - band bo'lsa bog'lanmaydi."""
+        legacy = factories.make_computer(
+            zone=self.zone, machine_uuid=None, mac_address="AA:BB:CC:DD:EE:24"
+        )
+        device = factories.make_device(computer=legacy)
+
+        result = services.verify_machine(
+            device, machine_uuid=self.UUID, mac_address="AA:BB:CC:DD:EE:24"
+        )
+
+        self.assertEqual(result["status"], services.MACHINE_MISMATCH)
+        legacy.refresh_from_db()
+        self.assertIsNone(legacy.machine_uuid)
+
+    def test_resolve_computer_prefers_uuid(self):
+        found = services.resolve_computer(
+            machine_uuid=self.UUID, mac_address="00:00:00:00:00:01"
+        )
+        self.assertEqual(found, self.computer)
+
+
+class FingerprintUpgradeTests(TestCase):
+    """Apparat izi MAC formatidan UUID formatiga o'tishi soxta anomaliya bermaydi."""
+
+    def setUp(self):
+        self.device = factories.make_device(
+            hardware_fingerprint="AA:BB:CC:DD:EE:31|PC-31|Windows|AMD64"
+        )
+
+    def test_same_machine_upgrades_silently(self):
+        anomalies = services.record_handshake(
+            self.device, hardware_fingerprint="muid:4C4C4544-0038-4A10-805A-C7C04F4B3A31",
+            reported_mac="aa-bb-cc-dd-ee-31",
+        )
+        self.assertEqual([a["kind"] for a in anomalies], [])
+        self.device.refresh_from_db()
+        self.assertEqual(self.device.hardware_fingerprint, "muid:4C4C4544-0038-4A10-805A-C7C04F4B3A31")
+
+    def test_other_machine_is_still_an_anomaly(self):
+        anomalies = services.record_handshake(
+            self.device, hardware_fingerprint="muid:4C4C4544-0038-4A10-805A-C7C04F4B3A32",
+            reported_mac="AA:BB:CC:DD:EE:99",
+        )
+        self.assertIn("fingerprint_changed", [a["kind"] for a in anomalies])
+        self.device.refresh_from_db()
+        self.assertTrue(self.device.hardware_fingerprint.startswith("AA:BB"))

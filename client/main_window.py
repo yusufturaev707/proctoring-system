@@ -31,6 +31,7 @@ qoida. Birinchisi chetlab o'tilishi mumkin, ikkinchisi yo'q.
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Optional
 
 from PyQt6.QtCore import QEventLoop, Qt, QTimer
@@ -43,15 +44,24 @@ from PyQt6.QtWidgets import (
     QStackedWidget,
 )
 
-from config import APP_NAME, BLOCKED_HOTKEYS, FULLSCREEN, KIOSK_MODE
+from config import (
+    APP_NAME,
+    BLOCKED_HOTKEYS,
+    FULLSCREEN,
+    KIOSK_MODE,
+    LOCAL_SERVICE_ALLOWED_ORIGINS,
+    LOCAL_SERVICE_ENABLED,
+    LOCAL_SERVICE_PORT,
+)
 from services.api_client import ApiClient
 from services.app_state import AppState
 from services.auth_service import AuthService
 from services import system_info
 from services.camera_worker import await_retired_cameras
 from services.face_engine import FaceEngineLoader
+from services.local_service import LocalDeviceService, device_payload
 from services import runtime_settings
-from services.lockdown import lockdown, resolve_hotkeys
+from services.lockdown import kiosk_window_flags, lockdown, resolve_hotkeys
 from services.repositories import ProctoringRepository
 from services.workers import ApiWorker, WorkerHolder
 from ui.dialogs.exit_dialog import ExitDialog
@@ -87,12 +97,16 @@ class MainWindow(QMainWindow):
         # Kiosk oyna bayroqlari KONSTRUKTORDA qo'yiladi: `setWindowFlags`
         # ko'rsatilgan oynada uni qayta yaratadi (Windows'da ko'z
         # qisishi ko'rinadi va fokus yo'qoladi).
+        #
+        # System Menu'SIZ (`lockdown.kiosk_window_flags`): QMainWindow
+        # standartidagi `WindowSystemMenuHint` qolsa, oynaga yetgan
+        # Alt+Space ekran tepasida Windows menyusini ochardi.
         if KIOSK_MODE:
-            self.setWindowFlags(
+            self.setWindowFlags(kiosk_window_flags(
                 self.windowFlags()
                 | Qt.WindowType.FramelessWindowHint
                 | Qt.WindowType.WindowStaysOnTopHint
-            )
+            ))
 
         #: Chiqishga ruxsat berildimi (parol tekshiruvidan o'tdimi).
         self._exit_allowed = not KIOSK_MODE
@@ -132,6 +146,26 @@ class MainWindow(QMainWindow):
         # bilan qulaydi (`services/workers.py`).
         self._workers = WorkerHolder()
         self._presence_busy = False
+
+        # Test platformasi uchun lokal xizmat (`services/local_service.py`).
+        # OYNA DARAJASIDA va dastur ochilishi bilan: `device_info` imtihon
+        # sahifasidan tashqarida ham so'ralishi mumkin, skrinshot buyrug'i
+        # esa faqat imtihon sahifasi ruxsat berganda o'tadi.
+        self._local_service = None
+        if LOCAL_SERVICE_ENABLED:
+            self._local_service = LocalDeviceService(
+                self._local_device_info,
+                port=LOCAL_SERVICE_PORT,
+                extra_origins=LOCAL_SERVICE_ALLOWED_ORIGINS,
+                parent=self,
+            )
+            self._local_service.start()
+            # UUID va tarmoq identifikatori OLDINDAN o'lchanadi (fon
+            # thread'i): platformaning birinchi so'rovi zaxira yo'ldagi
+            # OS buyrug'ini kutib qolmasin.
+            threading.Thread(
+                target=self._warm_device_info, name="device-info-warmup", daemon=True
+            ).start()
 
         self._stack = QStackedWidget()
         self.setCentralWidget(self._stack)
@@ -234,7 +268,9 @@ class MainWindow(QMainWindow):
         self._faceid_page.logout_requested.connect(self._on_logout)
         self._stack.addWidget(self._faceid_page)
 
-        self._webview_page = ExamWebViewPage(self._state, self._repo)
+        self._webview_page = ExamWebViewPage(
+            self._state, self._repo, local_service=self._local_service
+        )
         self._webview_page.session_finished.connect(self._on_session_finished)
         self._webview_page.session_lost.connect(self._on_session_lost)
         self._webview_page.session_blocked.connect(self._on_session_blocked)
@@ -697,11 +733,43 @@ class MainWindow(QMainWindow):
         log.info("Ilova yakunlanmoqda (OS seansi) - tozalash")
         self._shutdown()
 
+    # ------------------------------------------------------------------
+    # Lokal xizmat
+    # ------------------------------------------------------------------
+    def _local_device_info(self) -> dict:
+        """
+        `GET /api/device_info` javobi. HTTP THREAD'IDAN chaqiriladi -
+        faqat O'QIYDI.
+
+        MAC va IP handshake yuborgan juftlikning O'ZI (`AppState.machine`):
+        platforma ko'rgan qiymat server tekshirgan qiymat bilan farq
+        qilmasligi kerak. Login'gacha u bo'sh - o'shanda bir marta
+        o'lchanadi (kesh, `machine_identity`).
+        """
+        machine = self._state.machine or system_info.machine_identity()
+        return device_payload(
+            # Handshake yuborgan UUID - server tekshirgan qiymatning O'ZI.
+            machine_uuid=machine.get("machine_uuid") or system_info.machine_uuid(),
+            ip=machine.get("ip", ""),
+            mac=machine.get("mac", ""),
+            number=self._state.device.number,
+        )
+
+    @staticmethod
+    def _warm_device_info() -> None:
+        try:
+            system_info.machine_uuid()
+            system_info.machine_identity()
+        except Exception:
+            log.debug("Qurilma ma'lumoti oldindan olinmadi", exc_info=True)
+
     def _shutdown(self) -> None:
         """Barcha fon ishlarini tugatadi. Oyna allaqachon yashiringan."""
         # Signal taymeri BIRINCHI to'xtaydi: yopilish paytida yangi
         # so'rov ochish tozalashni cho'zardi.
         self._presence_timer.stop()
+        if self._local_service is not None:
+            self._local_service.stop()
 
         # OCHIQ IMTIHON undan keyin DARHOL yakunlanadi - sessiya tokeni
         # va tarmoq mijozi hali tirik. Sahifalarni tozalash (`stop()`)

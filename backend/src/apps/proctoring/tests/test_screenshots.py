@@ -287,3 +287,156 @@ class ScreenshotDeleteTests(RedisStateMixin, TestCase):
 
         self.assertFalse(screenshot_service.screenshot_delete(screenshot))
         self.assertEqual(ProctoringScreenshot.objects.count(), 0)
+
+
+class QuestionScreenshotTests(RedisStateMixin, TestCase):
+    """
+    Savol kadri: sessiyada savolga BITTA qator, qayta belgilash YANGILAYDI.
+
+    Skrinshot test platformasi buyrug'i bilan (`q_id`/`q_n`) olinadi;
+    talabgor savolga qaytib javobni o'zgartirsa, oxirgi holat qolishi va
+    eski fayl diskda yetim bo'lib qolmasligi kerak.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.session = factories.make_session()
+        self.storage = get_screenshot_storage()
+
+    def store(self, moment, color="red", q="Q-17", n=3):
+        with self.captureOnCommitCallbacks(execute=True):
+            return screenshot_service.screenshot_store(
+                session=self.session, upload=upload(image_bytes(color=color)),
+                captured_at=moment, question_id=q, question_number=n,
+            )
+
+    def test_reanswer_replaces_row_and_old_file(self):
+        first = self.store(timezone.now() - timezone.timedelta(seconds=30))
+        old_path = first.file_path
+        second = self.store(timezone.now(), color="blue", n=4)
+
+        self.assertEqual(second.pk, first.pk)
+        self.assertEqual(ProctoringScreenshot.objects.filter(session=self.session).count(), 1)
+        self.assertNotEqual(second.file_path, old_path)
+        self.assertTrue(self.storage.exists(second.file_path))
+        self.assertFalse(self.storage.exists(old_path))
+        self.assertEqual(second.question_number, 4)
+        self.assertGreater(second.captured_at, first.captured_at)
+
+    def test_older_frame_never_overwrites_newer(self):
+        newest = self.store(timezone.now())
+        stale = self.store(timezone.now() - timezone.timedelta(minutes=1), color="blue")
+        self.assertEqual(stale.file_path, newest.file_path)
+        self.assertEqual(ProctoringScreenshot.objects.filter(session=self.session).count(), 1)
+
+    def test_different_questions_and_untagged_are_separate(self):
+        self.store(timezone.now(), q="Q-1", n=1)
+        self.store(timezone.now(), q="Q-2", n=2)
+        screenshot_service.screenshot_store(
+            session=self.session, upload=upload(image_bytes()), captured_at=timezone.now()
+        )
+        self.assertEqual(ProctoringScreenshot.objects.filter(session=self.session).count(), 3)
+
+    def test_failed_row_update_keeps_old_evidence(self):
+        first = self.store(timezone.now() - timezone.timedelta(seconds=30))
+        with mock.patch.object(ProctoringScreenshot, "save", side_effect=DatabaseError("x")):
+            with self.assertRaises(DatabaseError):
+                self.store(timezone.now(), color="blue")
+        first.refresh_from_db()
+        self.assertTrue(self.storage.exists(first.file_path))
+        # Yangi fayl yetim qolmadi: faqat eski dalil diskda.
+        self.assertEqual(ProctoringScreenshot.objects.count(), 1)
+
+
+class QuestionShotS3Tests(TestCase):
+    """S3 yo'li: yozilgandan keyin savolning eski kadri tozalanadi."""
+
+    def test_only_newest_question_shot_survives(self):
+        from apps.proctoring import tasks
+        from apps.proctoring.models import ScreenshotMeta
+
+        session = factories.make_session()
+        now = timezone.now()
+
+        def meta(key, seconds_ago, question="Q-5"):
+            return ScreenshotMeta.objects.create(
+                session=session, object_key=key, captured_at=now - timezone.timedelta(seconds=seconds_ago),
+                question_id=question, question_number=5,
+            )
+
+        meta("old", 60)
+        newest = meta("new", 5)
+        meta("older", 120)
+        other = meta("other", 90, question="Q-6")
+        with mock.patch("apps.common.storage.delete_objects", return_value=2) as deleted:
+            removed = tasks._drop_replaced_question_shots({(session.pk, "Q-5"), (session.pk, "Q-6")})
+        self.assertEqual(removed, 2)
+        self.assertEqual(sorted(deleted.call_args.args[0]), ["old", "older"])
+        self.assertEqual(
+            set(ScreenshotMeta.objects.values_list("id", flat=True)), {newest.id, other.id}
+        )
+
+
+class FrozenFrameQuestionTests(RedisStateMixin, TestCase):
+    """Bitta savolga qayta bosish - bir xil kadr, lekin anomaliya EMAS."""
+
+    def test_same_question_repeats_do_not_raise_anomaly(self):
+        from apps.proctoring.services import ingest
+
+        session = factories.make_session()
+        with mock.patch.object(ingest, "push_event") as pushed:
+            for _ in range(8):
+                ingest.check_frozen_frames(session, "a" * 64, question_id="Q-1")
+        pushed.assert_not_called()
+
+    def test_same_frame_across_questions_is_still_suspicious(self):
+        from apps.proctoring.services import ingest
+
+        session = factories.make_session()
+        with mock.patch.object(ingest, "push_event") as pushed:
+            for index in range(6):
+                ingest.check_frozen_frames(session, "b" * 64, question_id=f"Q-{index}")
+        pushed.assert_called_once()
+
+
+class QuestionUploadApiTests(RedisStateMixin, TestCase):
+    """`client/screenshots/upload/` - savol maydonlari bilan shartnoma."""
+
+    def setUp(self):
+        super().setUp()
+        from django.urls import reverse
+        from rest_framework.test import APIClient
+
+        from apps.proctoring.services import session as session_service
+        from apps.proctoring.tests.test_client_api import bearer
+
+        self.client = APIClient()
+        self.url = reverse("client-screenshot-upload")
+        self.device = factories.make_device()
+        self.session = factories.make_session(device=self.device)
+        self.headers = {
+            "HTTP_AUTHORIZATION": bearer(factories.make_user(permissions=["client.operate"])),
+            "HTTP_X_DEVICE_ID": self.device.device_id,
+            "HTTP_X_PROCTORING_SESSION": session_service.issue_session_token(self.session),
+        }
+
+    def post(self, **fields):
+        return self.client.post(
+            self.url, {"file": upload(image_bytes()), **fields}, format="multipart", **self.headers
+        )
+
+    def test_reanswer_keeps_single_row(self):
+        first = self.post(captured_at="2026-09-25T10:00:00Z", question_id="101", question_number="3")
+        self.assertEqual(first.status_code, 201, first.content)
+        second = self.post(captured_at="2026-09-25T10:00:30Z", question_id="101", question_number="3")
+        self.assertEqual(second.json()["data"]["id"], first.json()["data"]["id"])
+        rows = ProctoringScreenshot.objects.filter(session=self.session)
+        self.assertEqual(rows.count(), 1)
+        self.assertEqual((rows[0].question_id, rows[0].question_number), ("101", 3))
+
+    def test_invalid_question_id_is_rejected(self):
+        response = self.post(captured_at="2026-09-25T10:00:00Z", question_id="../x")
+        self.assertEqual(response.status_code, 400)
+
+    def test_untagged_upload_still_works(self):
+        self.assertEqual(self.post(captured_at="2026-09-25T10:00:00Z").status_code, 201)

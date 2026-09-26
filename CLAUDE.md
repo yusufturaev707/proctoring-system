@@ -188,12 +188,77 @@ Client tomoni (`client/services/screen_capture.py`) qaysi yo'l yoqilganini
 marta aniqlanadi: `presign/` 503 qaytarsa, fayl tizimi yo'liga o'tiladi.
 Yangi sozlama qo'shganda shu shartnomani buzmang.
 
-**`Setting.screenshot_dedup_threshold` — dHash'dagi FARQLI BITLAR soni
-(0–64)**, foiz emas. Bu ikki komponent orasidagi kontrakt va u faqat
-client kodida yashaydi: model maydonida birlik yozilmagan. `0` — dedup
-o'chirilgan. Ketma-ket 6 marta o'tkazib yuborilgach kadr chegaradan
-qat'i nazar yuboriladi (`_FORCE_SEND_AFTER_SKIPS`) — dedup dalilda
-"ko'r oyna" yarata olmasligi kerak.
+**SKRINSHOT TAYMERSIZ — TEST PLATFORMASI BUYURGANDA** (`controls.0013`:
+`screenshot_interval` va `screenshot_dedup_threshold` OLIB TASHLANDI).
+Talabgor javob belgilaganda platforma frontendi client'ning lokal
+xizmatiga `POST http://localhost:8050/api/capture_screen` yuboradi
+(pastdagi "Lokal xizmat"). Taymer kadrlarining katta qismi o'ylayotgan
+talabgorning bir xil ekrani edi (dedup shuning uchun bor edi); buyruq
+kadri esa ma'noli lahza va DEDUP QILINMAYDI. Kadr mashinada HAR DOIM
+saqlanadi; serverga yuborish — `Setting.is_screenshot_upload` (panel
+«Saqlash joyi»: faqat mashinada / mashinada + serverga, fonda).
+
+`services/screen_capture.py` da UCH MUSTAQIL BOSQICH: olish (UI thread,
+buyruq lahzasi, kamera kadri bilan) -> kodlash + mahalliy arxiv (fon) ->
+yuklash (fon, BITTA uchuvchi so'rov, xatoda 15 s dan keyin qayta). Ilgari
+yuklash tugamaguncha keyingi kadr TASHLANARDI — buyruqda bu javob
+belgilangan savolning yagona dalilini yo'qotish. Arxiv konteksti BUYRUQ
+paytida olinadi (`local_archive.context()`) — kodlash tugaguncha sessiya
+yopilishi mumkin.
+
+**SAVOL KADRI — SAVOLGA BITTA, QAYTA BELGILANSA ALMASHADI.** Buyruq
+tanasi `{"q_id": "1", "q_n": "3"}` (satr yoki son). Uch qatlamda bir xil
+qoida — eskisi yangisi bilan almashadi, eskisi yangisini HECH QACHON
+bosmaydi:
+
+| Qatlam | Qanday |
+|---|---|
+| mashina | `q003_id1_14-05-33.jpg`; yangi fayl (`.tmp` -> `os.replace`), keyin shu `q_id` ning eski fayllari (`local_archive.save_question_shot`, nom oxiridan regex bilan ajratiladi) |
+| client navbatlari | shu savolning kodlanmagan / yuborilmagan kadri tashlanadi (trafik 1x) |
+| server, fayl tizimi | `unique_screenshot_session_question`; qator O'RNIDA yangilanadi: yangi fayl -> qator -> eski fayl `on_commit`; eskiroq `captured_at` rad etiladi |
+| server, S3 | yozilgandan keyin `tasks._drop_replaced_question_shots` (avval obyekt, keyin qator) |
+
+KECHIKTIRISH (coalescing) YO'Q va qaytarmang: kechiktirilgan kadr olinganda
+ekranda KEYINGI savol turgan bo'lishi mumkin va kadr noto'g'ri savol nomi
+bilan saqlanardi. Spam chegarasi — lokal xizmatda (sekundiga 20, 429).
+`q_id` belgilar to'plami `[A-Za-z0-9_.-]{1,64}` IKKI TOMONDA bir xil
+(`local_service.QUESTION_ID_RE`, `ScreenshotUploadSerializer`) — u fayl
+nomiga boradi. `q_n` siz `q_id` mumkin, `q_id` siz `q_n` — 400.
+`check_frozen_frames` bitta savolga qayta bosishdagi bir xil kadrni
+anomaliya hisoblamaydi (kamera tasmasi o'chiq bo'lsa ekran piksel-piksel
+bir xil bo'lishi mumkin); turli savollarda bir xil kadr avvalgidek shubhali.
+
+**LOKAL XIZMAT** (`client/services/local_service.py`, `MainWindow` da
+dastur ochilishi bilan, `http.server` fon thread'ida — UI band bo'lsa
+ham javob beradi):
+
+| So'rov | Javob |
+|---|---|
+| `GET /api/device_info` | `{"machine_uuid", "ip", "mac", "number"}` — SHARTNOMA, kalitlarni o'zgartirmang |
+| `POST /api/capture_screen` | 202 darhol (kadr fonda); 400 yaroqsiz tana; 409 `no_active_exam`; 429 sekundiga 20 dan ko'p |
+
+* `machine_uuid` — SMBIOS 1-tur, HECH QACHON BO'SH EMAS va doim
+  `normalize_machine_uuid` dan o'tgan (format, "to'ldirilmagan" qiymatlar
+  ro'yxati, past entropiya). Manbalar zanjiri (`system_info.machine_uuid`):
+  `smbios` (`GetSystemFirmwareTable`, ~1 ms, har qanday hisob/xizmat) ->
+  `registry` (`HKLM\SYSTEM\HardwareConfig\LastConfig`) -> `cim`
+  (PowerShell, ~0.3-1.5 s) -> `wmic` (Win11 24H2+ da yo'q) -> `derived`
+  (UUIDv5: MAC -> MachineGuid -> kompyuter nomi, WARNING bilan). Hammasi
+  `wmic csproduct` bilan bir xil satr (SMBIOS 2.6+ da `bytes_le`). Windows
+  `MachineGuid` ASOSIY manba EMAS: u obraz bilan ko'chadi.
+  `ip`/`mac` — handshake yuborgan juftlikning O'ZI (`AppState.machine`),
+  `mac` kichik harf; `number` — SATR, login'gacha `null`.
+* Faqat LOOPBACK (`127.0.0.1` va `::1` — Chromium `localhost` ni avval
+  IPv6 ga uradi). `Host` loopback bo'lishi shart (DNS rebinding).
+  `Origin` — imtihondagi `webview_policy.allowed_domains` (WebView
+  allowlist'i bilan BIR XIL qoida) + `.env` `LOCAL_SERVICE_ALLOWED_ORIGINS`
+  (`*` — faqat dev). CORS va Private Network Access preflight'iga javob
+  beriladi.
+* **WEBVIEW DOMEN FILTRI LOKAL PORTNI O'TKAZADI**
+  (`DomainAllowlistInterceptor(local_port=)`) — aks holda platformaning
+  `localhost` so'rovi WebView ichida jimgina bloklanardi. Faqat AYNAN o'sha
+  port.
+* Port band bo'lsa dastur to'xtamaydi — log'da ERROR, skrinshot olinmaydi.
 
 **SKRINSHOT STANDARTI 1920 px / 80 SIFAT** (`Setting.screenshot_max_width`
 / `screenshot_quality`, `controls.0010_screenshot_quality`). Ilgari
@@ -844,6 +909,22 @@ Mashina tekshiruvi matnlari ham raqamli nomni ishlatadi
 chiqarilgan" — operator uni stolda ko'rib turibdi, inventar kodi
 esa unga hech narsa aytmasdi.
 
+**EXCEL IMPORT** (`devices/computer_import.py`, `computers/import/` +
+`import-template/`, panel `ComputerImportDialog`). Ustunlar: `dtm_id`,
+`zone_number` (TASHQI raqamlar, ichki ID emas), `machine_uuid` (MAJBURIY),
+`mac_address` (ixtiyoriy), `number`, `inventory_code` (ixtiyoriy — bo'sh
+bo'lsa `AUTO-<UUID hex>`). Sarlavha va qiymatdagi qavs ichi tashlanadi.
+HAMMASI YOKI HECH NARSA: bitta xato = hech narsa yozilmaydi, panel avval
+`dry_run` qiladi. Ro'yxatdagi UUID — xato emas, O'TKAZIB YUBORILADI
+(tuzatilgan faylni qayta yuklash odatiy). YAGONA TAHRIR — UUID'siz ESKI
+yozuv qatordagi MAC va O'SHA bino bo'yicha topilsa, unga FAQAT
+`machine_uuid` yoziladi (`to_bind`/`bound`, raqam va kod o'zgarmaydi):
+eski faylga bitta ustun qo'shib qayta yuklash binoni UUID'ga o'tkazadi.
+Viloyat admini faqat o'z viloyatiga. `Computer.ip_address` shu sababli
+IXTIYORIY (`devices.0010`): Excel'da IP yo'q, NULL esa
+`unique_computer_zone_ip` ga tushmaydi (ilgari "0.0.0.0" binoda bittadan
+ortiq bo'lolmasdi).
+
 ### Kompyuter broni (`exams.ComputerBooking`)
 
 **"TEST SESSIYASI" — `ExamSchedule`** (imtihon + vaqt + bino/`NULL`
@@ -931,12 +1012,15 @@ to'xtamaydi); `REQUIRE_COMPUTER_BOOKING=true` uni majburiy qiladi.
 | `seat_not_booked` (403) | talabgorning joyi yo'q |
 | `seat_out_of_service` (409) | joyi buzilgan — administrator ko'chiradi |
 | `wrong_computer` (409) | boshqa stolda; `details.seat` — qayerga borish, `details.current` — shu mashina |
-| `device_binding_mismatch` (409) | stol TO'G'RI (MAC mos), lekin qurilma boshqa kompyuterga biriktirilgan |
+| `device_binding_mismatch` (409) | stol TO'G'RI (UUID mos), lekin qurilma boshqa kompyuterga biriktirilgan |
 
-"Shu mashina" — client yuborgan MAC (`mac_address`, jismoniy stol),
-u bo'lmasa qurilmaning `Computer` biriktiruvi. MAC FAQAT BINO ICHIDA
-qidiriladi (qurilmaning binosi, qurilma yo'q bo'lsa talabgor
-joyiniki) — `verify_machine` bilan bir xil savol.
+"Shu mashina" — client yuborgan `machine_uuid` (jismoniy stol,
+`bookings._physical_computer`); eski client'da MAC, ikkalasi ham
+topilmasa qurilmaning `Computer` biriktiruvi. UUID berilgan-u bazada
+topilmasa MAC faqat UUID'SIZ yozuvlarda qidiriladi (UUID'i boshqa
+mashina MAC bo'yicha "shu stol" bo'lib qolmasin). FAQAT BINO ICHIDA
+(qurilmaning binosi, qurilma yo'q bo'lsa talabgor joyiniki) —
+`verify_machine` bilan bir xil savol.
 
 **CHALLENGE QURILMAGA BOG'LANGAN** (`session._require_pending_device`).
 Bron qarori JSHSHIR tekshiruvini yuborgan qurilma uchun chiqariladi;
@@ -963,11 +1047,22 @@ BRON endpointidan — `devices.view` shart emas).
 
 **STANDART KO'RINISH — JOYLAR XARITASI** (poyezd bronlash naqshi,
 `components/bookings/SeatMap.jsx`; `?view=list` — jadval): chapda
-binolar ("vagonlar", viloyat bo'yicha, bandlik chizig'i), o'ngda zal —
+IKKI BOSQICH — viloyatlar (`region_dtm_id` tartibida, statistika
+binolardan brauzerda yig'iladi — `groupRegions`, qo'shimcha so'rovsiz),
+keyin tanlangan viloyatning binolari (`?region=&zone=` URL'da). Bino
+AVTOMATIK tanlanmaydi (yagona tanlovdan tashqari) — o'ngda
+`PickPrompt`. O'ngda zal —
 o'rindiqlar raqam tartibida, o'rtada yo'lak, tepada «Oldi · proktor
 stoli». Holat rang + ikonka + shakl bilan (buzilgan — qiya chiziq).
 Ustunlar soni kartaning haqiqiy kengligidan (`ResizeObserver`), ekran
 nuqtasidan emas. Ko'chirish ikki bosqichli (panel → bo'sh o'rindiq).
+**500 O'RINDIQ TEZ** (`SeatGrid`): o'rindiq — oddiy `<button>` +
+data-atributlar, butun stil BITTA blokda (`seatStyles`), `memo` bilan
+(tanlovda 2 ta qayta chiziladi), tooltip bitta (`HoverTip`),
+ekrandan tashqaridagi qator `content-visibility: auto`. O'rindiqqa
+MUI `Tooltip`/`ButtonBase`/`sx` QAYTARMANG — har biri 500 marta
+ko'payadi. Statistika (`StatsStrip`) katta ekranda BITTA ixcham qator:
+aks holda proktor stoli ekrandan pastga tushadi.
 Ma'lumot: `computer-bookings/zones/` (bino kesimida sonlar, bitta
 GROUP BY) va `seats/?zone=` (bitta binoning barcha joylari,
 sahifalanmaydi, 2000 chegara) — ikkalasi ham `?schedule=` talab qiladi
@@ -1002,7 +1097,7 @@ JSHSHIR tekshiruvida aynan shu bronni talab qiladi.
   urinishlar bilan yuboradi; `seat_in_use`/`seat_unavailable` (409) — qaror,
   qayta urilmaydi.
 
-### Mashina tekshiruvi (MAC) — ikkinchi darvoza
+### Mashina tekshiruvi (Machine UUID) — ikkinchi darvoza
 
 **`X-Device-ID` mashinani EMAS, client nusxasini belgilaydi.** U
 diskda oddiy fayl bo'lib yotadi va mashina obrazi ko'chirilganda
@@ -1011,49 +1106,67 @@ mashina bitta `device_id` bilan ishlab, barcha sessiyalar bitta
 kompyuterga yozilardi. Shuning uchun handshake'da ikkinchi savol
 ham beriladi: **dastur qaysi apparatda ishlayapti?**
 
-Javob MAC manzilida va u uchta qoidaga bo'ysunadi:
+**JAVOB — `Computer.machine_uuid` (SMBIOS, ona plata), MAC EMAS.**
+Ilgari MAC edi va u amalda o'zgaradi: tarmoq kartasi almashadi, USB/
+Wi-Fi adapter ulanadi, marshrut boshqa adapterga o'tadi — ishlab turgan
+mashina "ro'yxatda yo'q" bo'lib qolardi. UUID ona plata bilan yashaydi,
+OS qayta o'rnatilsa ham o'zgarmaydi (client qanday o'qishi — "Lokal
+xizmat" bo'limidagi manbalar zanjiri). MAC endi IKKILAMCHI va ixtiyoriy
+(`blank`, shartli unikal faqat bo'sh bo'lmaganda).
 
-* **Client WinAPI orqali o'lchaydi** (`client/services/winapi_net.py`):
-  avval `GetBestInterface` marshrut jadvalidan "serverga qaysi
-  adapter orqali chiqiladi" degan javobni oladi, keyin
-  `GetAdaptersAddresses` bilan AYNAN o'sha adapterning MAC va IP'sini
-  beradi. psutil/`getmac` zaxira bo'lib qoladi. Sabab: tipik
-  mashinada Hyper-V, WSL va VMware adapterlari bir vaqtda "ulangan"
-  turadi va alohida olingan MAC bilan IP boshqa-boshqa adapterdan
-  kelib qolardi — server esa mavjud bo'lmagan mashinani ko'rardi.
+| Qatlam | Qoida |
+|---|---|
+| model | `machine_uuid` NULL bo'lishi mumkin (UUID'dan oldingi yozuvlar), `unique_computer_machine_uuid` (tirik + NOT NULL) |
+| shakl | `common.utils.validators.normalize_machine_uuid` — client bilan AYNAN bir xil (katta harf, `{}` siz, "to'ldirilmagan" ro'yxat, entropiya). Serializer'lar KANONIK shaklga keltiradi |
+| panel | yangi kompyuterda MAJBURIY, eski yozuvni UUID'siz tahrirlash mumkin, bor UUID'ni o'chirib bo'lmaydi |
+| client | handshake, `candidate/lookup/`, `devices/register/`, `access-attempt/` da `machine_uuid` HAR DOIM; sarlavhada KO'RSATILMAYDI (kataklar MAC/IP — o'zgarmagan) |
+| sessiya | `ExamSession.machine_uuid` — kompyuter yozuvidan (bayonnoma) |
+| qurilma | `DeviceToken.reported_machine_uuid` — client o'lchagani (ishonchsiz); panel yon varag'ida yozuvdagi UUID bilan yonma-yon |
+
+* **Client WinAPI orqali o'lchaydi** (`system_info.machine_identity` —
+  `machine_uuid` + marshrut tanlagan adapterning MAC/IP'si,
+  `winapi_net.py`).
 * **Server baholaydi** (`devices/services.py:verify_machine`).
-  Qidiruv ko'lami — qurilmaning BINOSI: savol "bu MAC bazada bormi?"
-  emas, "bu MAC shu binoda bormi?". Boshqa binodagi kompyuter
-  bazada bor, lekin uning jadvali va proktori boshqa.
-* **Tekshiruv faqat SOLISHTIRADI, hech narsa yozmaydi.** Client
-  aytgan MAC bilan `Computer.mac_address` ni yangilash butun
-  tekshiruvni ma'nosiz qilardi: har qanday mashina birinchi
-  handshake'da o'zini "ro'yxatga olingan" holga keltirib olardi.
-
-Natija to'rt xil va ular ATAYLAB ajratilgan — har biri boshqa
-tuzatish yo'lini talab qiladi:
+  Qidiruv ko'lami — qurilmaning BINOSI: savol "bu mashina bazada
+  bormi?" emas, "shu binoda bormi?".
+* **Tekshiruv SOLISHTIRADI. YAGONA YOZUV — UUID'NI BIR MARTA
+  BOG'LASH** (`bind_machine_uuid`): yozuvda UUID YO'Q va client aytgan
+  MAC administrator kiritgan MAC bilan AYNAN mos bo'lsa, UUID yoziladi
+  (`machine_uuid IS NULL` sharti `UPDATE` ichida, band UUID
+  bog'lanmaydi) va auditda `update` + `meta.machine_uuid_bound`. Bu
+  ilgari MAC bo'yicha "ok" bo'ladigan mashinaning O'ZI — ishonch
+  o'zgarmaydi, lekin yuzlab mavjud mashinaga qo'lda UUID yozish shart
+  emas. UUID BOR yozuvga client HECH QACHON tegmaydi.
+* **UUID yubormaydigan ESKI client** — avvalgi MAC qoidasi
+  (`_verify_by_mac`, `basis="mac"`), to'xtatmaslik uchun.
 
 | `status` | Ma'nosi | Kim tuzatadi |
 |---|---|---|
-| `ok` | MAC mos | — |
-| `not_found` | mashina shu binoda ro'yxatda yo'q | administrator kompyuter QO'SHADI |
-| `mismatch` | MAC boshqa kompyuterniki (obraz ko'chirilgan) | administrator qurilmani QAYTA BIRIKTIRADI |
-| `unknown` | client MAC yubormadi/aniqlay olmadi | operator tarmoq adapterini tekshiradi |
+| `ok` | UUID mos (yoki shu tekshiruvda bog'landi — `bound`) | — |
+| `not_found` | shu UUID binoda yo'q; xabarda yozuvdagi qiymat | administrator yozuvni to'g'rilaydi / qo'shadi |
+| `mismatch` | UUID boshqa kompyuterniki (obraz ko'chirilgan) | administrator qurilmani QAYTA BIRIKTIRADI |
+| `unknown` | client identifikator yubormadi | dasturni yangilash |
 
 `ok` dan boshqasi `allowed=False` beradi va client "Davom etish"
-ni bloklaydi. Yumshatish — `REQUIRE_MAC_MATCH=false`: natija
-avvalgidek qaytadi, lekin to'smaydi (dastlabki joylashtirishda
-inventarizatsiya hali to'liq bo'lmasligi mumkin).
+ni bloklaydi. Yumshatish — `REQUIRE_MACHINE_MATCH=false` (eski nomi
+`REQUIRE_MAC_MATCH` zaxira sifatida o'qiladi).
 
-**Bu KREDENSIAL EMAS, inventarizatsiya intizomi.** MAC ni client
+**Bu KREDENSIAL EMAS, inventarizatsiya intizomi.** UUID ni client
 yuboradi, ya'ni uni o'zgartirish mumkin. Haqiqiy chegara
 avvalgidek qurilma tasdig'i, xodim JWT'si va IP ro'yxatida.
 
-Audit yozuvi bu tekshiruvdan CHIQMAYDI: ko'chirilgan qurilma
-`record_handshake` da allaqachon `fingerprint_changed`
-anomaliyasini beradi (MAC `hardware_fingerprint` tarkibida), va
-operator nosozlikni ko'rib "Yangilash" ni ketma-ket bosadi — har
-bosishda yozuv qoldirish jurnalni foydasiz qilardi.
+**APPARAT IZI `muid:<UUID>`** (`client system_info.hardware_fingerprint`).
+Eskisi `MAC|host|OS|arch` edi va MAC/kompyuter nomi o'zgarganda soxta
+`fingerprint_changed` berardi. O'tish: saqlangan eski izdagi MAC client
+aytgan MAC bilan mos bo'lsa etalon JIMGINA yangilanadi
+(`is_fingerprint_upgrade`); aks holda avvalgidek anomaliya.
+`devices/register/` dagi "o'sha mashinami" tekshiruvi ham shu qoida
+bilan (`fingerprint_matches`). `muid:` prefiksi — ikki tomonli shartnoma.
+
+Audit yozuvi rad etilgan tekshiruvdan CHIQMAYDI: ko'chirilgan qurilma
+`record_handshake` da allaqachon `fingerprint_changed` anomaliyasini
+beradi, operator esa nosozlikni ko'rib "Yangilash" ni ketma-ket bosadi
+— har bosishda yozuv qoldirish jurnalni foydasiz qilardi.
 
 **`mismatch` NING TUZATISHI — PANELDA QAYTA BIRIKTIRISH**
 (`/device-tokens` → «Boshqa kompyuterga biriktirish»). `PATCH
@@ -1181,15 +1294,32 @@ qo'limdan kelmadi" holati `survivors` ga tushadi va to'siq beradi
 (imtihon profilida `Setting.is_threat_block_exam=False` uni
 ogohlantirishga tushiradi; zaxira `.env` `THREAT_BLOCK_EXAM`).
 
-**IKKITA MUHIT SAVOLI** jarayonlardan MUSTAQIL va ularni "o'ldirib"
-bo'lmaydi — ikkalasi ham to'g'ridan-to'g'ri to'siq beradi:
+**UCHTA MUHIT SAVOLI** jarayonlardan MUSTAQIL (`process_identity.py`):
 
 * `in_remote_session()` — `SM_REMOTESESSION`. "Masofaviy boshqaruv
   dasturi o'rnatilgan" emas, "mashinani HOZIR kimdir masofadan
   boshqaryapti". `mstsc.exe` ni qayta nomlash ham, uni boshqa
-  client bilan almashtirish ham bunga ta'sir qilmaydi.
-* `host_virtualization()` — BIOS registridagi satrlar. Client
-  virtual mashina ICHIDA ishlayaptimi: kiosk rejimi ham, tezkor
+  client bilan almashtirish ham bunga ta'sir qilmaydi. O'Z seansimiz —
+  uni "o'ldirib" bo'lmaydi, to'g'ridan-to'g'ri to'siq.
+* `foreign_rdp_sessions()` — `WTSEnumerateSessions` +
+  `WTSClientProtocolType == 2`: mashinadagi BOSHQA faol RDP seansi
+  (Windows Server, RDPWrap; yordamchi `mstsc /shadow` bilan talabgor
+  ekranini ko'radi — o'shanda talabgor seansi "lokal" va birinchi
+  savol JIM). Admin huquqisiz, ~1 ms. `rdp_foreign_session` topilmasi
+  (`kind="rdp_session"`) faqat IMTIHON DAVOMIDA yakunlanadi
+  (`neutralize(end_rdp_sessions=True)` — `device_watch`, `WTSLogoffSession`,
+  admin kerak; disconnect EMAS — u qayta ulanadi). Ishga tushishda va
+  "Davom etish" da faqat qayd + TO'SIQ: imtihondan tashqarida o'ldirish
+  texnikning xizmat seansini uzardi. Yakunlab bo'lmasa — to'siq (KRITIK).
+  O'z seansimiz va 0-seans hech qachon yakunlanmaydi (`logoff_session`
+  o'zi ham tekshiradi). Terminal serverli muassasa: `THREAT_SCAN_ALLOW`
+  ga `rdp_foreign_session`.
+* `host_virtualization()` — BIOS registridagi 7 maydon (`SystemManufacturer`,
+  `SystemProductName`, `SystemFamily`, `BIOSVendor`, `BIOSVersion`,
+  `BaseBoardManufacturer`, `BaseBoardProduct`; Hyper-V belgisi aynan
+  `BIOSVersion` da). Qisqa belgilar (`xen`, `kvm`, `qemu`) faqat BUTUN SO'Z
+  — soxta VM to'sig'i butun imtihonni to'xtatardi (`detect_vm_marker`).
+  Client virtual mashina ICHIDA ishlayaptimi: kiosk rejimi ham, tezkor
   tugmalar bloki ham mehmon tizimdan tashqariga chiqmaydi. VDI
   o'rnatishlarida `THREAT_ALLOW_VIRTUAL_HOST=true` kerak, aks
   holda butun sinf imtihonni boshlay olmaydi.
@@ -1695,8 +1825,8 @@ nolga tayanish mutlaq qiymatdan battar.
 
 ### Dalil (evidence) — skrinshotdan ALOHIDA
 
-Skrinshot MUNTAZAM (har 10 s) va kontekstsiz: u "imtihon qanday
-o'tdi" degan umumiy manzarani beradi. Dalil esa HODISAGA bog'langan
+Skrinshot test platformasi BUYRUG'I bilan (javob belgilanganda) va u
+"talabgor qaysi ekranda qanday javob berdi" degan manzarani beradi. Dalil esa HODISAGA bog'langan
 va "aynan nima ko'rindi" degan savolga javob beradi — u proktor
 ekranida hodisa yonida turadi va apellyatsiyada asosiy hujjat
 bo'ladi. Shuning uchun ular alohida model, alohida endpoint va
@@ -1847,9 +1977,9 @@ yakunigacha uchta dalil yig'iladi va ular BIR XIL joyga bormaydi:
 
 | | Skrinshot | Kamera klipi | Ekran yozuvi |
 |---|---|---|---|
-| Qayerda | mashina + **server** | faqat mashina | faqat mashina |
+| Qayerda | mashina + **server** (`is_screenshot_upload`) | faqat mashina | faqat mashina |
 | Serverga | fayl (~60 KB) | **manzil** | **manzil** |
-| Hajm | ~65 MB / 3 soat | ~1-3 MB / hodisa | ~0.55-0.7 GB / 3 soat |
+| Hajm | ~150 KB / javob | ~1-3 MB / hodisa | ~0.55-0.7 GB / 3 soat |
 | Model | `ProctoringScreenshot` | `LocalRecording` | `LocalRecording` |
 
 Chegara ko'lamda: 500 mashinali bino kuniga ~5 GB klip va ~500 GB
@@ -1931,10 +2061,6 @@ Qoidalar:
 * **ROL ALMASHTIRILMAYDI** (`ProctoringSupervisor.camera_slots`).
   `latest_frame` ning "istalgan rol" zaxirasi bu yerda noto'g'ri
   bo'lardi — yuz kadri xona burchagiga tushib qolardi.
-* **DEDUP RAMKASIZ EKRAN BO'YICHA.** Tasma fon thread'ida,
-  kodlashdan oldin qo'shiladi; dHash esa UI thread'ida xom ekrandan
-  hisoblanadi. Aks holda talabgorning har harakati "ekran o'zgardi"
-  bo'lib, dedup amalda o'chib qolardi.
 * Kamera kadri UI thread'ida, ekran bilan BIR LAHZADA olinadi —
   kodlash paytidagi kadr boshqa odamni ko'rsatishi mumkin.
 * Tasmani chizib bo'lmasa skrinshot TASMASIZ ketadi: ekran — asosiy
@@ -2498,6 +2624,8 @@ ularni o'qimasdi). Yangi kalit = `Setting` maydoni + `_serialize` VA
 | `THREAT_SCAN_ENABLED`/`_ALLOW`, `THREAT_ALLOW_VIRTUAL_HOST` | `.env` | birinchi `sweep()` serverdan oldin; IT agenti va VDI — mashina/infratuzilma |
 | `LOCAL_ARCHIVE_*` | `.env` | dev bayrog'i + disk hajmi; tozalash serverdan oldin (serverdagi uzunroq muddat kech kelib, dalil allaqachon o'chgan bo'lardi) |
 | `SCREENSHOT_ENABLED` | `.env` | dev VETO (server ustidan) |
+| `LOCAL_SERVICE_*` (port 8050, Origin'lar) | `.env` | platforma bilan shartnoma, Qt'dan keyin darhol ochiladi |
+| skrinshot serverga ham yuboriladimi | `Setting.is_screenshot_upload` | trafik / server diski — imtihon qarori |
 | FaceID oqimi (sanoq, `match_streak`, `fail_streak`, `fail_min_seconds`) | `Setting.faceid_*` | imtihon qoidasi; bir binoda ikki xil qiymat bo'lmasligi kerak |
 | davriy FaceID oralig'i | `Setting.faceid_interval` | (avvaldan) |
 | ekran yozuvi (yoqish, FPS, kenglik, PiP %) | `Setting.is_screen_record`, `screen_record_*` | disk/sifat kelishuvi — imtihon qarori |
@@ -2713,6 +2841,58 @@ yupqa; biznes-mantiq service'da.
   (preflight, handshake, imtihon profili) uni ALMASHTIRADI, BO'SH
   server ro'yxati esa standartni qoldiradi (pastdagi "Client
   sozlamalari" bo'limi).
+* **KLAVIATURA QULFI — ALOHIDA JARAYON, XOM HOOK, MODIFIKATORGA TEGMAYDI.**
+  `keyboard` kutubxonasi OLIB TASHLANDI (requirements'dan ham) va
+  QAYTARMANG. Qatlamlar: `services/keyboard_hook.py` (xom
+  `WH_KEYBOARD_LL`, ctypes — mexanizm), `lockdown.KeyPolicy` (nima
+  yutiladi — sof, testlanadi), `services/keyboard_hook_process.py`
+  (qulf jarayoni: client o'z exe'sini `--keyboard-hook` bilan ko'taradi,
+  `main.py` bayroqni Qt/log/`.env` dan OLDIN tekshiradi; stdin/stdout
+  JSON qatorlar). Hammasi O'LCHANGAN (`tests/test_lockdown_hook.py`):
+  * **Nega alohida jarayon:** client ichidagi Python hook'i GIL
+    raqobatida har tugmani median ~63–110 ms, eng ko'pi ~310–420 ms
+    kechiktirdi — yozish sekinlashadi va `LowLevelHooksTimeout` oshib,
+    Windows hook'ni JIMGINA o'chiradi. Qulf jarayonida (bo'sh, GIL
+    raqobatisiz) client yuklamada ham median 0.12 ms, max 1.9 ms.
+    `sys.setswitchinterval` global va AI'ni sekinlatadi — ishlatilmadi.
+  * **Hayot sikli:** client o'lsa (hatto `TerminateProcess`) qulf
+    stdin'da EOF oladi va o'zi chiqadi — egasiz qulf qolmaydi. Qulf
+    o'lsa client uni qayta ko'taradi (`hook_lost` → `hook_restored`).
+    Qulf ishga tushmasa — zaxira `_LocalEngine` (client ichida).
+  * **Modifikator ushlanmaydi/qayta yuborilmaydi**: faqat ASOSIY tugma
+    yutiladi, modifikator holati `GetAsyncKeyState` dan, ortiqcha
+    modifikator bloklashni bekor qilmaydi, yutilgan tugma o'z UP'igacha
+    yutiladi. Eski `add_hotkey(suppress=True)` da Alt+Shift OS'ga
+    `shift↓ shift↑ alt↓ alt↑` bo'lib yetib TIL ALMASHMASDI,
+    `alt+shift+space`/AltGr+Space o'tardi, hook ko'rmagan UP (Ctrl+Alt+Del)
+    dan keyin aniq Alt+Space ham o'tib, **kiosk oynasi System Menu
+    ochardi**.
+  * **VK bo'yicha, skan-kod emas**: `print screen`/`Num *` bir xil
+    skan-kodli edi va `*` ham yutilardi; VK — Chromium va Windows
+    yorliqni qanday talqin qilsa, shunday. INJEKT qilingan hodisa ham
+    tekshiriladi (kutubxona `fake_alt` bilan ularni ko'rmasdi).
+  * **Tiriklik — canary** (`KeyboardHook.probe`, 5 s): belgili KEYUP
+    (`dwExtraInfo`, tayinlanmagan VK), hook uni YUTADI; javob yo'q —
+    qayta o'rnatish (avval yangi, keyin eski — qulfsiz lahza yo'q).
+    **Bo'sh mashinada tekshirilmaydi** (`IDLE_SKIP_S`, o'z canary'imiz
+    hisobga olinmaydi): injeksiya bo'sh turish taymerini nolga
+    qaytarib, ekran saqlagich, monitor uyqusi va auto-lock'ni
+    butunlay o'chirardi.
+  * **Yopishgan modifikator** (`KeyPolicy.tick`): Alt/Ctrl/Win 20 s,
+    Shift 60 s dan ortiq bosilgan VA OS ham shunday desa — mantiqan
+    qo'yib yuboriladi, auto-repeat'i jismoniy UP gacha yutiladi
+    (apparat nosozligida ham talabgor yoza oladi). OS "qo'yilgan" desa
+    (hook ko'rmagan UP) — hech narsa yuborilmaydi.
+  * Qulf nosozligi imtihonda `proctoring_degraded` (`module: keyboard`,
+    `reason: stuck_key | hook_restored | hook_lost`) — talabgorning aybi
+    emas, yangi hodisa turi YO'Q; yopishgan tugmada talabgorga snackbar.
+* **KIOSK OYNASIDA SYSTEM MENU YO'Q — hook'ga bog'liq emas.** Ikki
+  qatlam: `lockdown.kiosk_window_flags` (`WindowSystemMenuHint`,
+  Min/Max/Close bayroqlari olinadi — ular qolsa Qt `adjustFlags` menyuni
+  qaytaradi VA `FramelessWindowHint` ni O'CHIRADI, oynaga ramka
+  qaytadi) va ilova bo'ylab `install_system_menu_guard` (native filtr:
+  Alt+Space `WM_SYSKEYDOWN`, `WM_SYSCHAR ' '`, `SC_KEYMENU`,
+  `SC_MOUSEMENU`; dialoglar va WebEngine ham).
 * **Chiqish qoidasi ikki bosqichli.** Preflight ekranida (login'gacha)
   parol so'ralmaydi — u yerda hali sessiya ham, talabgor ham yo'q.
   Login sahifasidan boshlab chiqishning YAGONA yo'li — **Ctrl+Q** va
@@ -2824,6 +3004,20 @@ yarating; `code` React tomonda tarjima kaliti sifatida ishlatiladi.
   kapsula — `999`.
 * Shrift — `@fontsource-variable/inter`, paket ichida (CDN emas: imtihon
   markazi tarmog'ida internet bo'lmasligi mumkin).
+* **OMMAVIY AMAL — `ResourcePage bulkActions`** (+ `isRowSelectable`):
+  belgilash katakchalari, tanlovda asboblar qatori o'rnida MD3 kontekst
+  paneli, "Filtrga mos barcha N tasini tanlash". Backend —
+  `common.mixins.BulkSelectionMixin`: `{"ids": [...]}` yoki `{"all": true}`
+  + ro'yxatning O'Z query parametrlari (`useResource.scopeParams`), ya'ni
+  `get_queryset()` (viloyat chegarasi) va `filter_queryset()` dan o'tadi.
+  Filtr/qidiruv o'zgarsa tanlov tozalanadi. Hozir: `computers/bulk-delete/`
+  (yumshoq; IMTIHONDAGI mashina o'tkazib yuboriladi) va
+  `device-tokens/bulk-approve/` (FAQAT kutayotganlar — blokdan chiqarish
+  bittalab). Audit — bitta yozuv, ID'lar `meta` da.
+* **`/device-tokens` JADVALI QISQA**: qurilma ID, versiya, GPU, blok sababi,
+  xodim, manba/tashqi IP — qator bosilganda ochiladigan yon varaqda
+  (`components/devices/DeviceDetailSheet.jsx`, amallar ham shu yerda).
+  Ustun qo'shsangiz 1440 px ekranda gorizontal skroll chiqmasligini tekshiring.
 * **VILOYAT -> BINO FILTRI** — `pages/crud/shared.jsx:regionZoneFilters`
   (ResourcePage filtri: `options(filters)`, `resets`, `regionScope`).
   Bino filtri viloyatsiz ham ishlaydi (hamma binolar), viloyat

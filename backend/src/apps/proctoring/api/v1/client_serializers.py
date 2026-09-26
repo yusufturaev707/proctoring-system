@@ -10,8 +10,34 @@ qo'shadi — bu ingest yo'lida keraksiz yuk.
 from django.conf import settings
 from rest_framework import serializers
 
-from apps.common.utils.validators import mac_address_validator, validate_pinfl
+from apps.common.utils.validators import (
+    mac_address_validator,
+    machine_uuid_validator,
+    normalize_machine_uuid,
+    validate_pinfl,
+)
 from apps.proctoring.models import ProctoringEvent, ScreenshotMeta
+
+
+class MachineUuidField(serializers.CharField):
+    """
+    Machine UUID - kanonik shaklga keltirilib qabul qilinadi.
+
+    Qoida client bilan bir xil (`normalize_machine_uuid`): kichik harf
+    yoki `{...}` qavsli qiymat bitta mashinani ikki xil yozuvga
+    aylantirmasligi kerak. Ixtiyoriy - eski client'lar yubormaydi.
+    """
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("max_length", 64)
+        kwargs.setdefault("required", False)
+        kwargs.setdefault("allow_blank", True)
+        kwargs.setdefault("validators", [machine_uuid_validator])
+        super().__init__(**kwargs)
+
+    def to_internal_value(self, data):
+        value = super().to_internal_value(data)
+        return normalize_machine_uuid(value) or value
 
 
 class PreflightSerializer(serializers.Serializer):
@@ -41,6 +67,7 @@ class AccessAttemptSerializer(serializers.Serializer):
     qiymat keyin hech qachon topilmaydi.
     """
 
+    machine_uuid = MachineUuidField()
     mac_address = serializers.CharField(
         max_length=17, required=False, allow_blank=True, validators=[mac_address_validator]
     )
@@ -65,17 +92,17 @@ class HandshakeSerializer(serializers.Serializer):
     # Client o'zi aniqlagan tashqi manzil (diagnostika uchun; kirish
     # ruxsatini u EMAS, server ko'rgan manzil hal qiladi).
     public_ip = serializers.IPAddressField(required=False, allow_blank=True)
-    # Mashinaning MAC va LAN manzili - WinAPI orqali, marshrut
-    # tanlagan adapterdan (`client/services/winapi_net.py`).
+    # MASHINA IDENTIFIKATORI - ona platadagi SMBIOS UUID. Server uni
+    # `Computer.machine_uuid` bilan solishtiradi va mos kelmasa imtihonni
+    # boshlashga ruxsat bermaydi (`devices.services.verify_machine`).
+    # Client aytgan qiymat yozuvga YOZILMAYDI (bitta istisno - UUID'siz
+    # eski yozuvga MAC mos kelganda bir marta bog'lash).
     #
-    # MAC bu yerda IDENTIFIKATOR: server uni `Computer.mac_address`
-    # bilan solishtiradi va mos kelmasa imtihonni boshlashga ruxsat
-    # bermaydi. Shuning uchun u hech qachon YOZILMAYDI - aks holda
-    # har qanday mashina o'zini ro'yxatga olingan holga keltirib
-    # olardi.
-    #
-    # Ixtiyoriy: eski client'lar yubormaydi va u holda tekshiruv
-    # natijasi `unknown` bo'ladi (qaror `REQUIRE_MAC_MATCH` da).
+    # Ixtiyoriy: eski client'lar yubormaydi - ular uchun MAC bo'yicha
+    # avvalgi tekshiruv qoladi (qaror `REQUIRE_MACHINE_MATCH` da).
+    machine_uuid = MachineUuidField()
+    # MAC va LAN manzili - WinAPI orqali, marshrut tanlagan adapterdan
+    # (`client/services/winapi_net.py`). MAC endi IKKILAMCHI belgi.
     mac_address = serializers.CharField(max_length=17, required=False, allow_blank=True)
     ip_address = serializers.IPAddressField(required=False, allow_blank=True)
     info_pc = serializers.JSONField(required=False)
@@ -98,10 +125,12 @@ class HandshakeSerializer(serializers.Serializer):
 class CandidateLookupSerializer(serializers.Serializer):
     pinfl = serializers.CharField(max_length=14, validators=[validate_pinfl])
     exam_id = serializers.IntegerField(min_value=1)
-    # Client ishlab turgan mashinaning MAC'i — kompyuter broni bilan
-    # solishtiriladi (`exams.bookings.resolve_candidate_seat`).
-    # Ixtiyoriy: eski client yubormaydi va u holda qurilmaning
-    # `Computer` biriktiruvi ishlatiladi.
+    # Client ishlab turgan mashina ("talabgor AYNAN qaysi stolda") —
+    # kompyuter broni bilan solishtiriladi
+    # (`exams.bookings.resolve_candidate_seat`). Asos - Machine UUID;
+    # MAC - uni yubormaydigan eski client uchun. Ikkalasi ham bo'lmasa
+    # qurilmaning `Computer` biriktiruvi ishlatiladi.
+    machine_uuid = MachineUuidField()
     mac_address = serializers.CharField(
         max_length=17, required=False, allow_blank=True, validators=[mac_address_validator]
     )
@@ -285,6 +314,15 @@ class ScreenshotCommitSerializer(serializers.Serializer):
     height = serializers.IntegerField(min_value=0, max_value=10000, default=0)
     captured_at = serializers.DateTimeField()
 
+    # Test platformasidagi savol (client lokal xizmatiga kelgan `q_id`/`q_n`).
+    # Belgilar to'plami client bilan BIR XIL (`local_service.QUESTION_ID_RE`).
+    question_id = serializers.RegexField(
+        r"^[A-Za-z0-9_.\-]{1,64}$", required=False, allow_blank=True, default="",
+    )
+    question_number = serializers.IntegerField(
+        min_value=1, max_value=100000, required=False, allow_null=True, default=None,
+    )
+
 
 class ScreenshotCommitBatchSerializer(serializers.Serializer):
     screenshots = serializers.ListField(
@@ -304,6 +342,15 @@ class ScreenshotUploadSerializer(serializers.Serializer):
 
     file = serializers.FileField(write_only=True)
     captured_at = serializers.DateTimeField()
+
+    # Test platformasidagi savol (client lokal xizmatiga kelgan `q_id`/`q_n`).
+    # Belgilar to'plami client bilan BIR XIL (`local_service.QUESTION_ID_RE`).
+    question_id = serializers.RegexField(
+        r"^[A-Za-z0-9_.\-]{1,64}$", required=False, allow_blank=True, default="",
+    )
+    question_number = serializers.IntegerField(
+        min_value=1, max_value=100000, required=False, allow_null=True, default=None,
+    )
 
 
 class TechnicalProblemReportSerializer(serializers.Serializer):

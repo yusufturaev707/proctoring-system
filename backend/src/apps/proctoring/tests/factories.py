@@ -77,9 +77,16 @@ def make_computer(zone=None, **kwargs) -> Computer:
             "mac_address": "AA:BB:CC:{:02X}:{:02X}:{:02X}".format(
                 index % 256, (index // 256) % 256, (index // 65536) % 256
             ),
+            # ASOSIY identifikator - har kompyuterga o'zniki.
+            "machine_uuid": machine_uuid_for(index),
             **kwargs,
         },
     )
+
+
+def machine_uuid_for(index: int) -> str:
+    """Testdagi kompyuter UUID'i: yaroqli (entropiyali), indeksga xos."""
+    return "4C4C4544-0038-4A10-805A-{:012X}".format(0xC7C04F000000 + index)
 
 
 def make_device(computer=None, **kwargs) -> DeviceToken:

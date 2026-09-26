@@ -2,7 +2,11 @@ from django.db import models
 from django.utils.translation import gettext_lazy as _
 
 from apps.common.models import SoftDeleteModel, TimeStampedModel
-from apps.common.utils.validators import inventory_code_validator, mac_address_validator
+from apps.common.utils.validators import (
+    inventory_code_validator,
+    mac_address_validator,
+    machine_uuid_validator,
+)
 
 
 class Camera(SoftDeleteModel):
@@ -142,8 +146,29 @@ class Computer(SoftDeleteModel):
     # `unique_computer_zone_ip` esa binoda bittadan ortiq shunday
     # mashinaga yo'l qo'ymasdi. NULL bu cheklovga tushmaydi.
     ip_address = models.GenericIPAddressField(_("IP manzil"), null=True, blank=True)
+    #: MASHINANING ASOSIY IDENTIFIKATORI - ona platadagi SMBIOS UUID
+    #: (`wmic csproduct get uuid` bilan bir xil satr, katta harf).
+    #
+    # Ilgari bu rolni MAC bajarardi va u amalda o'zgaradi: tarmoq kartasi
+    # almashtiriladi, USB/Wi-Fi adapter ulanadi, marshrut boshqa adapterga
+    # o'tadi, virtual adapter "asosiy" bo'lib qoladi - har safar ishlab
+    # turgan mashina "ro'yxatda yo'q" bo'lib qolardi. UUID ona plata
+    # bilan birga yashaydi va OS qayta o'rnatilganda ham o'zgarmaydi.
+    #
+    # NULL - hali ma'lum emas (UUID'dan oldingi yozuvlar). Bunday qator
+    # birinchi handshake'da BIR MARTA bog'lanadi, faqat client aytgan MAC
+    # administrator kiritgan MAC bilan mos kelsa (`verify_machine`), yoki
+    # Excel importida MAC bo'yicha to'ldiriladi. Bo'sh satr emas NULL:
+    # shartli unikal cheklov NULL'larni solishtirmaydi.
+    machine_uuid = models.CharField(
+        _("Machine UUID"), max_length=36, null=True, blank=True,
+        validators=[machine_uuid_validator],
+    )
+    #: IKKILAMCHI belgi (ixtiyoriy): UUID'siz eski client'lar va UUID'ni
+    #: bir marta bog'lash uchun. Qaror unga tayanmaydi.
     mac_address = models.CharField(
-        _("MAC manzil"), max_length=17, validators=[mac_address_validator]
+        _("MAC manzil"), max_length=17, blank=True, default="",
+        validators=[mac_address_validator],
     )
     info_pc = models.JSONField(_("Qurilma ma'lumotlari"), blank=True, null=True)
     cameras = models.ManyToManyField(
@@ -170,7 +195,7 @@ class Computer(SoftDeleteModel):
         return self.inventory_code
 
     def __str__(self):
-        return f"{self.label} — {self.mac_address}"
+        return f"{self.label} — {self.machine_uuid or self.mac_address or '-'}"
 
     class Meta:
         db_table = "computer"
@@ -205,9 +230,18 @@ class Computer(SoftDeleteModel):
                 condition=models.Q(deleted_at__isnull=True),
                 name="unique_computer_inventory_code",
             ),
+            # ASOSIY identifikator - tizim bo'ylab unikal (bitta ona plata
+            # ikki joyda bo'lolmaydi). Hisobdan chiqarilgan mashina UUID'ni
+            # band qilmaydi: u ta'mirdan qaytib qayta qo'shilishi mumkin.
+            models.UniqueConstraint(
+                fields=["machine_uuid"],
+                condition=models.Q(deleted_at__isnull=True, machine_uuid__isnull=False),
+                name="unique_computer_machine_uuid",
+            ),
+            # MAC endi ixtiyoriy: bo'sh qiymatlar bir-biriga "to'qnashmaydi".
             models.UniqueConstraint(
                 fields=["mac_address"],
-                condition=models.Q(deleted_at__isnull=True),
+                condition=models.Q(deleted_at__isnull=True) & ~models.Q(mac_address=""),
                 name="unique_computer_mac",
             ),
         ]
@@ -296,6 +330,15 @@ class DeviceToken(TimeStampedModel):
     # client yuboradi. Hech qanday ruxsat qarori bunga tayanmaydi -
     # u faqat ma'lumot va diagnostika uchun.
     reported_lan_ip = models.GenericIPAddressField(null=True, blank=True)
+    #: Client O'ZI o'lchagan Machine UUID - oxirgi handshake'dagi.
+    #
+    # `Computer.machine_uuid` dan farqi: u administrator tasdiqlagan
+    # qiymat, bu esa "dastur hozir QAYSI ona platada ishlayapti". Panelda
+    # ikkalasi yonma-yon ko'rinadi: `mismatch`/`not_found` holatida
+    # administrator to'g'ri qiymatni shu yerdan oladi (mashinaga borib
+    # `wmic` yozish shart emas). ISHONCHSIZ - ruxsat qarori bunga
+    # tayanmaydi, `verify_machine` uni kompyuter yozuvi bilan solishtiradi.
+    reported_machine_uuid = models.CharField(max_length=36, blank=True, default="")
     revoked_at = models.DateTimeField(null=True, blank=True)
     revoke_reason = models.CharField(max_length=255, blank=True, default="")
 

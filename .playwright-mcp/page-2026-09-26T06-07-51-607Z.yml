@@ -1,0 +1,23 @@
+- generic [ref=e5]:
+  - generic [ref=e6]:
+    - heading "Proctoring" [level=1] [ref=e10]
+    - paragraph [ref=e11]: Imtihon nazorati tizimiga kirish
+  - generic [ref=e13]:
+    - generic [ref=e14]:
+      - generic [ref=e15]:
+        - text: Login
+        - generic [aria-hidden] [ref=e16]: "*"
+      - generic [ref=e17]:
+        - textbox "Login" [active] [ref=e18]
+        - group [aria-hidden]:
+          - generic: Login *
+    - generic [ref=e19]:
+      - generic:
+        - text: Parol
+        - generic [aria-hidden]: "*"
+      - generic [ref=e20]:
+        - textbox "Parol" [ref=e21]
+        - button [ref=e23] [cursor=pointer]
+        - group [aria-hidden]:
+          - generic: Parol *
+    - button "Kirish" [ref=e26] [cursor=pointer]

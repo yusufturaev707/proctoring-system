@@ -256,12 +256,15 @@ class Command(BaseCommand):
             code = f"PC-{index:04d}"
             ip_address = f"192.168.10.{index}"
             mac_address = f"AA:BB:CC:DD:{index:02X}:01"
-            # Uchala shartli unikal cheklov ham oldindan tekshiriladi
-            # (`inventory_code`, `mac_address`, `zone`+`ip_address`) —
+            machine_uuid = f"D3E0A000-0000-4000-8000-00000000{index:04X}"
+            # Barcha shartli unikal cheklovlar oldindan tekshiriladi
+            # (`inventory_code`, `machine_uuid`, `mac_address`,
+            # `zone`+`ip_address`) —
             # aks holda bitta mos kelib qolgan qator butun tranzaksiyani
             # bekor qilardi.
             taken = Computer.objects.filter(deleted_at__isnull=True).filter(
                 Q(inventory_code=code)
+                | Q(machine_uuid=machine_uuid)
                 | Q(mac_address=mac_address)
                 | Q(zone=zone, ip_address=ip_address)
                 # To'rtinchi shartli cheklov: raqam bino ichida
@@ -277,6 +280,7 @@ class Command(BaseCommand):
                 number=index,
                 inventory_code=code,
                 ip_address=ip_address,
+                machine_uuid=machine_uuid,
                 mac_address=mac_address,
                 is_active=True,
             )

@@ -16,6 +16,15 @@ import os
 import sys
 import types
 
+# KLAVIATURA QULFI JARAYONI (`services/keyboard_hook_process.py`) - HAMMA
+# NARSADAN OLDIN: u Qt'ni, log faylini va `.env` ni yuklamasligi kerak
+# (aks holda har ishga tushishda log'da ikkinchi "dastur ishga tushdi"
+# yozuvi va ~1 s kechikish). Client uni o'z exe'si bilan ko'taradi.
+if __name__ == "__main__" and "--keyboard-hook" in sys.argv:
+    from services.keyboard_hook_process import run as _run_keyboard_hook
+
+    sys.exit(_run_keyboard_hook())
+
 from core.bundle_paths import resource_root
 from core.logging_setup import setup_logging
 
@@ -265,6 +274,13 @@ def main() -> int:
     app.setApplicationVersion(APP_VERSION)
     app.setFont(QFont("Segoe UI", 10))
     app.setStyleSheet(GLOBAL_STYLESHEET)
+
+    # Oyna qatlamidagi himoya: kiosk'da Windows System Menu ochilmaydi
+    # (Alt+Space, SC_KEYMENU) - global hook ishlamay qolgan holatda ham.
+    from config import KIOSK_MODE
+    if KIOSK_MODE:
+        from services.lockdown import install_system_menu_guard
+        install_system_menu_guard(app)
 
     window = MainWindow()
     window.show_start()

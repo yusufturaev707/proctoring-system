@@ -142,3 +142,36 @@ class SoftDeleteRestoreMixin:
 
         serializer = self.get_serializer(instance)
         return Response(serializer.data)
+
+
+class BulkSelectionMixin:
+    """
+    Ommaviy amal uchun TANLOV: `{"ids": [...]}` yoki `{"all": true}`.
+
+    `all` — "filtrga mos HAMMASI", faqat joriy sahifa emas: filtr va
+    qidiruv so'rovning QUERY parametrlarida keladi (ro'yxat bilan bir
+    xil) va `filter_queryset` ularni qo'llaydi. Ikkala holatda ham tanlov
+    `get_queryset()` dan o'tadi — viloyat chegarasi va "Savat" filtri
+    ro'yxatdagidek; begona viloyatning ID'si jimgina tushib qoladi.
+    """
+
+    #: Bitta so'rovdagi ID'lar chegarasi (panel sahifasi 100 tagacha).
+    bulk_max_ids = 5000
+
+    def bulk_queryset(self):
+        from rest_framework.exceptions import ValidationError
+
+        data = self.request.data or {}
+        queryset = self.filter_queryset(self.get_queryset())
+        if data.get("all") is True:
+            return queryset
+        ids = data.get("ids")
+        if not isinstance(ids, list) or not ids:
+            raise ValidationError({"ids": ["Hech narsa tanlanmagan"]})
+        if len(ids) > self.bulk_max_ids:
+            raise ValidationError({"ids": [f"Bir martada ko'pi bilan {self.bulk_max_ids} ta"]})
+        try:
+            ids = {int(item) for item in ids}
+        except (TypeError, ValueError):
+            raise ValidationError({"ids": ["ID butun son bo'lishi kerak"]})
+        return queryset.filter(pk__in=ids)

@@ -290,6 +290,7 @@ export default function SessionDetail() {
                   <InfoRow label="IP manzil (mashina)" value={session.ip_address || '—'} />
                   <InfoRow label="So‘rov manbai" value={network.source_ip || '—'} />
                   <InfoRow label="Tashqi IP" value={network.public_ip || '—'} />
+                  <InfoRow label="Machine UUID" value={session.machine_uuid || '—'} />
                   <InfoRow label="MAC" value={session.mac_address || '—'} />
                   <InfoRow
                     label="Apparat profili"

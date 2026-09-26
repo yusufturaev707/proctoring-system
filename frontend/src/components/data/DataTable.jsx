@@ -192,7 +192,11 @@ export default function DataTable({
           columns={gridColumns}
           loading={loading}
           getRowId={resolveId}
-          onRowClick={onRowClick}
+          // Belgilash katakchasini bosish qatorni OCHMASLIGI kerak.
+          onRowClick={onRowClick && ((params, event) => {
+            if (event?.target?.closest?.('.MuiDataGrid-cellCheckbox')) return
+            onRowClick(params, event)
+          })}
           rowCount={serverSide ? rowCount : undefined}
           paginationMode={serverSide ? 'server' : 'client'}
           sortingMode={serverSide ? 'server' : 'client'}

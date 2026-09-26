@@ -23,6 +23,7 @@ from apps.common.tests.utils import RedisStateMixin
 from PIL import Image
 
 from apps.controls.models import AllowedPublicIp, ClientExitPassword
+from apps.devices.models import Computer
 from apps.proctoring.models import AuditLog, ExamSession, FaceVerificationLog
 from apps.proctoring.tests import factories
 
@@ -776,7 +777,7 @@ class HandshakeMachineTests(TestCase):
 
     def test_unknown_mac_blocks_by_default(self):
         """
-        `REQUIRE_MAC_MATCH` standart qiymati — `true`.
+        `REQUIRE_MACHINE_MATCH` standart qiymati — `true`.
 
         Ya'ni ro'yxatda yo'q mashina imtihonni BOSHLAY OLMAYDI.
         Sabab client'da emas, shu yerda: qaror serverniki va uni
@@ -794,7 +795,7 @@ class HandshakeMachineTests(TestCase):
 
         Aks holda uni o'chirish uchun maydonni bo'sh qoldirish
         yetarli bo'lardi. Eski client'lar uchun yo'l —
-        `REQUIRE_MAC_MATCH=false`.
+        `REQUIRE_MACHINE_MATCH=false`.
         """
         machine = self.machine({"app_version": "1.0.0"})
 
@@ -803,19 +804,63 @@ class HandshakeMachineTests(TestCase):
 
     def test_setting_downgrades_block_to_warning(self):
         """
-        `REQUIRE_MAC_MATCH=false` — natija qaytadi, lekin to'smaydi.
+        `REQUIRE_MACHINE_MATCH=false` — natija qaytadi, lekin to'smaydi.
 
         Dastlabki joylashtirishda inventarizatsiya hali to'liq
         bo'lmasligi mumkin va majburiy tekshiruv butun markazni
         to'xtatardi.
         """
-        with patch.dict(settings.PROCTORING, {"REQUIRE_MAC_MATCH": False}):
+        with patch.dict(settings.PROCTORING, {"REQUIRE_MACHINE_MATCH": False}):
             machine = self.machine(
                 {"app_version": "1.0.0", "mac_address": "AA:BB:CC:DD:EE:99"}
             )
 
         self.assertEqual(machine["status"], "not_found")
         self.assertTrue(machine["allowed"])
+
+    def test_machine_uuid_is_primary(self):
+        """UUID mos - MAC boshqa bo'lsa ham o'tadi (tarmoq kartasi almashgan)."""
+        machine = self.machine({
+            "app_version": "1.0.0",
+            "machine_uuid": self.computer.machine_uuid.lower(),
+            "mac_address": "AA:BB:CC:DD:EE:99",
+        })
+        self.assertEqual((machine["status"], machine["basis"]), ("ok", "uuid"))
+        self.assertTrue(machine["allowed"])
+        self.device.refresh_from_db()
+        self.assertEqual(self.device.reported_machine_uuid, self.computer.machine_uuid)
+
+    def test_foreign_machine_uuid_blocks(self):
+        machine = self.machine({
+            "app_version": "1.0.0",
+            "machine_uuid": "4C4C4544-0038-4A10-805A-C7C04F4B3A55",
+            "mac_address": "AA:BB:CC:DD:EE:10",
+        })
+        self.assertEqual(machine["status"], "not_found")
+        self.assertFalse(machine["allowed"])
+
+    def test_legacy_computer_binding_is_audited(self):
+        Computer.objects.filter(pk=self.computer.pk).update(machine_uuid=None)
+        machine = self.machine({
+            "app_version": "1.0.0",
+            "machine_uuid": "4C4C4544-0038-4A10-805A-C7C04F4B3A56",
+            "mac_address": "AA:BB:CC:DD:EE:10",
+        })
+        self.assertEqual((machine["status"], machine["bound"]), ("ok", True))
+        self.computer.refresh_from_db()
+        self.assertEqual(self.computer.machine_uuid, "4C4C4544-0038-4A10-805A-C7C04F4B3A56")
+        self.assertTrue(
+            AuditLog.objects.filter(
+                object_type="Computer", object_id=str(self.computer.pk),
+                meta__machine_uuid_bound="4C4C4544-0038-4A10-805A-C7C04F4B3A56",
+            ).exists()
+        )
+
+    def test_placeholder_machine_uuid_is_rejected(self):
+        response = self.post({
+            "app_version": "1.0.0", "machine_uuid": "00000000-0000-0000-0000-000000000000",
+        })
+        self.assertEqual(response.status_code, 400)
 
     def test_mac_is_never_written_to_computer(self):
         """Tekshiruv faqat solishtiradi — inventarizatsiyani o'zgartirmaydi."""

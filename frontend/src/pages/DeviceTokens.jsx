@@ -4,13 +4,15 @@ import {
   Alert, Autocomplete, Badge, Box, Button, Chip, Dialog, DialogActions, DialogContent,
   DialogTitle, IconButton, Stack, TextField, ToggleButton, ToggleButtonGroup, Tooltip, Typography,
 } from '@mui/material'
-import CheckIcon from '@mui/icons-material/CheckCircleOutline'
 import BlockIcon from '@mui/icons-material/BlockOutlined'
 import LockOpenIcon from '@mui/icons-material/LockOpenOutlined'
 import LinkIcon from '@mui/icons-material/LinkOutlined'
+import DoneAllIcon from '@mui/icons-material/DoneAllOutlined'
 
 import ResourcePage from '../components/data/ResourcePage'
 import ConfirmDialog from '../components/ConfirmDialog'
+import DeviceDetailSheet from '../components/devices/DeviceDetailSheet'
+import { useAuth } from '../context/AuthContext'
 import { LastSeenCell, regionZoneFilters, useComputerOptions, useRegionOptions, useZoneOptions } from './crud/shared'
 import { deviceTokens as devicesApi } from '../api/endpoints'
 import { useUi } from '../context/UiContext'
@@ -66,6 +68,16 @@ export default function DeviceTokens() {
   const [approving, setApproving] = useState(null)
   const [unblocking, setUnblocking] = useState(null)
   const [rebinding, setRebinding] = useState(null)
+  // Qator bosilganda — qurilmaning to'liq kartasi (yon varaq).
+  const [detail, setDetail] = useState(null)
+  const { can } = useAuth()
+  const canManage = can('devices.manage')
+  // Varaqdan amal ochilganda varaq yopiladi: amaldan keyin undagi
+  // ma'lumot eskiradi, ro'yxat esa yangilanadi.
+  const fromSheet = (setter) => (device) => {
+    setDetail(null)
+    setter(device)
+  }
 
   const { data: stats } = useQuery({
     queryKey: ['device-tokens', 'stats'],
@@ -117,17 +129,13 @@ export default function DeviceTokens() {
   const columns = useMemo(
     () => [
       {
-        field: 'device_id', headerName: 'Qurilma ID', width: 230, sortable: false,
-        renderCell: (params) => <CellText value={params.value} mono />,
-      },
-      {
         // "CLIENT HOZIR ISHLAB TURIBDIMI". Qiymat DB'dan emas,
         // Redis'dan keladi (`devices.services.presence_map`) va
         // client har 45 soniyada yuboradigan signal bilan
         // yangilanadi. `status` (tasdiqlangan/bloklangan) BOSHQA
         // savol: u qurilmaga ruxsat berilganini bildiradi, bu esa
         // dastur shu daqiqada ochiqligini.
-        field: 'is_online', headerName: 'Client', width: 120, sortable: false,
+        field: 'is_online', headerName: 'Client', width: 100, sortable: false,
         exportValue: (value) => (value ? 'Online' : 'Offline'),
         description: 'Client dasturi shu daqiqada ishlab turibdimi (har 45 s signal)',
         renderCell: (params) => {
@@ -148,18 +156,15 @@ export default function DeviceTokens() {
         },
       },
       {
-        field: 'online_staff', headerName: 'Kirgan xodim', width: 150, sortable: false,
-        valueGetter: (value) => value || '—',
-        description: 'Client dasturiga kirgan operator (signal bilan keladi)',
-      },
-      {
-        field: 'computer_code', headerName: 'Kompyuter', width: 155, sortable: false,
+        field: 'computer_code', headerName: 'Kompyuter', width: 130, sortable: false,
         valueGetter: (value, row) => computerLabel(row.computer_number, value),
       },
-      { field: 'zone_name', headerName: 'Bino', flex: 1, minWidth: 140, sortable: false },
-      { field: 'app_version', headerName: 'Versiya', width: 95, sortable: false },
       {
-        field: 'status', headerName: 'Holat', width: 140, sortable: false,
+        field: 'region_name', headerName: 'Viloyat', flex: 1, minWidth: 100, sortable: false,
+        renderCell: (params) => <CellText value={params.value} />,
+      },
+      {
+        field: 'status', headerName: 'Holat', width: 120, sortable: false,
         exportValue: (value) => DEVICE_STATUS_LABEL[value] || value,
         renderCell: (params) => (
           <Chip
@@ -179,7 +184,7 @@ export default function DeviceTokens() {
         // O'sha mashinalarda chastota past va "hech narsa
         // aniqlanmadi" degan xulosaning vazni ham past, ya'ni ularni
         // imtihon kunidan OLDIN bilish kerak.
-        field: 'performance_profile', headerName: 'Apparat profili', width: 150, sortable: false,
+        field: 'performance_profile', headerName: 'Apparat profili', width: 120, sortable: false,
         exportValue: (value) => AI_PROFILE_LABEL[value] || value || '',
         description: 'Client apparatga qarab o‘zi tanlaydi — handshake’da yangilanadi',
         renderCell: (params) =>
@@ -194,40 +199,15 @@ export default function DeviceTokens() {
             )
             : <CellText value="" />,
       },
-      {
-        field: 'gpu_name', headerName: 'GPU', width: 190, sortable: false,
-        description: '`nvidia-smi` ko‘rgan karta (bo‘sh — karta yoki drayver yo‘q)',
-        renderCell: (params) => <CellText value={params.value} />,
-      },
-      { field: 'last_used_at', headerName: 'Oxirgi faollik', width: 150, renderCell: LastSeenCell },
+      { field: 'last_used_at', headerName: 'Oxirgi faollik', width: 120, renderCell: LastSeenCell },
       {
         // UCHTA MANZIL, UCHTA MA'NO (`CLAUDE.md`). Bu — "qaysi MASHINA":
         // client serverga chiqadigan adapterning LAN manzili va
         // sessiyaga ham aynan shu yoziladi. Ilgari ustun yo'q edi, ya'ni
         // panelda mashinani IP bo'yicha topishning yo'li yo'q edi.
-        field: 'reported_lan_ip', headerName: 'Mashina IP', width: 135, sortable: false,
+        field: 'reported_lan_ip', headerName: 'Mashina IP', width: 132, sortable: false,
         valueGetter: (value) => value || '—',
         description: 'Client o‘zi aytgan LAN manzil — qaysi mashina (sessiyaga ham shu yoziladi)',
-      },
-      {
-        field: 'last_ip', headerName: 'Manba IP', width: 135, sortable: false,
-        valueGetter: (value) => value || '—',
-        description: 'Server so‘rovda ko‘rgan manzil — kirish ruxsati shu bo‘yicha tekshiriladi',
-      },
-      {
-        // Client O'ZI aniqlagan tashqi manzil. Bu ISHONCHSIZ qiymat va
-        // kirish ruxsatini hal qilmaydi — u administratorga "bu bino
-        // qaysi IP bilan chiqadi" degan savolga javob beradi, ya'ni
-        // `AllowedPublicIp` ni to'g'ri to'ldirish uchun kerak. Server
-        // bino ichida tursa, `last_ip` LAN manzilini ko'rsatadi va bu
-        // ustunsiz tashqi manzilni bilishning yo'li yo'q.
-        field: 'reported_public_ip', headerName: 'Tashqi IP', width: 135, sortable: false,
-        valueGetter: (value) => value || '—',
-        description: 'Client o‘zi aniqlagan tashqi manzil (ma’lumot uchun, ruxsat tekshiruvida ishlatilmaydi)',
-      },
-      {
-        field: 'revoke_reason', headerName: 'Blok sababi', flex: 1, minWidth: 160, sortable: false,
-        renderCell: (params) => <CellText value={params.value} />,
       },
     ],
     [],
@@ -258,6 +238,26 @@ export default function DeviceTokens() {
         canEdit={false}
         canDelete={false}
         searchPlaceholder="Qurilma ID, kompyuter, GPU yoki versiya…"
+        onRowClick={(params) => setDetail(params.row)}
+        // OMMAVIY TASDIQLASH. Yangi bino ulanganda yuzlab client bir
+        // vaqtda ro'yxatdan o'tadi va ularni bittalab tasdiqlashga imtihon
+        // oldidan jismonan ulgurilmaydi. Faqat KUTAYOTGANLARNI belgilash
+        // mumkin: blokdan chiqarish — ongli, bittalab qaror (sabab ko'rinadi).
+        isRowSelectable={({ row }) => row.status === 'pending'}
+        bulkActions={[{
+          key: 'approve',
+          label: 'Tasdiqlash',
+          icon: <DoneAllIcon />,
+          confirmTitle: 'Qurilmalarni tasdiqlash',
+          description: (count) =>
+            `${count} ta qurilma tasdiqlanadi va talabgor JSHSHIR’ini qidira oladi. ` +
+            'Faqat kutayotganlar tasdiqlanadi — bloklanganlarga tegilmaydi. ' +
+            'Kompyuterlar aynan imtihon xonalarida turganiga ishonch hosil qiling.',
+          confirmLabel: 'Tasdiqlash',
+          run: devicesApi.bulkApprove,
+          success: ({ approved, skipped }) =>
+            `${approved} ta qurilma tasdiqlandi` + (skipped ? ` · ${skipped} tasi kutilmayotgan edi` : ''),
+        }]}
         exportName="qurilma-tokenlari"
         columns={columns}
         fields={[]}
@@ -306,28 +306,27 @@ export default function DeviceTokens() {
             </Alert>
           )
         }
-        actionsWidth={210}
+        actionsWidth={140}
         rowActions={(row) => (
           <Stack direction="row" spacing={0.5} alignItems="center">
             {row.status === 'pending' && (
-              <Button size="small" startIcon={<CheckIcon />} onClick={() => setApproving(row)}>
+              <Button size="small" onClick={() => setApproving(row)} sx={{ borderRadius: 999 }}>
                 Tasdiqlash
               </Button>
             )}
             {row.status === 'active' && (
-              <Button
-                size="small"
-                color="error"
-                startIcon={<BlockIcon />}
-                onClick={() => setRevoking(row)}
-              >
-                Blok
-              </Button>
+              <Tooltip title="Bloklash">
+                <IconButton size="small" color="error" aria-label="Bloklash" onClick={() => setRevoking(row)}>
+                  <BlockIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
             )}
             {row.status === 'revoked' && (
-              <Button size="small" startIcon={<LockOpenIcon />} onClick={() => setUnblocking(row)}>
-                Blokdan chiqarish
-              </Button>
+              <Tooltip title="Blokdan chiqarish">
+                <IconButton size="small" color="primary" aria-label="Blokdan chiqarish" onClick={() => setUnblocking(row)}>
+                  <LockOpenIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
             )}
             <Tooltip title="Boshqa kompyuterga biriktirish">
               <IconButton
@@ -410,6 +409,16 @@ export default function DeviceTokens() {
         loading={revokeMutation.isPending}
         onConfirm={(reason) => revokeMutation.mutate({ id: revoking.id, reason })}
         onClose={() => setRevoking(null)}
+      />
+
+      <DeviceDetailSheet
+        device={detail}
+        canManage={canManage}
+        onClose={() => setDetail(null)}
+        onApprove={fromSheet(setApproving)}
+        onRevoke={fromSheet(setRevoking)}
+        onUnblock={fromSheet(setUnblocking)}
+        onRebind={fromSheet(setRebinding)}
       />
 
       {rebinding && (

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   Badge, Box, Button, Collapse, Divider, IconButton, InputAdornment, ListItemIcon,
   MenuItem, Menu, Stack, Switch, TextField, Tooltip, Typography,
@@ -14,6 +15,7 @@ import RefreshIcon from '@mui/icons-material/RefreshOutlined'
 import MoreIcon from '@mui/icons-material/MoreVertOutlined'
 import DownloadIcon from '@mui/icons-material/FileDownloadOutlined'
 import LinkIcon from '@mui/icons-material/LinkOutlined'
+import CloseIcon from '@mui/icons-material/CloseOutlined'
 
 import PageHeader from '../PageHeader'
 import DataTable from './DataTable'
@@ -102,9 +104,21 @@ export default function ResourcePage({
    * bilan bir xil qoida (`AuthContext.canShared`).
    */
   shared = false,
+  /**
+   * OMMAVIY AMALLAR — berilsa jadvalda belgilash katakchalari paydo
+   * bo'ladi va tanlovda asboblar qatori o'rniga MD3 kontekst paneli
+   * chiqadi. Har amal: `{ key, label, icon, color, confirmTitle,
+   * description(count), confirmLabel, confirmPhrase?(count),
+   * run({ ids, all, params }) -> Promise, success(result) -> matn }`.
+   * Funksiya bo'lsa — `{ filters }` bilan chaqiriladi (masalan "Savat"da
+   * o'chirish amali ma'nosiz). Faqat `canManage` bo'lsa ko'rinadi.
+   */
+  bulkActions,
+  /** Qaysi qatorni belgilash mumkin (masalan faqat kutayotgan qurilma). */
+  isRowSelectable,
 }) {
   const { can, canShared, user } = useAuth()
-  const { notify } = useUi()
+  const { notify, notifyError } = useUi()
   const canManage = shared ? canShared(permission) : can(permission)
 
   const resource = useResource({
@@ -119,6 +133,7 @@ export default function ResourcePage({
   })
   const showSkeleton = useDeferredLoading(resource.isLoading)
 
+  const queryClient = useQueryClient()
   const [editing, setEditing] = useState(null)
   const [deleting, setDeleting] = useState(null)
   const [filtersOpen, setFiltersOpen] = useState(false)
@@ -172,6 +187,58 @@ export default function ResourcePage({
   )
   const [menuAnchor, setMenuAnchor] = useState(null)
   const searchRef = useRef(null)
+
+  // --- Ommaviy tanlov ---------------------------------------------------
+  const actions = useMemo(() => {
+    if (!canManage || !bulkActions) return []
+    return typeof bulkActions === 'function' ? bulkActions({ filters: resource.filters }) : bulkActions
+  }, [canManage, bulkActions, resource.filters])
+  const selectable = actions.length > 0
+  const [selection, setSelection] = useState([])
+  // `true` — "filtrga mos HAMMASI" (faqat joriy sahifa emas). Server
+  // to'plamni filtr parametrlaridan o'zi yig'adi (`BulkSelectionMixin`).
+  const [selectAll, setSelectAll] = useState(false)
+  const [bulkPending, setBulkPending] = useState(null)
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const clearSelection = useCallback(() => {
+    setSelection([])
+    setSelectAll(false)
+  }, [])
+  // Filtr yoki qidiruv o'zgarsa tanlov TOZALANADI: "hammasi" rejimi
+  // eski filtrga tegishli edi va uni yangi ro'yxatga qo'llash ekranda
+  // ko'rinmagan yozuvlarga amal qilish bo'lardi.
+  const scopeKey = JSON.stringify(resource.scopeParams)
+  useEffect(() => { clearSelection() }, [scopeKey, clearSelection])
+
+  const pageIds = resource.rows
+    .filter((row) => !isRowSelectable || isRowSelectable({ row }))
+    .map((row) => row.id)
+  const pageFullySelected = pageIds.length > 0 && pageIds.every((id) => selection.includes(id))
+  const selectedCount = selectAll ? (resource.total ?? selection.length) : selection.length
+
+  const runBulk = useCallback(async () => {
+    const action = bulkPending
+    if (!action) return
+    setBulkBusy(true)
+    try {
+      const result = await action.run({
+        ids: selectAll ? undefined : selection,
+        all: selectAll,
+        params: resource.scopeParams,
+      })
+      notify(action.success ? action.success(result) : 'Bajarildi')
+      setBulkPending(null)
+      clearSelection()
+      queryClient.invalidateQueries({ queryKey: [queryKey] })
+    } catch (error) {
+      notifyError(error)
+    } finally {
+      setBulkBusy(false)
+    }
+  }, [
+    bulkPending, selectAll, selection, resource.scopeParams, notify, notifyError,
+    clearSelection, queryClient, queryKey,
+  ])
 
   const activeFilterCount = useMemo(
     () => Object.values(resource.filters).filter((value) => value !== '' && value != null).length,
@@ -302,7 +369,7 @@ export default function ResourcePage({
             )
           }
           return (
-            <Stack direction="row" spacing={0.25} onClick={(event) => event.stopPropagation()}>
+            <Stack direction="row" spacing={0.25} alignItems="center" sx={{ height: '100%' }} onClick={(event) => event.stopPropagation()}>
               {rowActions?.(params.row, resource)}
               {canEdit && (
                 <Tooltip title="Tahrirlash">
@@ -348,8 +415,61 @@ export default function ResourcePage({
     }
   }, [notify])
 
+  // MD3 KONTEKST PANELI: tanlov bor paytda asboblar qatori o'rnida
+  // turadi — amal tugmalari tanlangan qatorlar ustida, ko'z qayerda
+  // bo'lsa o'sha yerda. Filtr paneli shu payt yig'iladi: filtrni
+  // o'zgartirish tanlovni baribir tozalaydi.
+  const selectionBar = selectedCount > 0 && (
+    <Stack
+      direction="row"
+      alignItems="center"
+      flexWrap="wrap"
+      useFlexGap
+      columnGap={1}
+      rowGap={1}
+      sx={{
+        px: { xs: 1, sm: 1.5 }, py: 1.25, minHeight: { sm: 72 },
+        bgcolor: 'm3.secondaryContainer', color: 'm3.onSecondaryContainer',
+      }}
+    >
+      <Tooltip title="Tanlovni bekor qilish">
+        <IconButton onClick={clearSelection} sx={{ color: 'inherit' }} aria-label="Tanlovni bekor qilish">
+          <CloseIcon />
+        </IconButton>
+      </Tooltip>
+      <Typography sx={{ fontWeight: 700, fontVariantNumeric: 'tabular-nums', mr: 0.5 }}>
+        {selectedCount} ta tanlandi
+      </Typography>
+      {!selectAll && pageFullySelected && (resource.total ?? 0) > pageIds.length && (
+        <Button size="small" onClick={() => setSelectAll(true)} sx={{ borderRadius: 999 }}>
+          Filtrga mos barcha {resource.total} tasini tanlash
+        </Button>
+      )}
+      {selectAll && (
+        <Button size="small" onClick={() => setSelectAll(false)} sx={{ borderRadius: 999 }}>
+          Faqat sahifadagilar
+        </Button>
+      )}
+      <Box sx={{ flex: 1 }} />
+      {actions.map((action) => (
+        <Button
+          key={action.key}
+          variant="contained"
+          color={action.color || 'primary'}
+          startIcon={action.icon}
+          disableElevation
+          onClick={() => setBulkPending(action)}
+          sx={{ borderRadius: 999 }}
+        >
+          {action.label}
+        </Button>
+      ))}
+    </Stack>
+  )
+
   const toolbar = (
     <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
+      {selectionBar || (<>
       {/* Telefonda qidiruv BUTUN qatorni oladi, tugmalar keyingi qatorga
           o'tadi. Ilgari hammasi bitta qatorda edi va 390 px ekranda
           qidiruv maydoniga ~110 px qolardi — placeholder "Raq…" bo'lib,
@@ -447,8 +567,9 @@ export default function ResourcePage({
           </MenuItem>
         </Menu>
       </Stack>
+      </>)}
 
-      <Collapse in={filtersOpen}>
+      <Collapse in={filtersOpen && !selectionBar}>
         <Divider />
         <Stack
           direction="row"
@@ -533,6 +654,20 @@ export default function ResourcePage({
           onSortModelChange={resource.setSortModel}
           height={height}
           toolbar={toolbar}
+          {...(selectable
+            ? {
+                checkboxSelection: true,
+                // Tanlov sahifadan sahifaga o'tganda SAQLANADI.
+                keepNonExistentRowsSelected: true,
+                rowSelectionModel: selection,
+                onRowSelectionModelChange: (model) => {
+                  // Qo'lda katak olib tashlandi — endi "hammasi" emas.
+                  if (selectAll && model.length < selection.length) setSelectAll(false)
+                  setSelection(model)
+                },
+                isRowSelectable,
+              }
+            : {})}
           cursorNav={
             resource.isCursorMode
               ? {
@@ -575,6 +710,26 @@ export default function ResourcePage({
         maxWidth={formMaxWidth}
         description={formDescription}
         context={formContext}
+      />
+
+      <ConfirmDialog
+        open={Boolean(bulkPending)}
+        title={bulkPending?.confirmTitle || bulkPending?.label || ''}
+        description={bulkPending?.description?.(selectedCount)}
+        details={
+          <Stack spacing={0.25}>
+            <Typography variant="caption" color="text.secondary">Tanlangan</Typography>
+            <Typography variant="body2" fontWeight={650}>
+              {selectAll ? `Filtrga mos barcha yozuvlar — ${selectedCount} ta` : `${selectedCount} ta yozuv`}
+            </Typography>
+          </Stack>
+        }
+        color={bulkPending?.color || 'primary'}
+        confirmLabel={bulkPending?.confirmLabel || bulkPending?.label}
+        confirmPhrase={bulkPending?.confirmPhrase?.(selectedCount) || null}
+        loading={bulkBusy}
+        onConfirm={runBulk}
+        onClose={() => setBulkPending(null)}
       />
 
       <ConfirmDialog

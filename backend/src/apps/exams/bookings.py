@@ -38,7 +38,7 @@ from apps.common.exceptions import (
     WrongComputer,
 )
 from apps.common.utils.crypto import mask_pinfl, normalize_pinfl
-from apps.common.utils.validators import normalize_mac, validate_pinfl
+from apps.common.utils.validators import normalize_mac, normalize_machine_uuid, validate_pinfl
 from apps.devices.models import Computer
 from apps.exams.models import ComputerBooking, ExamSchedule
 
@@ -444,21 +444,50 @@ def bookings_enforced(schedule: ExamSchedule | None) -> bool:
     ).exists()
 
 
+def _physical_computer(zone_id, *, machine_uuid: str = "", mac_address: str = ""):
+    """
+    Client ishlab turgan JISMONIY mashina - bino ichida.
+
+    Asos - Machine UUID (ona plata). MAC - faqat UUID yubormaydigan eski
+    client uchun VA UUID'si hali yozilmagan yozuvlar uchun: UUID berilgan,
+    lekin bazada topilmagan bo'lsa MAC'ga tushiladi faqat o'sha yozuvda
+    UUID yo'q bo'lsa - aks holda UUID'si BOSHQA mashina MAC'i bo'yicha
+    "shu stol" bo'lib qolardi.
+    """
+    queryset = Computer.objects.alive().select_related("zone__region").filter(zone_id=zone_id)
+    uuid_value = normalize_machine_uuid(machine_uuid)
+    if uuid_value:
+        computer = queryset.filter(machine_uuid=uuid_value).first()
+        if computer is not None:
+            return computer
+    mac = normalize_mac(mac_address)
+    if not mac:
+        return None
+    queryset = queryset.filter(
+        Q(mac_address__iexact=mac) | Q(mac_address__iexact=mac.replace(":", "-"))
+    )
+    if uuid_value:
+        queryset = queryset.filter(machine_uuid__isnull=True)
+    return queryset.first()
+
+
 def resolve_candidate_seat(
-    *, schedule: ExamSchedule | None, pinfl: str, device=None, mac_address: str = ""
+    *, schedule: ExamSchedule | None, pinfl: str, device=None,
+    machine_uuid: str = "", mac_address: str = "",
 ) -> dict | None:
     """
     Talabgor to'g'ri kompyuterdami. `None` — bron bu sessiyada yuritilmaydi.
 
-    "BU MASHINA" QANDAY ANIQLANADI. Client yuborgan MAC — jismoniy
-    mashina (talabgor aynan qaysi stolda o'tiribdi); qurilmaning
-    `Computer` biriktiruvi esa sessiya QAYSI kompyuterga yoziladi.
-    Odatda ikkalasi bir xil (handshake'dagi `verify_machine` shuni
-    tekshiradi). Farq qilsa ikki holat bor va ular BOSHQA-BOSHQA:
+    "BU MASHINA" QANDAY ANIQLANADI. Client yuborgan Machine UUID —
+    jismoniy mashina (talabgor aynan qaysi stolda o'tiribdi; eski
+    client'da MAC); qurilmaning `Computer` biriktiruvi esa sessiya
+    QAYSI kompyuterga yoziladi. Odatda ikkalasi bir xil
+    (handshake'dagi `verify_machine` shuni tekshiradi). Farq qilsa ikki
+    holat bor va ular BOSHQA-BOSHQA:
 
-        MAC boshqa joyniki        -> talabgor noto'g'ri stolda:
+        UUID boshqa joyniki       -> talabgor noto'g'ri stolda:
                                      `wrong_computer` + qayerga borish;
-        MAC to'g'ri, biriktiruv
+        UUID to'g'ri, biriktiruv
         boshqa                    -> talabgor to'g'ri stolda, lekin
                                      qurilma obrazi ko'chirilgan:
                                      administrator qayta biriktiradi.
@@ -485,23 +514,17 @@ def resolve_candidate_seat(
         raise SeatOutOfService(extra={"seat": seat})
 
     bound = device.computer if device is not None else None
-    reported = normalize_mac(mac_address)
     here = bound
-    if reported:
-        # MAC FAQAT BINO ICHIDA qidiriladi — `devices.verify_machine`
-        # dagi bilan bir xil savol ("shu MAC shu binoda bormi?"). Bino —
+    if normalize_machine_uuid(machine_uuid) or normalize_mac(mac_address):
+        # FAQAT BINO ICHIDA qidiriladi — `devices.verify_machine` dagi
+        # bilan bir xil savol ("shu mashina shu binoda bormi?"). Bino —
         # qurilmaniki; qurilma bo'lmasa (`REQUIRE_DEVICE_ID=false`) —
-        # talabgor joyiniki:
-        # boshqa binodagi mashina bu joy bo'la olmaydi, uni "bu mashina"
-        # deb ko'rsatish esa operatorga begona binoning kompyuterini
-        # aytardi.
+        # talabgor joyiniki: boshqa binodagi mashina bu joy bo'la
+        # olmaydi, uni "bu mashina" deb ko'rsatish esa operatorga begona
+        # binoning kompyuterini aytardi.
         zone_id = bound.zone_id if bound is not None else booking.computer.zone_id
-        physical = (
-            Computer.objects.alive()
-            .select_related("zone__region")
-            .filter(zone_id=zone_id)
-            .filter(Q(mac_address__iexact=reported) | Q(mac_address__iexact=reported.replace(":", "-")))
-            .first()
+        physical = _physical_computer(
+            zone_id, machine_uuid=machine_uuid, mac_address=mac_address
         )
         if physical is not None:
             here = physical

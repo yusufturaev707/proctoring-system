@@ -397,6 +397,7 @@ class ComputerBookingViewSet(PermissionRequiredMixin, AuditLogMixin, viewsets.Mo
             .values(
                 "computer__zone_id", "computer__zone__name", "computer__zone__number",
                 "computer__zone__region_id", "computer__zone__region__name",
+                "computer__zone__region__dtm_id",
             )
             .annotate(
                 total=Count("id"),
@@ -405,7 +406,10 @@ class ComputerBookingViewSet(PermissionRequiredMixin, AuditLogMixin, viewsets.Mo
                 broken=Count("id", filter=Q(is_active=False)),
                 broken_booked=Count("id", filter=Q(is_active=False, is_booked=True)),
             )
-            .order_by("computer__zone__region__name", "computer__zone__number", "computer__zone__name")
+            # Viloyatlar DTM ID tartibida — panel ularni shu tartibda
+            # ko'rsatadi (rasmiy tartib; nom bo'yicha saralash "Andijon"
+            # ni "Qoraqalpog'iston" dan oldinga qo'yardi).
+            .order_by("computer__zone__region__dtm_id", "computer__zone__number", "computer__zone__name")
         )
         return Response({
             "results": [
@@ -415,6 +419,7 @@ class ComputerBookingViewSet(PermissionRequiredMixin, AuditLogMixin, viewsets.Mo
                     "zone_number": row["computer__zone__number"],
                     "region": row["computer__zone__region_id"],
                     "region_name": row["computer__zone__region__name"] or "",
+                    "region_dtm_id": row["computer__zone__region__dtm_id"],
                     "total": row["total"],
                     "booked": row["booked"],
                     "free": row["free"],

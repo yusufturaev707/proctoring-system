@@ -1,6 +1,7 @@
 import logging
 
 from django.conf import settings
+from django.utils import timezone
 from django.db.models import OuterRef, Prefetch, Subquery
 from drf_spectacular.utils import extend_schema
 from rest_framework import serializers, status, viewsets
@@ -9,7 +10,12 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.common.mixins import AuditLogMixin, PermissionRequiredMixin, SoftDeleteRestoreMixin
+from apps.common.mixins import (
+    AuditLogMixin,
+    BulkSelectionMixin,
+    PermissionRequiredMixin,
+    SoftDeleteRestoreMixin,
+)
 from apps.common.permissions import HasRolePermission
 from apps.common.throttling import DeviceRegisterThrottle, client_ip
 from apps.common.utils.network import is_private_ip
@@ -41,7 +47,8 @@ _LIVE_SLOTS = _live_slots()
 
 
 class ComputerViewSet(
-    PermissionRequiredMixin, AuditLogMixin, SoftDeleteRestoreMixin, viewsets.ModelViewSet
+    PermissionRequiredMixin, AuditLogMixin, SoftDeleteRestoreMixin, BulkSelectionMixin,
+    viewsets.ModelViewSet,
 ):
     serializer_class = ComputerSerializer
     permission_classes = [IsAuthenticated, HasRolePermission]
@@ -49,8 +56,13 @@ class ComputerViewSet(
     required_read_permission = "devices.view"
     audit_object_type = "Computer"
     filterset_fields = ["zone", "zone__region", "status", "is_active"]
-    search_fields = ["number", "inventory_code", "ip_address", "mac_address"]
-    ordering_fields = ["number", "inventory_code", "last_seen_at"]
+    search_fields = ["number", "inventory_code", "machine_uuid", "ip_address", "mac_address"]
+    # Jadvaldagi har saralanadigan ustun shu ro'yxatda bo'lishi shart —
+    # aks holda DRF `?ordering=` ni jimgina e'tiborsiz qoldiradi.
+    ordering_fields = [
+        "id", "number", "inventory_code", "ip_address", "mac_address",
+        "machine_uuid", "status", "last_seen_at",
+    ]
 
     def get_queryset(self):
         from apps.proctoring.models import ExamSession
@@ -83,6 +95,79 @@ class ComputerViewSet(
                 Prefetch("cameras", queryset=selectors.cameras_base())
             )
         return queryset
+
+    @extend_schema(request=None, responses={(200, "application/octet-stream"): bytes})
+    @action(detail=False, methods=["get"], url_path="import-template")
+    def import_template(self, request):
+        """Excel shablon (`computer_import.COLUMNS`) — faqat o'qish ruxsati."""
+        from django.http import HttpResponse
+
+        from apps.devices.computer_import import build_template
+
+        # `HttpResponse`, DRF `Response` EMAS: `ApiJSONRenderer` baytlarni
+        # `{success, data}` konvertiga o'rab buzardi.
+        response = HttpResponse(
+            build_template(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response["Content-Disposition"] = 'attachment; filename="kompyuterlar_shablon.xlsx"'
+        return response
+
+    @extend_schema(request={"multipart/form-data": {"type": "object"}}, responses=None)
+    @action(detail=False, methods=["post"], url_path="import")
+    def import_excel(self, request):
+        """
+        Excel'dan ommaviy qo'shish (`computer_import.py`).
+
+        `dry_run=true` — faqat tekshiruv (panel avval shuni chaqiradi).
+        Xato bo'lsa hech narsa yozilmaydi va 200 bilan hisobot qaytadi:
+        bu "so'rov buzilgan" emas, "fayl tuzatilishi kerak" degan javob
+        va panel uni jadval qilib ko'rsatadi. Faylning o'zi o'qilmasa — 400.
+        """
+        from apps.devices.computer_import import ImportFileError, import_computers, read_rows
+
+        upload = request.FILES.get("file")
+        if upload is None:
+            raise serializers.ValidationError({"file": "Excel fayl yuklanmagan."})
+        dry_run = str(request.data.get("dry_run", "")).lower() in ("1", "true", "yes")
+        try:
+            rows = read_rows(upload)
+        except ImportFileError as exc:
+            raise serializers.ValidationError({"file": str(exc)})
+
+        report = import_computers(rows, user=request.user, dry_run=dry_run)
+        if report["created"] or report["bound"]:
+            self.log_audit("import", meta={
+                "file": upload.name, "created": report["created"],
+                # UUID'si to'ldirilgan mavjud kompyuterlar - yozuv
+                # o'zgargani auditda ko'rinishi shart.
+                "bound": report["bound"],
+                "skipped": len(report["skipped"]),
+            })
+        return Response(report)
+
+    @extend_schema(request=None, responses=None)
+    @action(detail=False, methods=["post"], url_path="bulk-delete")
+    def bulk_delete(self, request):
+        """
+        Tanlangan kompyuterlarni o'chirish (yumshoq — "Savat"dan tiklanadi).
+
+        IMTIHONDAGI MASHINA O'TKAZIB YUBORILADI: bittasini o'chirishda
+        administrator qatorni ko'rib turadi, 500 talik tanlovda esa hozir
+        imtihon ketayotgan mashina ko'rinmay qolishi mumkin — uning
+        sessiyasi o'chirilgan kompyuterga yozilib qolardi. Javobda nechtasi
+        o'tkazib yuborilgani aytiladi. Audit — BITTA yozuv (ID'lar bilan).
+        """
+        selected = self.bulk_queryset().filter(deleted_at__isnull=True)
+        in_exam = list(
+            selected.filter(active_session_id__isnull=False).values_list("pk", flat=True)
+        )
+        ids = list(selected.exclude(pk__in=in_exam).values_list("pk", flat=True))
+        if ids:
+            now = timezone.now()
+            Computer.objects.filter(pk__in=ids).update(deleted_at=now, updated_at=now)
+            self.log_audit("delete", meta={"action": "bulk_delete", "count": len(ids), "ids": ids[:1000]})
+        return Response({"deleted": len(ids), "skipped_in_exam": len(in_exam)})
 
 
 class CameraViewSet(
@@ -267,7 +352,9 @@ class CameraViewSet(
         )
 
 
-class DeviceTokenViewSet(PermissionRequiredMixin, AuditLogMixin, viewsets.ModelViewSet):
+class DeviceTokenViewSet(
+    PermissionRequiredMixin, AuditLogMixin, BulkSelectionMixin, viewsets.ModelViewSet
+):
     serializer_class = DeviceTokenSerializer
     permission_classes = [IsAuthenticated, HasRolePermission]
     required_permission = "devices.manage"
@@ -283,8 +370,10 @@ class DeviceTokenViewSet(PermissionRequiredMixin, AuditLogMixin, viewsets.ModelV
     ]
     search_fields = [
         "device_id", "hardware_fingerprint", "app_version", "gpu_name",
+        "reported_machine_uuid",
         "computer__number",
         "computer__inventory_code",
+        "computer__machine_uuid",
     ]
     ordering_fields = ["last_used_at", "created_at", "status"]
 
@@ -368,6 +457,31 @@ class DeviceTokenViewSet(PermissionRequiredMixin, AuditLogMixin, viewsets.ModelV
                 {"action": "unblock" if previous == DeviceToken.Status.REVOKED else "approve"},
             )
         return Response(self.get_serializer(device).data)
+
+    @extend_schema(request=None, responses=None)
+    @action(detail=False, methods=["post"], url_path="bulk-approve")
+    def bulk_approve(self, request):
+        """
+        Tanlangan qurilmalarni BIRDANIGA tasdiqlash.
+
+        Yangi bino ulanganda yuzlab client bir vaqtda ro'yxatdan o'tadi va
+        ularni bittalab tasdiqlash imtihon oldidan jismonan ulgurmaydi.
+        FAQAT KUTAYOTGANLAR tasdiqlanadi: bloklangan qurilma — kimningdir
+        ongli qarori va uni blokdan chiqarish bittalab, sababni ko'rib
+        qilinadi (`approve/`). Audit — BITTA yozuv (ID'lar bilan).
+        """
+        selected = self.bulk_queryset()
+        ids = list(
+            selected.filter(status=DeviceToken.Status.PENDING).values_list("pk", flat=True)
+        )
+        skipped = selected.exclude(pk__in=ids).count()
+        if ids:
+            DeviceToken.objects.filter(pk__in=ids).update(
+                status=DeviceToken.Status.ACTIVE, revoked_at=None, revoke_reason="",
+                updated_at=timezone.now(),
+            )
+            self.log_audit("update", meta={"action": "bulk_approve", "count": len(ids), "ids": ids[:1000]})
+        return Response({"approved": len(ids), "skipped": skipped})
 
     @action(detail=True, methods=["post"])
     def revoke(self, request, pk=None):
@@ -464,6 +578,7 @@ class DeviceRegisterView(APIView):
         public_ip = reported_ip or observed_ip
 
         computer = services.resolve_computer(
+            machine_uuid=data.get("machine_uuid", ""),
             mac_address=data.get("mac_address", ""),
             ip_address=data.get("ip_address", ""),
             inventory_code=data.get("inventory_code", ""),
@@ -473,6 +588,7 @@ class DeviceRegisterView(APIView):
         if computer is None and settings.PROCTORING["AUTO_REGISTER_COMPUTERS"]:
             computer = services.auto_create_computer(
                 zone=zone,
+                machine_uuid=data.get("machine_uuid", ""),
                 mac_address=data.get("mac_address", ""),
                 ip_address=data.get("ip_address", ""),
                 inventory_code=data.get("inventory_code", ""),
@@ -486,6 +602,7 @@ class DeviceRegisterView(APIView):
                     meta={
                         "auto": True,
                         "public_ip": public_ip,
+                        "machine_uuid": computer.machine_uuid or "",
                         "mac_address": computer.mac_address,
                         "zone": str(zone),
                     },
@@ -494,7 +611,8 @@ class DeviceRegisterView(APIView):
 
         if computer is None:
             logger.info(
-                "Qurilma ro'yxatdan o'ta olmadi: mac=%s lan_ip=%s public_ip=%s bino=%s",
+                "Qurilma ro'yxatdan o'ta olmadi: uuid=%s mac=%s lan_ip=%s public_ip=%s bino=%s",
+                data.get("machine_uuid") or "-",
                 data.get("mac_address") or "-",
                 data.get("ip_address") or "-",
                 public_ip,
@@ -507,10 +625,11 @@ class DeviceRegisterView(APIView):
                     "error": {
                         "code": "computer_not_found",
                         "message": (
-                            "Bu kompyuter bazada topilmadi. Administrator uni MAC "
-                            "manzili bilan ro'yxatga qo'shishi kerak."
+                            "Bu kompyuter bazada topilmadi. Administrator uni "
+                            "Machine UUID bilan ro'yxatga qo'shishi kerak."
                         ),
                         "details": {
+                            "machine_uuid": data.get("machine_uuid", ""),
                             "mac_address": data.get("mac_address", ""),
                             "observed_ip": observed_ip,
                             # Bino aniqlanmagani ko'pincha asosiy sabab:
@@ -539,8 +658,10 @@ class DeviceRegisterView(APIView):
             # kompyuterni ikki mashina o'ziniki deb da'vo qilyapti), ID
             # berilmaydi va masalani administrator hal qiladi.
             fingerprint = (data.get("hardware_fingerprint") or "")[:128]
-            same_machine = bool(
-                fingerprint and existing.hardware_fingerprint == fingerprint
+            # Iz formati MAC -> UUID o'tishi hisobga olinadi: yangilangan
+            # client o'z ID'sini yo'qotsa ham qaytarib ololadi.
+            same_machine = services.fingerprint_matches(
+                existing.hardware_fingerprint, fingerprint, data.get("mac_address", "")
             )
             if not same_machine:
                 logger.warning(

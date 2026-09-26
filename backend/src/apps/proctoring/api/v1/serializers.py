@@ -168,7 +168,7 @@ class SessionDetailSerializer(SessionListSerializer):
 
     class Meta(SessionListSerializer.Meta):
         fields = SessionListSerializer.Meta.fields + (
-            "candidate_detail", "mac_address", "termination_reason",
+            "candidate_detail", "mac_address", "machine_uuid", "termination_reason",
             "terminated_by", "terminated_by_name", "face_check_count",
             # Platforma identifikatorlari panelda KO'RSATILADI: nosozlikda
             # operator administratorga aynan shu raqamlarni aytadi.
@@ -263,7 +263,7 @@ class ScreenshotMetaSerializer(serializers.ModelSerializer):
         model = ScreenshotMeta
         fields = (
             "id", "session", "kind", "url", "sha256", "size_bytes",
-            "width", "height", "captured_at",
+            "width", "height", "captured_at", "question_id", "question_number",
         )
 
     def get_url(self, obj) -> str | None:
@@ -285,7 +285,7 @@ class ProctoringScreenshotSerializer(serializers.ModelSerializer):
         model = ProctoringScreenshot
         fields = (
             "id", "session", "url", "content_hash", "file_size",
-            "mime_type", "seq", "captured_at", "received_at",
+            "mime_type", "seq", "captured_at", "received_at", "question_id", "question_number",
         )
 
     def get_url(self, obj) -> str:

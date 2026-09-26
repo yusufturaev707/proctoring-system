@@ -1,0 +1,36 @@
+# GPU nashri uchun CUDA 12 + cuDNN 9 kutubxonalari (pip g'ildiraklari).
+#
+# Spec ularni `site-packages/nvidia/*/bin` dan olib `_internal/cuda/` ga
+# qo'yadi. QAYSI DLL kerakligi bu yerda emas, `onnxruntime_providers_cuda.dll`
+# ning import jadvalida (spec `_cuda_binaries`) - bu fayl faqat MANBANI
+# beradi.
+#
+# NIMA UCHUN pip, CUDA Toolkit EMAS: Toolkit build mashinasiga o'rnatilishi
+# kerak (tizimga o'rnatish) va versiyasi mashinadan mashinaga farq qiladi;
+# g'ildiraklar esa venv ichida va qadalgan - build istalgan mashinada
+# bir xil natija beradi. Ilgari `cudart64_12`/`cufft64_11` faqat
+# `torch/lib` da bor edi (torch 2.5.1+cu121 - CUDA 12.1), ya'ni build
+# torch'ga bog'liq bo'lib qolardi.
+#
+# MOSLIK: `onnxruntime-gpu==1.22.0` -> CUDA 12.x + cuDNN 9.x
+# (`requirements.txt` dagi izoh). CUDA 12 minor versiyalari o'zaro
+# mos (drayver >= 525.60), cuDNN 9.x ham. `onnxruntime-gpu` 1.24+ ga
+# o'tilsa bu fayl `-cu13` paketlariga almashtiriladi.
+-r requirements-build.txt
+
+nvidia-cuda-runtime-cu12==12.9.79
+nvidia-cublas-cu12==12.9.2.10
+nvidia-cufft-cu12==11.4.1.4
+# cuDNN 9.10 - ATAYLAB eng yangisi (9.26) EMAS, o'lchangan:
+# 9.2x yangi kichik kutubxona (`cudnn_engines_tensor_ir64_9.dll`) olib
+# keldi va uni ODDIY LoadLibrary bilan, NOMI bo'yicha yuklaydi. Bu
+# qidiruv `os.add_dll_directory` kataloglarini ham, cudnn'ning o'z
+# katalogini ham ko'rmaydi, ORT 1.22 ning `preload_dlls` ro'yxatida esa
+# bu fayl yo'q. Natija: birinchi Conv'da `CUDNN_BACKEND_API_FAILED`,
+# ORT sessiyani JIMGINA CPU'ga o'tkazadi ("Falling back to CPU") - GPU
+# nashri CPU'da ishlaydi va log'da "GPU (CUDA)" yozilgan bo'ladi.
+# 9.8 va 9.10 da bu fayl yo'q va ikkalasi GTX 1660S da sinalgan.
+# Yangilashdan oldin: `ProctoringClientCheck.exe --require-gpu`.
+nvidia-cudnn-cu12==9.10.2.21
+# cuDNN runtime-fusion dvigatellari uchun (spec `--no-nvrtc` bilan o'chadi).
+nvidia-cuda-nvrtc-cu12==12.9.86

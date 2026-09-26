@@ -174,7 +174,9 @@ class _ThreatScanner(QThread):
                     partial = threat_scanner.ThreatReport(
                         findings=fresh, elevated=report.elevated
                     )
-                    threat_scanner.neutralize(partial)
+                    # Imtihon DAVOMIDA - begona RDP seansi ham yakunlanadi
+                    # (imtihondan tashqarida faqat qayd etiladi).
+                    threat_scanner.neutralize(partial, end_rdp_sessions=True)
                     self.found.emit(fresh)
             except Exception:
                 # Skanerlashda xato (huquq, WMI, o'chib ketgan jarayon).
@@ -528,3 +530,19 @@ class DeviceWatcher(QObject):
 
         self._hotkey_state[code] = (now, 0)
         self.detected.emit("hotkey_blocked", 1, {"key": code, "repeats": repeats + 1})
+
+    def report_keyboard_issue(self, reason: str, key: str = "") -> None:
+        """
+        `lockdown` nosozlik observer'i - hook NAZORATCHISI thread'idan.
+
+        `proctoring_degraded` (modul `keyboard`), `client_anomaly` EMAS:
+        yopishgan tugma ham, Windows olib tashlagan hook ham talabgorning
+        harakati emas - proktorga "shu oraliqda klaviatura qulfi
+        ishonchsiz edi" degan ma'lumot. Yangi hodisa turi kerak emas.
+        """
+        if not self._active:
+            return
+        payload = {"module": "keyboard", "reason": reason}
+        if key:
+            payload["key"] = key
+        self.detected.emit("proctoring_degraded", 2, payload)

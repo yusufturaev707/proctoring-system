@@ -168,6 +168,7 @@ class WriteScopeTests(_Base):
         payload = {
             "number": 5, "inventory_code": "INV-X1",
             "ip_address": "10.0.0.5", "mac_address": "AA:00:00:00:00:01",
+            "machine_uuid": "4C4C4544-0038-4A10-805A-C7C04F4B3A61",
         }
         away = self.post("/api/v1/computers/", {**payload, "zone": self.away_zone.pk})
         self.assertEqual(away.status_code, 400, away.content)

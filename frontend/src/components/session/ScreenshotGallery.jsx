@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Box, ButtonBase, CircularProgress, Dialog, IconButton, Stack, Tooltip, Typography,
+  Box, ButtonBase, Chip, CircularProgress, Dialog, IconButton, Stack, Tooltip, Typography,
   useMediaQuery,
 } from '@mui/material'
 import { alpha, useTheme } from '@mui/material/styles'
@@ -75,10 +75,24 @@ function useShotUrls(shots) {
 /** Ikki manba ikki xil maydon nomi beradi (`size_bytes` / `file_size`). */
 const shotSize = (shot) => shot.size_bytes ?? shot.file_size
 
-/** Yuklab olinadigan fayl nomi - vaqt bo'yicha, tartiblanadigan. */
+/**
+ * Savol yorlig'i. Skrinshot test platformasi buyrug'i bilan olinadi
+ * (javob belgilanganda) va savolga BITTA kadr - qayta belgilansa kadr
+ * yangilanadi (`client/services/screen_capture.py`). `null` - savolsiz kadr.
+ */
+const questionLabel = (shot) => {
+  if (shot.question_number) return `${shot.question_number}-savol`
+  if (shot.question_id) return `Savol ${shot.question_id}`
+  return null
+}
+
+/** Yuklab olinadigan fayl nomi - vaqt bo'yicha, tartiblanadigan (client nomi bilan bir xil). */
 const downloadName = (shot) => {
   const stamp = String(shot.captured_at || '').replace(/[^0-9]/g, '').slice(0, 14)
-  return `skrinshot_${stamp || shot.id}.jpg`
+  const question = shot.question_id
+    ? `${shot.question_number ? `q${String(shot.question_number).padStart(3, '0')}_` : ''}id${shot.question_id}_`
+    : ''
+  return `skrinshot_${question}${stamp || shot.id}.jpg`
 }
 
 /**
@@ -205,6 +219,13 @@ function ShotTile({ shot, url, onOpen }) {
         </Box>
       </Box>
       <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 1.5, py: 1 }}>
+        {questionLabel(shot) && (
+          <Chip
+            size="small"
+            label={questionLabel(shot)}
+            sx={{ height: 22, fontWeight: 700, bgcolor: 'm3.secondaryContainer', color: 'm3.onSecondaryContainer' }}
+          />
+        )}
         <Typography variant="body2" fontWeight={600}>
           {formatTime(shot.captured_at)}
         </Typography>
@@ -322,7 +343,7 @@ function ScreenshotViewer({ items, urls, index, onIndex, onClose }) {
       <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 2.5, py: 1.5 }}>
         <Box sx={{ minWidth: 0, flexGrow: 1 }}>
           <Typography variant="subtitle1" fontWeight={600} noWrap>
-            {formatDateTime(shot.captured_at)}
+            {questionLabel(shot) ? `${questionLabel(shot)} · ` : ''}{formatDateTime(shot.captured_at)}
           </Typography>
           <Typography variant="caption" sx={{ color: alpha('#ffffff', 0.64) }}>
             {details}

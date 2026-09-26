@@ -130,8 +130,8 @@ class DeviceRepository:
         """
         Kirish urinishini serverga xabar qiladi (`client_access.log`).
 
-        Mashinani ANIQLAYDIGAN uchala qiymat ham yuboriladi - MAC, LAN
-        IP va public IP. Har biri boshqa savolga javob beradi va
+        Mashinani ANIQLAYDIGAN qiymatlar yuboriladi - Machine UUID, MAC,
+        LAN IP va public IP. Har biri boshqa savolga javob beradi va
         administrator jurnalni ularning istalgani bo'yicha qidiradi:
         "shu kompyuter", "shu xona", "shu bino".
 
@@ -144,6 +144,7 @@ class DeviceRepository:
             self._api.post(
                 "/client/access-attempt/",
                 json_body={
+                    "machine_uuid": snapshot["machine_uuid"],
                     "mac_address": snapshot["mac_address"],
                     "ip_address": snapshot["ip_address"],
                     "public_ip": snapshot["public_ip"],
@@ -160,10 +161,11 @@ class DeviceRepository:
     def register(self, *, app_version: str, app_hash: str = "",
                  inventory_code: str = "") -> dict:
         """
-        Uchta belgi bilan ro'yxatdan o'tish.
+        To'rtta belgi bilan ro'yxatdan o'tish.
 
-        Server ularni ISHONCHLILIK tartibida ishlatadi: MAC (global
-        unikal) -> inventar kodi -> LAN IP + bino. Public IP esa
+        Server ularni ISHONCHLILIK tartibida ishlatadi: Machine UUID (ona
+        plata) -> MAC (UUID'siz eski yozuvlar) -> inventar kodi -> LAN
+        IP + bino. Public IP esa
         binoni aniqlash uchun zaxira signal: server o'zi ko'rgan manzil
         xususiy bo'lsa (masalan server o'sha binoning ichida tursa),
         client aytgan public IP ishga tushadi.
@@ -216,8 +218,10 @@ class ProctoringRepository:
         Qurilma holati va bugungi imtihonlar.
 
         `machine` — `system_info.machine_identity()` natijasi
-        (`mac`, `ip`). Server MAC ni `Computer.mac_address` bilan
-        SOLISHTIRADI va javobda `machine.allowed` qaytaradi.
+        (`machine_uuid`, `mac`, `ip`). Server UUID ni
+        `Computer.machine_uuid` bilan SOLISHTIRADI va javobda
+        `machine.allowed` qaytaradi; MAC - ikkilamchi (UUID'siz eski
+        yozuvni bir marta bog'lash va apparat izi formatining o'tishi).
         Qiymat yuborilmasa tekshiruv "noma'lum" bo'lib qoladi va
         server sozlamasiga qarab u ham to'siq bo'lishi mumkin -
         shuning uchun uni yuborish IXTIYORIY emas, majburiy
@@ -243,6 +247,9 @@ class ProctoringRepository:
             "monitors": monitors,
             "cameras": cameras,
         }
+        # UUID HAR DOIM yuboriladi (u hech qachon bo'sh emas va keshda):
+        # usiz server eski MAC qoidasiga tushardi.
+        body["machine_uuid"] = machine.get("machine_uuid") or system_info.machine_uuid()
         if machine.get("mac"):
             body["mac_address"] = machine["mac"]
         if machine.get("ip"):
@@ -362,12 +369,18 @@ class ProctoringRepository:
         )
 
     # --- 2. Talabgorni aniqlash --------------------------------------
-    def lookup_candidate(self, *, pinfl: str, exam_id: int, mac_address: str = "") -> dict:
-        body = {"pinfl": pinfl, "exam_id": int(exam_id)}
-        # Jismoniy mashina — server uni kompyuter broni bilan
-        # solishtiradi ("talabgor AYNAN shu stoldami?"). Bo'sh bo'lsa
-        # yuborilmaydi: serializer bo'sh satrni qabul qiladi, lekin
-        # MAC aniqlanmagan holat qurilma biriktiruvi bilan hal bo'ladi.
+    def lookup_candidate(self, *, pinfl: str, exam_id: int, mac_address: str = "",
+                         machine_uuid: str = "") -> dict:
+        body = {
+            "pinfl": pinfl,
+            "exam_id": int(exam_id),
+            # Jismoniy mashina — server uni kompyuter broni bilan
+            # solishtiradi ("talabgor AYNAN shu stoldami?"). Asos -
+            # Machine UUID (keshdan, fon thread'ida bloklamaydi).
+            "machine_uuid": machine_uuid or system_info.machine_uuid(),
+        }
+        # MAC - ikkilamchi: UUID'si hali yozilmagan eski kompyuter
+        # yozuvlari uchun. Bo'sh bo'lsa yuborilmaydi.
         if mac_address:
             body["mac_address"] = mac_address
         return self._api.post("/client/candidate/lookup/", json_body=body)
@@ -558,7 +571,8 @@ class ProctoringRepository:
             "/client/screenshots/commit/", json_body={"screenshots": screenshots}
         )
 
-    def upload_screenshot(self, *, data: bytes, captured_at: str) -> dict:
+    def upload_screenshot(self, *, data: bytes, captured_at: str,
+                          question_id: str = "", question_number=None) -> dict:
         """
         Fayl tizimi yo'li: binary AYNAN shu so'rovda ketadi.
 
@@ -571,7 +585,13 @@ class ProctoringRepository:
             "POST",
             "/client/screenshots/upload/",
             files={"file": ("screen.jpg", data, "image/jpeg")},
-            data={"captured_at": captured_at},
+            # Savol maydonlari FAQAT savol kadrida: bo'sh qiymat server
+            # regex'idan o'tmasdi (eski server esa ularni e'tiborsiz qoldiradi).
+            data={
+                "captured_at": captured_at,
+                **({"question_id": question_id} if question_id else {}),
+                **({"question_number": str(question_number)} if question_number else {}),
+            },
         )
 
     def upload_evidence(self, *, kind: str, data: bytes, captured_at: str,

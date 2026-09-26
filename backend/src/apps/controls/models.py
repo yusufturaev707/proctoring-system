@@ -409,7 +409,15 @@ class Setting(SoftDeleteModel):
     )
     is_detect_monitor = models.BooleanField(_("Monitor tekshiruvi"), default=True)
     is_detect_camera = models.BooleanField(_("Kamera tekshiruvi"), default=True)
-    screenshot_interval = models.PositiveSmallIntegerField(_("Skrinshot intervali (s)"), default=10)
+    # SKRINSHOT TAYMER BILAN OLINMAYDI - faqat test platformasi buyurganda
+    # (javob belgilandi -> client lokal xizmatiga `POST /api/capture_screen`).
+    # Shuning uchun interval ham, dedup ham yo'q (`controls.0013`): har
+    # kadr ma'noli lahza. Kadr mashinada HAR DOIM saqlanadi; bu bayroq
+    # faqat "serverga ham yuborilsinmi" savoli (trafik, server diski).
+    is_screenshot_upload = models.BooleanField(
+        _("Skrinshotni serverga yuborish"), default=True,
+        help_text=_("O'chiq bo'lsa skrinshot faqat client mashinasida saqlanadi"),
+    )
     # 1920/80: ekran o'z o'lchamida qoladi. Ilgari 960/65 edi va 1920 li
     # ekranda test matni ~6 px harfga aylanib, O'QILMASDI — skrinshot
     # dalil sifatida ma'nosini yo'qotardi. Xiralikning asosiy sababi
@@ -417,9 +425,6 @@ class Setting(SoftDeleteModel):
     # 1920/80 ~157 KB — optimallashtirilgan progressiv JPEG bilan).
     screenshot_quality = models.PositiveSmallIntegerField(_("Skrinshot sifati"), default=80)
     screenshot_max_width = models.PositiveSmallIntegerField(_("Maks. kenglik"), default=1920)
-    # Kadr oldingisidan sezilarli farq qilmasa — yuborilmaydi.
-    # Talabgor asosan qimirlamaydi, shuning uchun bu trafikni ~10x kamaytiradi.
-    screenshot_dedup_threshold = models.PositiveSmallIntegerField(_("Dedup chegarasi"), default=6)
 
     # --- YOLO ---
     is_enable_detect = models.BooleanField(_("Obyekt aniqlash"), default=False)

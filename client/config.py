@@ -253,14 +253,34 @@ EVENT_BATCH_MAX = 200
 PERIODIC_FACE_INTERVAL_MS = _env_int("PERIODIC_FACE_INTERVAL_MS", 60_000)
 
 # ── Skrinshot ────────────────────────────────────────────────────────
-# Interval, sifat, kenglik va dedup chegarasi SERVERDAN keladi
-# (`Setting` -> handshake `config.capture`) - ular imtihonga qarab
-# o'zgaradi va clientda qadab qo'yilmasligi kerak. Bu yerda faqat
-# mashinaga bog'liq ikkita qiymat qoladi.
+# Skrinshot TAYMER BILAN OLINMAYDI — faqat test platformasi buyurganda
+# (`POST /api/capture_screen`, pastdagi "Lokal xizmat"). Sifat, kenglik
+# va serverga yuborish SERVERDAN keladi (`Setting` -> `config.capture`).
 #
 # `0` - skrinshot umuman olinmaydi. Faqat ishlab chiqish uchun:
 # dasturchi ekranida shaxsiy oynalar bo'lishi mumkin.
 SCREENSHOT_ENABLED = _env_bool("SCREENSHOT_ENABLED", True)
+
+# Skrinshot serverga ham yuboriladimi - ZAXIRA. Egasi
+# `config.capture.upload` (`Setting.is_screenshot_upload`): "faqat
+# mashinada saqlash" yoki "saqlab, fonda serverga yuborish" - imtihon
+# qarori. Standart `true`: sozlama kelmagan holatda proktor ekrani
+# jimgina bo'sh qolmasligi kerak.
+SCREENSHOT_UPLOAD = _env_bool("SCREENSHOT_UPLOAD", True)
+
+# ── Lokal xizmat (test platformasi uchun) ────────────────────────────
+# Client `127.0.0.1:<port>` da kichik HTTP xizmat ochadi
+# (`services/local_service.py`): test platformasining frontendi
+# `GET /api/device_info` (UUID, IP, MAC, kompyuter raqami) va
+# `POST /api/capture_screen` (skrinshot buyrug'i) ga murojaat qiladi.
+# Port platforma bilan SHARTNOMA - uni faqat platforma bilan birga
+# o'zgartiring. Faqat loopback'da tinglanadi: tarmoqdan ko'rinmaydi.
+LOCAL_SERVICE_ENABLED = _env_bool("LOCAL_SERVICE_ENABLED", True)
+LOCAL_SERVICE_PORT = _env_int("LOCAL_SERVICE_PORT", 8050)
+# Qo'shimcha ruxsat etilgan Origin'lar (vergul bilan), `*` - hammasi
+# (faqat dev: platformani oddiy brauzerda sinash). Imtihon davomida
+# test platformasining domenlari (`allowed_domains`) O'ZI qo'shiladi.
+LOCAL_SERVICE_ALLOWED_ORIGINS = _env_list("LOCAL_SERVICE_ALLOWED_ORIGINS", "")
 
 # "Client ishlab turibdi" signalining oralig'i (ms) - ZAXIRA.
 #

@@ -193,6 +193,10 @@ class ExamSession(PublicIDModel):
 
     ip_address = models.GenericIPAddressField(blank=True, null=True, db_index=True)
     mac_address = models.CharField(max_length=17, blank=True, default="")
+    #: Sessiya ochilgan mashinaning Machine UUID'i (kompyuter yozuvidan,
+    #: client'dan emas) - bayonnomada "qaysi mashina" degan savolning
+    #: o'zgarmaydigan javobi: MAC karta almashsa o'zgaradi, bu esa yo'q.
+    machine_uuid = models.CharField(max_length=36, blank=True, default="", db_index=True)
 
     # --- Proktorlik yig'indisi (Redis'dan davriy ravishda ko'chiriladi) ---
     face_fail_count = models.PositiveSmallIntegerField(default=0)
@@ -663,6 +667,12 @@ class ScreenshotMeta(models.Model):
 
     captured_at = models.DateTimeField(db_index=True)
     received_at = models.DateTimeField(auto_now_add=True)
+
+    # SAVOL (test platformasining buyrug'idan: `q_id`, `q_n`). Bo'sh -
+    # savolsiz kadr. Bitta sessiyada bitta savolga BITTA kadr: talabgor
+    # qaytib javobni o'zgartirsa, kadr YANGILANADI (oxirgi javob holati).
+    question_id = models.CharField(_("Savol ID"), max_length=64, blank=True, default="")
+    question_number = models.PositiveIntegerField(_("Savol raqami"), null=True, blank=True)
     # Client yuklashni tasdiqlaganmi (presigned PUT muvaffaqiyatli tugadimi).
     is_committed = models.BooleanField(default=False, db_index=True)
     purge_after = models.DateTimeField(blank=True, null=True, db_index=True)
@@ -674,6 +684,8 @@ class ScreenshotMeta(models.Model):
         ordering = ["-captured_at"]
         indexes = [
             models.Index(fields=["session", "-captured_at"], name="idx_shot_session_time"),
+            # Savol kadrini almashtirish (`tasks.flush_screenshot_buffer`).
+            models.Index(fields=["session", "question_id"], name="idx_shot_session_question"),
             models.Index(fields=["is_committed", "purge_after"], name="idx_shot_purge"),
         ]
 
@@ -726,6 +738,12 @@ class ProctoringScreenshot(models.Model):
     captured_at = models.DateTimeField(_("Olingan vaqti"), db_index=True)
     received_at = models.DateTimeField(_("Qabul qilingan vaqti"), auto_now_add=True)
 
+    # SAVOL (test platformasining buyrug'idan: `q_id`, `q_n`). Bo'sh -
+    # savolsiz kadr. Bitta sessiyada bitta savolga BITTA kadr: talabgor
+    # qaytib javobni o'zgartirsa, kadr YANGILANADI (oxirgi javob holati).
+    question_id = models.CharField(_("Savol ID"), max_length=64, blank=True, default="")
+    question_number = models.PositiveIntegerField(_("Savol raqami"), null=True, blank=True)
+
     class Meta:
         verbose_name = _("Skrinshot (fayl)")
         verbose_name_plural = _("Skrinshotlar (fayl)")
@@ -735,6 +753,13 @@ class ProctoringScreenshot(models.Model):
             models.UniqueConstraint(
                 fields=["session", "captured_at", "seq"],
                 name="unique_screenshot_session_seq",
+            ),
+            # Savolga bitta kadr - kafolat BAZADA (yangilash qatorni
+            # almashtiradi, `services/screenshots.py`).
+            models.UniqueConstraint(
+                fields=["session", "question_id"],
+                condition=~models.Q(question_id=""),
+                name="unique_screenshot_session_question",
             ),
         ]
         indexes = [

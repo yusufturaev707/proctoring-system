@@ -137,6 +137,9 @@ def flush_screenshot_buffer():
                         captured_at=_parse(fields["captured_at"]),
                         is_committed=True,
                         purge_after=purge_after,
+                        question_id=fields.get("question_id", "") or "",
+                        question_number=int(fields["question_number"])
+                        if str(fields.get("question_number") or "").isdigit() else None,
                     ),
                 )
             )
@@ -147,12 +150,47 @@ def flush_screenshot_buffer():
 
     result = stream_service.write_with_fallback(ScreenshotMeta, rows, stream)
     stream_service.ack(client, stream, result["ok"] + malformed)
+    _drop_replaced_question_shots(
+        {(row.session_id, row.question_id) for _, _, row in rows if row.question_id}
+    )
 
     return {
         "read": len(entries),
         "written": len(result["ok"]) - result["dead"],
         "dead": result["dead"] + len(malformed),
     }
+
+
+def _drop_replaced_question_shots(pairs: set) -> int:
+    """
+    Savolga BITTA kadr (S3 yo'li): eng yangisidan boshqalari o'chiriladi.
+
+    Fayl tizimi yo'lida bu qator YANGILASH bilan qilinadi
+    (`services/screenshots.py`); bu yerda yozish ommaviy va ikki bosqichli,
+    shuning uchun tozalash yozilgandan KEYIN. Tartib retention bilan bir
+    xil: avval obyekt, keyin qator. Xato yutiladi - eng yomon holat
+    vaqtincha ikki kadr, dalil yo'qolishi emas; keyingi yozuv tozalaydi.
+    """
+    from apps.common.storage import delete_objects
+
+    removed = 0
+    for session_id, question_id in pairs:
+        try:
+            stale = list(
+                ScreenshotMeta.objects.filter(session_id=session_id, question_id=question_id)
+                .order_by("-captured_at", "-id").values_list("id", "object_key")[1:]
+            )
+            if not stale:
+                continue
+            delete_objects([key for _, key in stale])
+            ScreenshotMeta.objects.filter(id__in=[pk for pk, _ in stale]).delete()
+            removed += len(stale)
+        except Exception:
+            logger.warning(
+                "Eski savol kadri o'chirilmadi: session=%s q=%s", session_id, question_id,
+                exc_info=True,
+            )
+    return removed
 
 
 @shared_task(name="proctoring.flush_session_state")

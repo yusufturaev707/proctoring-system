@@ -139,10 +139,33 @@ class CandidateSeatTests(TestCase):
         self.device = factories.make_device(computer=self.pc2)
         self.schedule = factories.make_schedule(zone=self.zone)
 
-    def _resolve(self, pinfl=PINFL, mac=""):
+    def _resolve(self, pinfl=PINFL, mac="", uuid=""):
         return bookings.resolve_candidate_seat(
-            schedule=self.schedule, pinfl=pinfl, device=self.device, mac_address=mac
+            schedule=self.schedule, pinfl=pinfl, device=self.device,
+            machine_uuid=uuid, mac_address=mac,
         )
+
+    def test_physical_uuid_decides_the_desk(self):
+        """JSHSHIR tekshiruvida "bu mashina" - Machine UUID bo'yicha."""
+        bookings.assign(self.schedule, PINFL, computer=self.pc2)
+        with self.assertRaises(WrongComputer) as ctx:
+            # MAC №2 niki, lekin ona plata №1 niki - UUID hal qiladi.
+            self._resolve(uuid=self.pc1.machine_uuid, mac=self.pc2.mac_address)
+        self.assertEqual(ctx.exception.extra["current"]["number"], 1)
+
+        seat = self._resolve(uuid=self.pc2.machine_uuid.lower(), mac="00:00:00:00:00:01")
+        self.assertEqual(seat["computer_id"], self.pc2.pk)
+
+    def test_unknown_uuid_does_not_fall_back_to_mac_of_uuid_record(self):
+        """
+        UUID bazada yo'q - MAC faqat UUID'SIZ yozuvda qidiriladi: UUID'i
+        boshqa bo'lgan mashina MAC bo'yicha "shu stol" bo'lib qolmasin.
+        """
+        bookings.assign(self.schedule, PINFL, computer=self.pc2)
+        seat = self._resolve(
+            uuid="4C4C4544-0038-4A10-805A-C7C04F4B3A77", mac=self.pc1.mac_address
+        )
+        self.assertEqual(seat["computer_id"], self.pc2.pk)  # qurilma biriktiruvi
 
     def test_not_enforced_without_any_booking(self):
         """Bron yuritilmaydigan sessiya avvalgidek ishlaydi."""
@@ -244,10 +267,12 @@ class LookupEndpointSeatTests(TestCase):
         AllowedPublicIp.objects.create(ip_address="8.8.8.8", zone=self.zone)
         self.operator = factories.make_user(permissions=["client.operate"])
 
-    def _lookup(self, pinfl=PINFL, mac=None):
+    def _lookup(self, pinfl=PINFL, mac=None, uuid=None):
         payload = {"pinfl": pinfl, "exam_id": self.exam.pk}
         if mac:
             payload["mac_address"] = mac
+        if uuid:
+            payload["machine_uuid"] = uuid
         return self.client.post(
             reverse("client-candidate-lookup"),
             payload,
@@ -275,6 +300,18 @@ class LookupEndpointSeatTests(TestCase):
 
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(response.json()["data"]["seat"]["number"], 2)
+
+    def test_wrong_computer_by_machine_uuid(self):
+        bookings.assign(self.schedule, PINFL, computer=self.pc2)
+
+        response = self._lookup(uuid=self.pc1.machine_uuid)
+
+        self.assertEqual(response.status_code, 409, response.content)
+        self.assertEqual(response.json()["error"]["details"]["current"]["number"], 1)
+
+    def test_malformed_machine_uuid_is_400(self):
+        response = self._lookup(uuid="not-a-uuid")
+        self.assertEqual(response.status_code, 400)
 
 
 class BookingApiTests(TestCase):

@@ -516,11 +516,11 @@ PROCTORING = {
     # ishlab chiqishda (Postman/curl) o'chiriladi.
     "REQUIRE_DEVICE_ID": env_bool("REQUIRE_DEVICE_ID", True),
 
-    # --- Mashina tekshiruvi (MAC) ---
+    # --- Mashina tekshiruvi (Machine UUID) ---
     # `X-Device-ID` client NUSXASINI belgilaydi, mashinani emas: u
     # diskda fayl bo'lib yotadi va mashina obrazi ko'chirilganda u
-    # ham ko'chadi. `true` (standart) bo'lsa, client aytgan MAC
-    # `Computer.mac_address` bilan mos kelmaguncha imtihon
+    # ham ko'chadi. `true` (standart) bo'lsa, client aytgan Machine
+    # UUID `Computer.machine_uuid` bilan mos kelmaguncha imtihon
     # boshlanmaydi - ya'ni obrazi ko'chirilgan mashina o'zini
     # boshqa kompyuter deb ko'rsata olmaydi.
     #
@@ -530,10 +530,15 @@ PROCTORING = {
     # mumkin va u paytda majburiy tekshiruv butun markazni
     # to'xtatardi.
     #
-    # MAC ni client YUBORADI, ya'ni u o'zgartirilishi mumkin - bu
+    # UUID ni client YUBORADI, ya'ni u o'zgartirilishi mumkin - bu
     # KREDENSIAL EMAS, inventarizatsiya intizomi. Haqiqiy chegara
     # avvalgidek qurilma tasdig'i va xodim JWT'sida.
-    "REQUIRE_MAC_MATCH": env_bool("REQUIRE_MAC_MATCH", True),
+    #
+    # Eski nomi `REQUIRE_MAC_MATCH` - mavjud `.env` fayllar uchun ZAXIRA
+    # sifatida o'qiladi (yangisi berilmagan bo'lsa).
+    "REQUIRE_MACHINE_MATCH": env_bool(
+        "REQUIRE_MACHINE_MATCH", env_bool("REQUIRE_MAC_MATCH", True)
+    ),
 
     # --- Avtomatik inventarizatsiya ---
     # `true` bo'lsa, ro'yxatda yo'q kompyuter avtomatik yaratiladi -

@@ -188,8 +188,16 @@ def push_screenshot_meta(
     width: int,
     height: int,
     captured_at: datetime,
+    question_id: str = "",
+    question_number: int | None = None,
 ) -> None:
-    """Skrinshot metadata'si — binary allaqachon S3'da."""
+    """
+    Skrinshot metadata'si — binary allaqachon S3'da.
+
+    Savol kadri (`question_id`) yozilgach shu savolning ESKI kadri
+    o'chiriladi (`tasks.flush_screenshot_buffer`) - bu yerda emas: yozish
+    Celery'da, ikki bosqichli.
+    """
     captured_at, _ = clamp_time(captured_at)
     record = {
         "session_id": session.pk,
@@ -200,6 +208,8 @@ def push_screenshot_meta(
         "width": int(width or 0),
         "height": int(height or 0),
         "captured_at": captured_at.isoformat(),
+        "question_id": question_id or "",
+        "question_number": str(question_number or ""),
     }
     _enqueue(settings.PROCTORING["SCREENSHOT_STREAM_KEY"], record)
     session_state.increment(session.pk, "shots")
@@ -207,7 +217,7 @@ def push_screenshot_meta(
     # Ketma-ket bir xil hash — client oldindan yozilgan tasvir uzatayotgan
     # bo'lishi mumkin. Bu eng oson aniqlanadigan spoofing belgisi.
     if sha256:
-        check_frozen_frames(session, sha256)
+        check_frozen_frames(session, sha256, question_id=question_id)
 
 
 def _apply_risk(session_id: int, event_type: str, config: dict | None) -> None:
@@ -442,24 +452,37 @@ _last_broadcast_warning = float("-inf")
 # --------------------------------------------------------------------------
 # Anomaliya aniqlash
 # --------------------------------------------------------------------------
-def check_frozen_frames(session, sha256: str, threshold: int = 5) -> None:
+def check_frozen_frames(session, sha256: str, threshold: int = 5, *,
+                        question_id: str = "") -> None:
     """
     Ketma-ket bir xil kadrlarni aniqlaydi.
 
     Talabgor qimirlamasligi mumkin, lekin JPEG shovqini tufayli hash
     hech qachon aynan bir xil bo'lmaydi. Bir xil hash — bu bitta fayl
     qayta-qayta yuborilayotgani, ya'ni client soxtalashtirilgan.
+
+    BITTA SAVOLGA QAYTA BOSISH ISTISNO. Skrinshot buyruq bilan olinadi
+    (javob belgilanganda) va talabgor o'sha javobni qayta bossa ekran
+    piksel-piksel bir xil bo'lishi MUMKIN (kamera tasmasi o'chiq bo'lsa).
+    Shunday juftlik hisoblagichni na oshiradi, na tozalaydi - aks holda
+    beshinchi bosishda halol talabgorga KRITIK anomaliya chiqardi. Turli
+    savollarda bir xil kadr esa avvalgidek shubhali.
     """
     client = get_redis()
     key = f"sess:lasthash:{session.pk}"
+    marker = f"{sha256}|{question_id}" if question_id else sha256
     try:
         pipe = client.pipeline()
         pipe.get(key)
-        pipe.set(key, sha256, ex=600)
+        pipe.set(key, marker, ex=600)
         previous, _ = pipe.execute()
+        if isinstance(previous, bytes):
+            previous = previous.decode()
 
         counter_key = f"sess:samehash:{session.pk}"
-        if previous == sha256:
+        if question_id and previous == marker:
+            return
+        if (previous or "").split("|", 1)[0] == sha256:
             repeats = client.incr(counter_key)
             client.expire(counter_key, 600)
             if repeats == threshold:

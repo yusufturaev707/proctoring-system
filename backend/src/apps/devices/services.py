@@ -7,11 +7,11 @@ import secrets
 from urllib.parse import quote
 
 from django.conf import settings
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.common.utils.crypto import decrypt, encrypt
-from apps.common.utils.validators import normalize_mac
+from apps.common.utils.validators import normalize_mac, normalize_machine_uuid
 from apps.devices.models import Camera, Computer, DeviceToken
 
 logger = logging.getLogger(__name__)
@@ -85,6 +85,8 @@ def record_handshake(
     hardware_fingerprint: str = "",
     reported_public_ip: str = "",
     reported_lan_ip: str = "",
+    reported_machine_uuid: str = "",
+    reported_mac: str = "",
     gpu_name: str = "",
     performance_profile: str = "",
 ) -> list[dict]:
@@ -117,6 +119,9 @@ def record_handshake(
         updates["reported_public_ip"] = reported_public_ip
     if reported_lan_ip and reported_lan_ip != device.reported_lan_ip:
         updates["reported_lan_ip"] = reported_lan_ip
+    reported_machine_uuid = normalize_machine_uuid(reported_machine_uuid)
+    if reported_machine_uuid and reported_machine_uuid != device.reported_machine_uuid:
+        updates["reported_machine_uuid"] = reported_machine_uuid
 
     # Versiya anomaliya EMAS — client yangilanishi normal holat. Lekin u
     # faqat ro'yxatdan o'tishda yozilsa, "qaysi bino eski build'da"
@@ -153,6 +158,12 @@ def record_handshake(
 
     if hardware_fingerprint:
         if not device.hardware_fingerprint:
+            updates["hardware_fingerprint"] = hardware_fingerprint
+        elif is_fingerprint_upgrade(device.hardware_fingerprint, hardware_fingerprint, reported_mac):
+            # Iz formati MAC'dan Machine UUID'ga o'tdi. Eski izdagi MAC
+            # client aytgani bilan mos - bu O'SHA mashina, etalon JIMGINA
+            # yangilanadi. Aks holda yangilangan har client eski etalonga
+            # qarshi har handshake'da `fingerprint_changed` berardi.
             updates["hardware_fingerprint"] = hardware_fingerprint
         elif hardware_fingerprint != device.hardware_fingerprint:
             # `device_id` kredensial emas, ya'ni uni boshqa mashinaga
@@ -218,8 +229,44 @@ def resolve_zone_by_public_ip(public_ip: str):
     return row.zone
 
 
+#: Apparat izining YANGI formati: `muid:<Machine UUID>` (client
+#: `system_info.hardware_fingerprint`). Eskisi `MAC|host|OS|arch` edi va
+#: MAC almashganda (tarmoq kartasi, adapter tartibi) yoki kompyuter nomi
+#: o'zgarganda soxta `fingerprint_changed` anomaliyasi berardi.
+FINGERPRINT_UUID_PREFIX = "muid:"
+
+
+def _legacy_fingerprint_mac(fingerprint: str) -> str:
+    """Eski formatdagi izning MAC qismi (`AA:BB:..|host|...`)."""
+    if not fingerprint or fingerprint.startswith(FINGERPRINT_UUID_PREFIX):
+        return ""
+    return normalize_mac(fingerprint.split("|", 1)[0]) or ""
+
+
+def is_fingerprint_upgrade(stored: str, received: str, reported_mac: str) -> bool:
+    """
+    Eski (MAC) izdan yangi (UUID) izga O'SHA mashinada o'tishmi.
+
+    Isbot - eski izdagi MAC client hozir aytgan MAC bilan bir xil. MAC
+    ham mos kelmasa bu ko'chirilgan `device_id` bo'lishi mumkin va u
+    avvalgidek anomaliya bo'lib qoladi.
+    """
+    if not (received or "").startswith(FINGERPRINT_UUID_PREFIX):
+        return False
+    legacy_mac = _legacy_fingerprint_mac(stored)
+    return bool(legacy_mac) and legacy_mac == (normalize_mac(reported_mac) or "")
+
+
+def fingerprint_matches(stored: str, received: str, reported_mac: str = "") -> bool:
+    """So'rov etalon izdagi mashinadan kelyaptimi (format o'tishi hisobga olingan)."""
+    if not stored or not received:
+        return False
+    return stored == received or is_fingerprint_upgrade(stored, received, reported_mac)
+
+
 def resolve_computer(
     *,
+    machine_uuid: str = "",
     mac_address: str = "",
     ip_address: str = "",
     inventory_code: str = "",
@@ -230,22 +277,27 @@ def resolve_computer(
 
     Belgilar ISHONCHLILIK tartibida sinaladi:
 
-      1. MAC manzil - ASOSIY belgi. Global unikal
-         (`unique_computer_mac`), apparatga bog'langan va DHCP'da
-         o'zgarmaydi.
-      2. Inventar kodi - global unikal, lekin uni client bilishi shart
+      1. Machine UUID - ASOSIY belgi. Ona plataga bog'langan, tizim
+         bo'ylab unikal (`unique_computer_machine_uuid`), tarmoq
+         kartasi almashsa ham, OS qayta o'rnatilsa ham o'zgarmaydi.
+      2. MAC - UUID'si hali yozilmagan (eski) yozuvlar va eski
+         client'lar uchun.
+      3. Inventar kodi - global unikal, lekin uni client bilishi shart
          emas (ixtiyoriy `.env` qiymati).
-      3. LAN IP + BINO - oxirgi chora. LAN IP faqat bino ichida unikal
-         (`unique_computer_zone_ip`): turli binolarda `192.168.1.10`
-         normal holat. Shuning uchun bino noma'lum bo'lsa, IP bo'yicha
+      4. LAN IP + BINO - oxirgi chora. LAN IP faqat bino ichida unikal
+         (`unique_computer_zone_ip`): bino noma'lum bo'lsa IP bo'yicha
          qidiruv UMUMAN qilinmaydi - aks holda client jimgina BOSHQA
          binoga biriktirilib, sessiya noto'g'ri hududda hisoblanardi.
     """
-    from apps.common.utils.validators import normalize_mac
-
     queryset = Computer.objects.select_related("zone", "zone__region").filter(
         deleted_at__isnull=True, is_active=True
     )
+
+    uuid_value = normalize_machine_uuid(machine_uuid)
+    if uuid_value:
+        computer = queryset.filter(machine_uuid=uuid_value).first()
+        if computer:
+            return computer
 
     normalized = normalize_mac(mac_address)
     if normalized:
@@ -263,8 +315,26 @@ def resolve_computer(
     return None
 
 
+def auto_inventory_code(*, machine_uuid: str = "", mac_address: str = "") -> str:
+    """
+    Inventar kodi berilmaganda: `AUTO-<UUID hex>` (MAC bo'lmasa ham unikal).
+
+    UUID TO'LIQ olinadi (32 belgi): qisqartirilgan qism bir ishlab
+    chiqaruvchining ketma-ket platalarida to'qnashishi mumkin, kod esa
+    tizim bo'ylab unikal (`unique_computer_inventory_code`).
+    """
+    uuid_value = normalize_machine_uuid(machine_uuid)
+    if uuid_value:
+        return "AUTO-" + uuid_value.replace("-", "")
+    mac = normalize_mac(mac_address)
+    return "AUTO-" + mac.replace(":", "") if mac else ""
+
+
 @transaction.atomic
-def auto_create_computer(*, zone, mac_address: str, ip_address: str, inventory_code: str = ""):
+def auto_create_computer(
+    *, zone, machine_uuid: str = "", mac_address: str = "", ip_address: str = "",
+    inventory_code: str = "",
+):
     """
     Ro'yxatda yo'q mashinani avtomatik inventarizatsiya qiladi.
 
@@ -274,16 +344,17 @@ def auto_create_computer(*, zone, mac_address: str, ip_address: str, inventory_c
     kerak, endpoint throttled, va yaratilgan qurilma baribir `PENDING`
     bo'lib qoladi.
 
-    Inventar kodi MAC dan hosil qilinadi - takroriy so'rov yangi qator
-    yaratmasligi uchun (`resolve_computer` uni MAC bo'yicha topadi).
+    Takroriy so'rov yangi qator yaratmaydi: `resolve_computer` uni UUID
+    (eski client'da MAC) bo'yicha topadi.
     """
-    from apps.common.utils.validators import normalize_mac
-
-    normalized = normalize_mac(mac_address)
-    if zone is None or not normalized:
+    uuid_value = normalize_machine_uuid(machine_uuid)
+    mac = normalize_mac(mac_address) or ""
+    if zone is None or not (uuid_value or mac):
         return None
 
-    code = (inventory_code or "").strip() or "AUTO-{}".format(normalized.replace(":", "")[-6:])
+    code = (inventory_code or "").strip() or auto_inventory_code(
+        machine_uuid=uuid_value, mac_address=mac
+    )
 
     # `unique_computer_zone_ip` - bino ichida IP band bo'lsa, yangi qator
     # yaratib bo'lmaydi. Bu odatda eskirgan yozuv (DHCP manzilni boshqa
@@ -300,41 +371,49 @@ def auto_create_computer(*, zone, mac_address: str, ip_address: str, inventory_c
     if Computer.objects.filter(deleted_at__isnull=True, inventory_code=code).exists():
         logger.warning("Avtomatik inventarizatsiya: %s kodi allaqachon band", code)
         return None
+    # MAC boshqa (UUID'li) yozuvda band bo'lsa - MAC'siz yaratiladi: u
+    # endi ixtiyoriy belgi va eskirgan MAC yangi mashinani to'smasligi kerak.
+    if mac and Computer.objects.alive().filter(mac_address=mac).exists():
+        mac = ""
 
     computer = Computer.objects.create(
         zone=zone,
         inventory_code=code,
         ip_address=ip_address or None,
-        mac_address=normalized,
+        machine_uuid=uuid_value or None,
+        mac_address=mac,
         is_active=True,
     )
     logger.info(
         "Kompyuter avtomatik ro'yxatga olindi: %s (%s, %s)",
-        code, normalized, zone,
+        code, uuid_value or mac, zone,
     )
     return computer
 
 
 # --------------------------------------------------------------------------
-# Mashina tekshiruvi (MAC)
+# Mashina tekshiruvi (Machine UUID)
 # --------------------------------------------------------------------------
 #
 # NIMA UCHUN BU ALOHIDA TEKSHIRUV. `X-Device-ID` mashinani EMAS,
 # client NUSXASINI belgilaydi: u diskda oddiy fayl bo'lib yotadi va
 # mashina obrazi ko'chirilganda (imtihon markazlarida odatiy amaliyot)
 # u ham ko'chadi. Natijada o'nlab mashina bitta `device_id` bilan
-# ishlaydi va sessiyalarning hammasi bitta kompyuterga yozilardi -
-# dashboard "1-xona, 1-kompyuter" deb ko'rsatib turgan paytda
-# talabgor boshqa xonada o'tirardi.
+# ishlaydi va sessiyalarning hammasi bitta kompyuterga yozilardi.
 #
-# MAC esa apparatning o'zida va uni administrator KIRITADI
-# (`Computer.mac_address`). Ya'ni bu yagona nuqta bo'lib, unda
-# "dastur qayerda ishlayapti" degan javob "administrator qayerga
-# ruxsat bergan" degan javob bilan solishtiriladi.
+# Javob ona platadagi Machine UUID'da va uni administrator KIRITADI
+# (`Computer.machine_uuid`, panel yoki Excel). Ilgari bu MAC edi va u
+# amalda o'zgaradi (tarmoq kartasi, USB adapter, marshrut boshqa
+# adapterga o'tishi) - ishlab turgan mashina "ro'yxatda yo'q" bo'lib
+# qolardi.
 #
-# TEKSHIRUV FAQAT SOLISHTIRADI, HECH NARSA YOZMAYDI. Client aytgan
-# MAC bilan `Computer.mac_address` ni YANGILASH butun tekshiruvni
-# ma'nosiz qilardi: har qanday mashina birinchi handshake'da o'zini
+# TEKSHIRUV SOLISHTIRADI. Bitta istisno - UUID'NI BIR MARTA BOG'LASH:
+# kompyuter yozuvida UUID hali YO'Q (UUID'dan oldingi yozuv) va client
+# aytgan MAC administrator kiritgan MAC bilan AYNAN mos bo'lsa, UUID
+# yozuvga yoziladi. Bu ilgari MAC bo'yicha "ok" bo'ladigan mashinaning
+# O'ZI, ya'ni ishonch darajasi o'zgarmaydi - faqat mavjud yuzlab
+# mashinaga qo'lda UUID yozib chiqish kerak bo'lmaydi. UUID bor yozuvga
+# client HECH QACHON tegmaydi: aks holda har qanday mashina o'zini
 # "ro'yxatga olingan" holga keltirib olardi.
 
 #: Tekshiruv natijalari. Client shu kodlarga qarab qaror qabul
@@ -348,28 +427,78 @@ MACHINE_MISMATCH = "mismatch"
 MACHINE_INACTIVE = "inactive"
 
 
-def verify_machine(device: DeviceToken | None, *, mac_address: str = "") -> dict:
+def bind_machine_uuid(computer: Computer, value: str) -> bool:
     """
-    Client ishlab turgan mashina shu bino ro'yxatidami.
+    UUID'si yo'q kompyuterga UUID yozadi. `False` - yozilmadi.
 
-    Qidiruv KO'LAMI - qurilmaning binosi (`Computer.zone`), ya'ni
-    savol "shu MAC umuman bazada bormi?" emas, "shu MAC AYNAN SHU
-    binoda bormi?". Farq muhim: bir viloyatdagi ikkinchi binoning
-    kompyuteri ham bazada bor, lekin uning jadvali, kameralari va
-    proktori boshqa - u yerda ochilgan sessiya butun hisobotni
-    buzardi.
+    Faqat BO'SH maydonga (`machine_uuid IS NULL` sharti `UPDATE` ichida -
+    parallel handshake'lar ikki xil qiymat yoza olmaydi) va UUID boshqa
+    tirik kompyuterda band bo'lmasa (unikal cheklov poygada ham ushlaydi).
+    """
+    value = normalize_machine_uuid(value)
+    if not value or computer.machine_uuid:
+        return False
+    if Computer.objects.alive().filter(machine_uuid=value).exclude(pk=computer.pk).exists():
+        return False
+    try:
+        with transaction.atomic():
+            updated = Computer.objects.filter(
+                pk=computer.pk, machine_uuid__isnull=True
+            ).update(machine_uuid=value, updated_at=timezone.now())
+    except IntegrityError:
+        return False
+    if updated:
+        computer.machine_uuid = value
+        logger.info("Machine UUID bog'landi: %s -> %s", computer.label, value)
+    return bool(updated)
+
+
+def _matched(result: dict, computer: Computer) -> dict:
+    """Mashina - qurilma biriktirilgan kompyuterning O'ZI."""
+    result["computer_code"] = computer.inventory_code
+    if not computer.is_active:
+        result["status"] = MACHINE_INACTIVE
+        result["message"] = (
+            "«{}» kompyuteri hisobdan chiqarilgan — imtihon o'tkazib "
+            "bo'lmaydi.".format(computer.label)
+        )
+        return result
+    result["status"] = MACHINE_OK
+    return result
+
+
+def verify_machine(
+    device: DeviceToken | None, *, machine_uuid: str = "", mac_address: str = ""
+) -> dict:
+    """
+    Client ishlab turgan mashina - qurilma biriktirilgan kompyuterning
+    O'ZImi va u shu bino ro'yxatidami.
+
+    Asos - Machine UUID. MAC faqat ikki joyda: UUID'ni bir marta
+    bog'lash (yuqoridagi izoh) va UUID yubormaydigan ESKI client
+    (`basis="mac"`).
+
+    Qidiruv KO'LAMI - qurilmaning binosi: savol "shu mashina umuman
+    bazada bormi?" emas, "AYNAN SHU binoda bormi?". Boshqa binodagi
+    kompyuterning jadvali, kameralari va proktori boshqa.
 
     Javob TAVSIF, qaror emas: `allowed` ni chaqiruvchi
     (`HandshakeView`) sozlama bilan birga hisoblaydi.
     """
-    reported = normalize_mac(mac_address) or ""
+    reported_uuid = normalize_machine_uuid(machine_uuid)
+    reported_mac = normalize_mac(mac_address) or ""
     computer = device.computer if device is not None else None
     zone = computer.zone if computer is not None else None
 
     result = {
         "status": MACHINE_UNKNOWN,
-        "mac_address": reported,
+        "basis": "uuid" if reported_uuid else "mac",
+        "machine_uuid": reported_uuid,
+        "expected_uuid": (computer.machine_uuid or "") if computer is not None else "",
+        "mac_address": reported_mac,
         "expected_mac": computer.mac_address if computer is not None else "",
+        #: UUID shu tekshiruvda kompyuter yozuviga BOG'LANDI (audit uchun).
+        "bound": False,
         "zone_name": zone.name if zone is not None else "",
         "region_name": (
             zone.region.name if zone is not None and zone.region_id else ""
@@ -380,44 +509,100 @@ def verify_machine(device: DeviceToken | None, *, mac_address: str = "") -> dict
         "message": "",
     }
 
-    if not reported:
-        # Eski client MAC yubormaydi. Bu XATO EMAS: tekshiruvni
-        # majburiy qilish qarori sozlamada (`REQUIRE_MAC_MATCH`) va
-        # u yerda "noma'lum" ni qanday hisoblash ham hal qilinadi.
+    if not reported_uuid and not reported_mac:
+        # Tekshiruvni majburiy qilish qarori sozlamada
+        # (`REQUIRE_MACHINE_MATCH`) va u yerda "noma'lum" ni qanday
+        # hisoblash ham hal qilinadi.
         result["message"] = (
-            "Dastur mashinaning MAC manzilini aniqlay olmadi — tarmoq "
-            "adapteri o'chirilgan bo'lishi mumkin."
+            "Dastur mashinaning Machine UUID'ini aniqlay olmadi — dasturni "
+            "yangilang yoki administratorga murojaat qiling."
         )
         return result
 
     if computer is None:
         result["status"] = MACHINE_NO_COMPUTER
         result["message"] = (
-            "Bu qurilma hech qaysi kompyuterga biriktirilmagan — "
-            "administrator uni {} MAC manzili bilan qo'shishi kerak.".format(reported)
+            "Bu qurilma hech qaysi kompyuterga biriktirilmagan — administrator "
+            "kompyuterni {} bilan qo'shishi kerak.".format(
+                "Machine UUID {}".format(reported_uuid) if reported_uuid
+                else "{} MAC manzili".format(reported_mac)
+            )
         )
         return result
 
-    scope = "«{}» binosida".format(zone.name) if zone is not None else "bazada"
+    if not reported_uuid:
+        return _verify_by_mac(result, computer, zone, reported_mac)
 
-    if normalize_mac(computer.mac_address) == reported:
-        if not computer.is_active:
-            result["status"] = MACHINE_INACTIVE
-            result["computer_code"] = computer.inventory_code
-            result["message"] = (
-                "«{}» kompyuteri hisobdan chiqarilgan — imtihon o'tkazib "
-                "bo'lmaydi.".format(computer.label)
+    if computer.machine_uuid == reported_uuid:
+        return _matched(result, computer)
+
+    if (
+        not computer.machine_uuid
+        and reported_mac
+        and normalize_mac(computer.mac_address) == reported_mac
+        and bind_machine_uuid(computer, reported_uuid)
+    ):
+        result["bound"] = True
+        result["expected_uuid"] = reported_uuid
+        return _matched(result, computer)
+
+    # UUID mos kelmadi. Ikki holat bor va operator uchun ular
+    # BOSHQA-BOSHQA: mashina shu binoda ro'yxatda yo'q (administrator
+    # qo'shadi yoki yozuvni to'g'rilaydi) yoki ro'yxatda bor, lekin
+    # qurilma boshqa kompyuterga biriktirilgan (obraz ko'chirilgan -
+    # qurilmani qayta biriktirish kerak).
+    other = (
+        Computer.objects.alive()
+        .filter(machine_uuid=reported_uuid, zone_id=zone.pk if zone else None)
+        .first()
+    )
+    if other is not None:
+        result["status"] = MACHINE_MISMATCH
+        result["computer_code"] = other.inventory_code
+        result["message"] = (
+            "Qurilma identifikatori «{expected}» kompyuteriga biriktirilgan, "
+            "lekin dastur «{actual}» mashinasida ishlayapti. Administrator "
+            "qurilmani qayta biriktirishi kerak.".format(
+                expected=computer.label, actual=other.label,
             )
-            return result
-        result["status"] = MACHINE_OK
-        result["computer_code"] = computer.inventory_code
+        )
         return result
 
-    # MAC mos kelmadi. Ikki holat bor va operator uchun ular
-    # BOSHQA-BOSHQA: mashina umuman ro'yxatda yo'q (administrator
-    # qo'shishi kerak) yoki ro'yxatda bor, lekin qurilma boshqa
-    # kompyuterga biriktirilgan (obraz ko'chirilgan - qurilmani
-    # qayta biriktirish kerak).
+    # Xabar KUTILGAN qiymatni ham aytadi: usiz administrator "men bu
+    # mashinani qo'shganman-ku" deb qolardi va qaysi ikki qiymat farq
+    # qilayotganini topish uchun bazani qo'lda solishtirardi.
+    scope = "«{}» binosida".format(zone.name) if zone is not None else "bazada"
+    result["status"] = MACHINE_NOT_FOUND
+    if computer.machine_uuid:
+        hint = (
+            "unda {} yozilgan — administrator yozuvdagi Machine UUID'ni "
+            "to'g'rilashi kerak".format(computer.machine_uuid)
+        )
+    else:
+        hint = (
+            "unda Machine UUID yo'q va MAC ham mos kelmadi — administrator "
+            "kompyuter yozuviga shu UUID'ni kiritishi kerak"
+        )
+    result["message"] = (
+        "Bu mashinaning Machine UUID'i ({uuid}) {scope} ro'yxatdagi hech bir "
+        "kompyuterga mos kelmadi. Qurilma «{label}» kompyuteriga "
+        "biriktirilgan, {hint}.".format(
+            uuid=reported_uuid, scope=scope, label=computer.label, hint=hint,
+        )
+    )
+    return result
+
+
+def _verify_by_mac(result: dict, computer: Computer, zone, reported: str) -> dict:
+    """
+    ESKI client (UUID yubormaydi) - MAC bo'yicha, avvalgi qoida.
+
+    Yangilangan client'da bu yo'l ishlamaydi; u faqat o'rnatishlar
+    bosqichma-bosqich yangilanguncha eski nusxalarni to'xtatmaslik uchun.
+    """
+    if normalize_mac(computer.mac_address) == reported:
+        return _matched(result, computer)
+
     other = (
         Computer.objects.alive()
         .filter(mac_address__iexact=reported, zone_id=zone.pk if zone else None)
@@ -430,29 +615,18 @@ def verify_machine(device: DeviceToken | None, *, mac_address: str = "") -> dict
             "Qurilma identifikatori «{expected}» kompyuteriga biriktirilgan, "
             "lekin dastur «{actual}» mashinasida ishlayapti ({mac}). "
             "Administrator qurilmani qayta biriktirishi kerak.".format(
-                expected=computer.label,
-                actual=other.label,
-                mac=reported,
+                expected=computer.label, actual=other.label, mac=reported,
             )
         )
         return result
 
-    # Bu yerga yetib kelgan bo'lsak, qurilma kompyuterga biriktirilgan
-    # (biriktirilmagan holat yuqorida qaytarilgan) — ya'ni administrator
-    # mashinani ro'yxatga OLGAN, lekin MAC manzili boshqa. Amalda eng
-    # ko'p uchraydigan sabab shu: yozuvga xato kiritilgan yoki tarmoq
-    # kartasi almashtirilgan.
-    #
-    # Shuning uchun xabar KUTILGAN qiymatni ham aytadi. Usiz administrator
-    # "men bu mashinani qo'shganman-ku" deb qolardi va qaysi ikki qiymat
-    # farq qilayotganini topish uchun bazani qo'lda solishtirishga majbur
-    # bo'lardi.
+    scope = "«{}» binosida".format(zone.name) if zone is not None else "bazada"
     result["status"] = MACHINE_NOT_FOUND
     result["message"] = (
         "Bu mashinaning MAC manzili ({mac}) {scope} ro'yxatdagi hech bir "
         "kompyuterga mos kelmadi. Qurilma «{code}» kompyuteriga biriktirilgan "
-        "va unda {expected} yozilgan — administrator kompyuter yozuvidagi "
-        "MAC manzilini to'g'rilashi kerak.".format(
+        "va unda {expected} yozilgan. Dasturni yangilang — yangi nusxa "
+        "mashinani Machine UUID bo'yicha aniqlaydi.".format(
             mac=reported,
             scope=scope,
             code=computer.inventory_code,

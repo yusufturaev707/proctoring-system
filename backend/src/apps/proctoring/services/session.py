@@ -80,7 +80,8 @@ def _parse_dt(value):
 # 1-qadam: JSHSHIR bo'yicha talabgorni aniqlash
 # --------------------------------------------------------------------------
 def lookup_candidate(
-    *, pinfl: str, exam, device=None, zone=None, ip_address: str = "", mac_address: str = ""
+    *, pinfl: str, exam, device=None, zone=None, ip_address: str = "",
+    machine_uuid: str = "", mac_address: str = "",
 ) -> dict:
     """
     Tashqi platformadan talabgorni oladi va `Candidate` yozuvini yangilaydi.
@@ -113,7 +114,8 @@ def lookup_candidate(
     # qaysi kompyuterga borish kerakligi TUZILGAN holda keladi
     # (`WrongComputer.extra`), client uni matndan ajratmaydi.
     seat = bookings.resolve_candidate_seat(
-        schedule=schedule, pinfl=pinfl, device=device, mac_address=mac_address
+        schedule=schedule, pinfl=pinfl, device=device,
+        machine_uuid=machine_uuid, mac_address=mac_address,
     )
     # `CandidateNotFound` / `CandidateNotEligible` shu yerdan ko'tariladi
     # va ular client uchun BOSHQA-BOSHQA holat (`exam_site._normalize`).
@@ -772,6 +774,7 @@ def _create_session(
         status=ExamSession.Status.READY,
         ip_address=lan_ip or ip_address or None,
         mac_address=computer.mac_address if computer is not None else "",
+        machine_uuid=(computer.machine_uuid or "") if computer is not None else "",
         last_heartbeat_at=timezone.now(),
     )
     logger.info("Sessiya yaratildi: %s (urinish %s)", session.public_id, session.attempt_no)

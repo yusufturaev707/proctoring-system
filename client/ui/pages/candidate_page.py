@@ -543,7 +543,9 @@ class CandidatePage(QWidget):
             self._repo.lookup_candidate,
             pinfl=pinfl,
             exam_id=exam.id,
-            # Kompyuter broni shu mashina bilan solishtiriladi.
+            # Kompyuter broni shu mashina bilan solishtiriladi (asos -
+            # Machine UUID, handshake yuborgan qiymatning o'zi).
+            machine_uuid=self._state.machine.get("machine_uuid", ""),
             mac_address=self._state.machine.get("mac", ""),
             parent=self,
         )

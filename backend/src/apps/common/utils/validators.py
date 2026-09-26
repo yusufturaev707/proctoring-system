@@ -39,3 +39,56 @@ def normalize_mac(value: str | None) -> str | None:
         return None
     cleaned = str(value).replace("-", ":").upper().strip()
     return cleaned if MAC_RE.match(cleaned) else None
+
+
+# --------------------------------------------------------------------------
+# Machine UUID (SMBIOS) - kompyuterning ASOSIY identifikatori
+# --------------------------------------------------------------------------
+# Qoidalar client bilan AYNAN bir xil (`client/services/system_info.py:
+# normalize_machine_uuid`): ikki tomonda ikki xil qoida bo'lsa, client
+# "yaroqli" deb yuborgan qiymat serverda 400 olardi yoki teskarisi.
+MACHINE_UUID_RE = re.compile(
+    r"^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$"
+)
+
+#: Ishlab chiqaruvchi to'ldirmagan "UUID"lar - ko'p mashinada BIR XIL
+#: (arzon ona platalar, "To Be Filled By O.E.M."). Ularni qabul qilish
+#: o'nlab kompyuterni bitta mashina qilib qo'yardi.
+PLACEHOLDER_MACHINE_UUIDS = frozenset({
+    "00000000-0000-0000-0000-000000000000",
+    "FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF",
+    "03000200-0400-0500-0006-000700080009",
+    "00020003-0004-0005-0006-000700080009",
+    "12345678-1234-5678-90AB-CDDEEFAABBCC",
+    "01234567-89AB-CDEF-0123-456789ABCDEF",
+})
+
+
+def normalize_machine_uuid(value) -> str:
+    """
+    Kanonik shakl (`XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX`, katta harf)
+    yoki bo'sh satr (yaroqsiz).
+
+    Katta harf SHART: `wmic`, PowerShell va SMBIOS o'quvchimiz katta
+    harf beradi, Excel'ga esa kimdir kichik harf bilan yozadi - bazada
+    ikki xil yozuv bitta mashinani ikkita qilardi (unikal cheklov ham
+    ularni ajratmasdi).
+    """
+    text = str(value or "").strip().strip("{}").strip().upper()
+    if not MACHINE_UUID_RE.match(text):
+        return ""
+    if text in PLACEHOLDER_MACHINE_UUIDS:
+        return ""
+    if len(set(text.replace("-", ""))) < 3:
+        return ""
+    return text
+
+
+def machine_uuid_validator(value) -> None:
+    if value in (None, ""):
+        return
+    if not normalize_machine_uuid(value):
+        raise ValidationError(
+            "Machine UUID noto'g'ri yoki to'ldirilmagan (XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX)",
+            code="invalid_machine_uuid",
+        )

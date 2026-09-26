@@ -15,7 +15,7 @@ from apps.controls.models import (
 
 @admin.register(Setting)
 class SettingAdmin(admin.ModelAdmin):
-    list_display = ("name", "is_active", "faceid_interval", "screenshot_interval")
+    list_display = ("name", "is_active", "faceid_interval", "is_screenshot_upload")
     list_filter = ("is_active",)
     filter_horizontal = ("detect_classes", "rdp_objects", "hotkeys")
     # Panel sahifasi (`Settings.jsx`) bilan BIR XIL guruhlash: bitta
@@ -49,8 +49,7 @@ class SettingAdmin(admin.ModelAdmin):
             "Skrinshot",
             {
                 "fields": (
-                    "screenshot_interval", "screenshot_quality", "screenshot_max_width",
-                    "screenshot_dedup_threshold",
+                    "is_screenshot_upload", "screenshot_quality", "screenshot_max_width",
                     "is_screenshot_camera_overlay", "screenshot_pip_percent",
                 )
             },

@@ -223,6 +223,9 @@ const MODULE_LABEL = {
   objects: 'obyekt',
   pose: 'poza',
   gaze: 'nigoh',
+  // Klaviatura qulfi (client `lockdown`): yopishgan tugma yoki Windows
+  // olib tashlagan hook — talabgorning harakati emas.
+  keyboard: 'klaviatura qulfi',
 }
 
 /** Client yuboradigan sabab kodlari — o'qiladigan matnga. */
@@ -232,6 +235,9 @@ const ANOMALY_KIND = {
   fingerprint_changed: 'apparat izi o‘zgargan',
   fingerprint_shared: 'bir apparatda bir necha qurilma',
   download: 'yuklab olishga urinish',
+  stuck_key: 'tugma yopishib qolgan — qo‘yib yuborildi',
+  hook_restored: 'Windows o‘chirgan qulf qayta o‘rnatildi',
+  hook_lost: 'qulf ishlamayapti',
 }
 
 /**

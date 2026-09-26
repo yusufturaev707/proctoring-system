@@ -69,7 +69,7 @@ class ExamSessionViewSet(PermissionRequiredMixin, viewsets.ReadOnlyModelViewSet)
     filterset_fields = [
         "status", "exam", "zone", "zone__region", "exam_date", "computer", "pinfl",
     ]
-    search_fields = ["ip_address", "mac_address", "pinfl", "last_name", "first_name"]
+    search_fields = ["ip_address", "mac_address", "machine_uuid", "pinfl", "last_name", "first_name"]
     ordering_fields = ["risk_score", "started_at", "created_at", "last_heartbeat_at"]
 
     def get_serializer_class(self):

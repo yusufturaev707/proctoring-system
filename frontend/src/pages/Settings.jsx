@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  Alert, Autocomplete, Box, Button, Card, CardContent, CardHeader, Checkbox, Chip,
+  Alert, Autocomplete, Box, Button, ButtonBase, Card, CardContent, CardHeader, Checkbox, Chip,
   CircularProgress, Dialog, DialogActions, DialogContent, DialogTitle,
-  Divider, Fab, FormControlLabel, Grid, MenuItem, Slider, Stack, Switch, Tab, Tabs,
+  Divider, Fab, FormControlLabel, Grid, MenuItem, Radio, Slider, Stack, Switch, Tab, Tabs,
   TextField, Tooltip, Typography,
 } from '@mui/material'
 import SaveIcon from '@mui/icons-material/SaveOutlined'
@@ -15,6 +15,8 @@ import CameraIcon from '@mui/icons-material/PhotoCameraOutlined'
 import ShieldIcon from '@mui/icons-material/PolicyOutlined'
 import RouterIcon from '@mui/icons-material/RouterOutlined'
 import CheckBoxIcon from '@mui/icons-material/CheckBox'
+import ComputerOutlinedIcon from '@mui/icons-material/DesktopWindowsOutlined'
+import CloudUploadOutlinedIcon from '@mui/icons-material/CloudUploadOutlined'
 import CheckBoxBlankIcon from '@mui/icons-material/CheckBoxOutlineBlank'
 
 import { listAll } from '../components/data/useResource'
@@ -240,18 +242,18 @@ export default function Settings() {
   // `stripReadOnly` uni yubormaydi.
   const setIds = (name) => (ids) => setForm((prev) => ({ ...prev, [name]: ids }))
 
-  // 10 000 talaba uchun taxminiy yuklama — admin qarorining narxini ko'rsatadi.
-  const estimatedRps = form.screenshot_interval ? Math.round(10000 / form.screenshot_interval) : 0
   // Bitta kadr hajmi O'LCHANGAN jadvaldan (1920 px ekran, optimallashtirilgan
   // progressiv JPEG): 1920/80 ~157 KB, sifatning har birligi ~4.9 KB,
-  // kenglik bo'yicha ~1.5-daraja (960 px da 0.35 barobar). Dedupsiz —
-  // eng yomon holat.
+  // kenglik bo'yicha ~1.5-daraja (960 px da 0.35 barobar).
   const shotKb = Math.max(
     10,
     (157 + ((form.screenshot_quality || 80) - 80) * 4.9) *
       (Math.min(form.screenshot_max_width || 1920, 1920) / 1920) ** 1.5,
   )
-  const estimatedMbps = Math.round((estimatedRps * shotKb) / 1024)
+  // Skrinshot BUYRUQ bilan — har belgilangan javobga bitta kadr (taymer
+  // yo'q). Hajm shuning uchun "bitta talabgor, 100 ta javob" da: interval
+  // endi yo'q va sekundlik yuklama savol soniga bog'liq.
+  const perCandidateMb = Math.round((100 * shotKb) / 1024)
   // Ekran yozuvi hajmi O'LCHANGAN jadvaldan (mp4v, 3 soat): 1600 px @ 5 FPS
   // ~550 MB, 1280 @ 5 ~470, 1280 @ 1 ~110, 1280 @ 8 ~730. FPS bo'yicha
   // ~0.9-daraja, kenglik bo'yicha ~0.7-daraja. Fayl MASHINADA qoladi -
@@ -422,9 +424,11 @@ export default function Settings() {
       </Card>
 
       <Alert severity="info" sx={{ mb: 2.5 }}>
-        Joriy sozlamalarda 10 000 talaba uchun taxminiy yuklama:
-        <strong> ~{estimatedRps} skrinshot/sek</strong>, <strong>~{estimatedMbps} MB/s</strong> trafik.
-        Skrinshot binary’si backenddan o‘tmaydi — u to‘g‘ridan-to‘g‘ri object storage’ga ketadi.
+        Skrinshot talabgor <strong>javob belgilaganda</strong> olinadi (test platformasi buyrug‘i).
+        100 ta javobli testda bitta talabgorga ~<strong>{perCandidateMb} MB</strong>
+        {form.is_screenshot_upload
+          ? ' — mashinada saqlanadi va fonda serverga yuboriladi.'
+          : ' — faqat client mashinasida saqlanadi, serverga yuborilmaydi.'}
       </Alert>
 
       <Card>
@@ -544,11 +548,28 @@ export default function Settings() {
           {tab === 1 && (
             <Grid container spacing={{ xs: 1.5, sm: 3 }}>
               <Grid item xs={12} md={6}>
-                <Section title="Olish chastotasi">
-                  <TextField
-                    label="Interval (soniya)" type="number" value={form.screenshot_interval}
-                    onChange={setNumber('screenshot_interval')} disabled={!canManage}
-                    helperText={`10 000 talabada ~${estimatedRps} yuklash/sekund`}
+                {/* Skrinshot TAYMERSIZ: test platformasi javob belgilanganda
+                    client'ning lokal xizmatiga buyruq yuboradi
+                    (`client/services/local_service.py`). Kadr mashinada
+                    HAR DOIM qoladi — tanlov faqat serverga yuborish. */}
+                <Section title="Saqlash joyi">
+                  <Typography variant="body2" color="text.secondary">
+                    Kadr javob belgilangan lahzada olinadi va client mashinasida har doim saqlanadi.
+                  </Typography>
+                  <ChoiceCards
+                    value={form.is_screenshot_upload ? 'server' : 'local'}
+                    disabled={!canManage}
+                    onChange={(value) => setForm((prev) => ({ ...prev, is_screenshot_upload: value === 'server' }))}
+                    options={[
+                      {
+                        value: 'local', icon: <ComputerOutlinedIcon />, title: 'Faqat mashinada',
+                        text: 'Serverga trafik yo‘q. Proktor skrinshotni panelda ko‘rmaydi — komissiya uni mashinadan oladi.',
+                      },
+                      {
+                        value: 'server', icon: <CloudUploadOutlinedIcon />, title: 'Mashinada + serverga',
+                        text: 'Fonda, imtihonga xalaqit bermasdan yuboriladi. Proktor panelda real vaqtda ko‘radi.',
+                      },
+                    ]}
                   />
                 </Section>
               </Grid>
@@ -559,11 +580,6 @@ export default function Settings() {
                     label="Maksimal kenglik (px)" type="number" value={form.screenshot_max_width}
                     onChange={setNumber('screenshot_max_width')} disabled={!canManage}
                     helperText={`Kadr ~${Math.round(shotKb)} KB. 1920 — ekrandagidek; 1280 dan kichigida test matni o‘qilmay qoladi.`}
-                  />
-                  <TextField
-                    label="Dedup chegarasi" type="number" value={form.screenshot_dedup_threshold}
-                    onChange={setNumber('screenshot_dedup_threshold')} disabled={!canManage}
-                    helperText="Kadr oldingisidan shu darajadan kam farq qilsa — yuborilmaydi. Trafikni ~10x kamaytiradi."
                   />
                 </Section>
               </Grid>
@@ -952,6 +968,56 @@ function Section({ title, children }) {
         <Stack spacing={2}>{children}</Stack>
       </CardContent>
     </Card>
+  )
+}
+
+/**
+ * MD3 tanlov kartalari (radio) — ikki-uch variantli qaror uchun.
+ *
+ * Kalit (Switch) o'rniga: "serverga yuborishni o'chirish" nimani
+ * anglatishi (skrinshot yo'qoladimi?) kalit yonidagi matndan
+ * tushunilmaydi, karta esa har variantning oqibatini yonma-yon aytadi.
+ */
+function ChoiceCards({ value, options, onChange, disabled }) {
+  return (
+    <Stack spacing={1} role="radiogroup">
+      {options.map((option) => {
+        const selected = option.value === value
+        return (
+          <ButtonBase
+            key={option.value}
+            role="radio"
+            aria-checked={selected}
+            disabled={disabled}
+            onClick={() => onChange(option.value)}
+            sx={{
+              display: 'flex', alignItems: 'flex-start', gap: 1.5, p: 1.5, width: '100%',
+              textAlign: 'left', borderRadius: '16px', border: 1,
+              borderColor: selected ? 'primary.main' : 'divider',
+              bgcolor: selected ? 'm3.secondaryContainer' : 'transparent',
+              transition: (theme) => theme.transitions.create(['background-color', 'border-color'], { duration: 150 }),
+              '&:hover': { bgcolor: selected ? 'm3.secondaryContainer' : 'action.hover' },
+              opacity: disabled ? 0.6 : 1,
+            }}
+          >
+            <Box
+              sx={{
+                width: 40, height: 40, borderRadius: '12px', flexShrink: 0, display: 'grid', placeItems: 'center',
+                bgcolor: selected ? 'primary.main' : 'm3.surfaceContainerHigh',
+                color: selected ? 'primary.contrastText' : 'text.secondary',
+              }}
+            >
+              {option.icon}
+            </Box>
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <Typography variant="subtitle2" fontWeight={700}>{option.title}</Typography>
+              <Typography variant="body2" color="text.secondary">{option.text}</Typography>
+            </Box>
+            <Radio checked={selected} size="small" tabIndex={-1} sx={{ mt: -0.5, mr: -0.5 }} />
+          </ButtonBase>
+        )
+      })}
+    </Stack>
   )
 }
 

@@ -39,7 +39,7 @@ from datetime import datetime
 from datetime import timezone as dt_timezone
 
 from django.conf import settings
-from django.db import DatabaseError
+from django.db import DatabaseError, IntegrityError, transaction
 from django.http import HttpResponseBase
 from PIL import Image
 
@@ -69,12 +69,21 @@ __all__ = ["screenshot_store", "screenshot_response", "screenshot_delete"]
 # --------------------------------------------------------------------------
 # Yozish
 # --------------------------------------------------------------------------
-def screenshot_store(*, session, upload, captured_at: datetime) -> ProctoringScreenshot:
+def screenshot_store(*, session, upload, captured_at: datetime,
+                     question_id: str = "", question_number=None) -> ProctoringScreenshot:
     """
     Yuklangan faylni tekshiradi, diskka yozadi va metadata qatorini yaratadi.
 
     `upload` — `UploadedFile` (DRF `FileField`).
+
+    SAVOL KADRI (`question_id`) — sessiyada savolga BITTA qator: talabgor
+    javobni o'zgartirsa mavjud qator YANGILANADI (`_replace_question_shot`).
     """
+    if question_id:
+        return _replace_question_shot(
+            session=session, upload=upload, captured_at=captured_at,
+            question_id=question_id, question_number=question_number,
+        )
     data = _read_upload(upload)
     _image_format, mime_type, extension, dimensions = _detect_image(data)
     content_hash = hashlib.sha256(data).hexdigest()
@@ -139,6 +148,102 @@ def screenshot_store(*, session, upload, captured_at: datetime) -> ProctoringScr
         session.pk, relative_path, dimensions[0], dimensions[1], len(data),
     )
     return screenshot
+
+
+def _replace_question_shot(*, session, upload, captured_at, question_id, question_number):
+    """
+    Savol kadrini YANGILASH: yangi fayl -> qator almashadi -> eski fayl.
+
+    Tartib fayl tizimi qoidalariga mos ("avval fayl, keyin qator"; eski
+    fayl FAQAT qator yangi faylga o'tgach, tranzaksiya tasdiqlangandan
+    keyin o'chiriladi). Qator yangilanmasa yangi fayl o'chiriladi va eski
+    dalil joyida qoladi - hech qaysi holatda qatorsiz fayl yoki faylsiz
+    qator qolmaydi.
+
+    ESKI KADR YANGISINI BOSMAYDI: client navbati tartibli, lekin qayta
+    urinish yoki ikki yo'l (S3 -> fayl tizimi) aralashsa kechroq kelgan
+    ESKIROQ kadr oxirgi javobni o'chirib yubormasligi kerak.
+    """
+    data = _read_upload(upload)
+    _image_format, mime_type, extension, _dimensions = _detect_image(data)
+    content_hash = hashlib.sha256(data).hexdigest()
+    captured_at, _original = ingest.clamp_time(captured_at)
+    storage = get_screenshot_storage()
+
+    for attempt in range(2):
+        existing = (
+            ProctoringScreenshot.objects.filter(session=session, question_id=question_id)
+            .only("id", "captured_at").first()
+        )
+        if existing is not None and existing.captured_at >= captured_at:
+            logger.debug("Eskiroq savol kadri o'tkazildi: session=%s q=%s", session.pk, question_id)
+            return ProctoringScreenshot.objects.get(pk=existing.pk)
+
+        relative_path, seq = _save_unique(storage, session, captured_at, extension, data)
+        try:
+            with transaction.atomic():
+                row = (
+                    ProctoringScreenshot.objects.select_for_update()
+                    .filter(session=session, question_id=question_id).first()
+                )
+                if row is None:
+                    row = ProctoringScreenshot.objects.create(
+                        session=session, file_path=relative_path, content_hash=content_hash,
+                        file_size=len(data), mime_type=mime_type, seq=seq,
+                        captured_at=captured_at, question_id=question_id,
+                        question_number=question_number,
+                    )
+                    old_path = ""
+                elif row.captured_at >= captured_at:
+                    # Parallel so'rov bizdan yangiroq kadrni yozib ulgurdi.
+                    storage.delete(relative_path)
+                    return row
+                else:
+                    old_path = row.file_path
+                    row.file_path = relative_path
+                    row.content_hash = content_hash
+                    row.file_size = len(data)
+                    row.mime_type = mime_type
+                    row.seq = seq
+                    row.captured_at = captured_at
+                    row.question_number = question_number or row.question_number
+                    row.save(update_fields=[
+                        "file_path", "content_hash", "file_size", "mime_type",
+                        "seq", "captured_at", "question_number",
+                    ])
+                if old_path:
+                    transaction.on_commit(lambda path=old_path: storage.delete(path))
+        except IntegrityError:
+            # Ikki parallel `create` - ikkinchisi yangilash sifatida qaytadan.
+            storage.delete(relative_path)
+            if attempt:
+                raise ScreenshotStoreFailed()
+            continue
+        except DatabaseError:
+            storage.delete(relative_path)
+            raise
+        ingest.check_frozen_frames(session, content_hash, question_id=question_id)
+        return row
+    raise ScreenshotStoreFailed()
+
+
+def _save_unique(storage, session, captured_at, extension, data) -> tuple[str, int]:
+    """Faylni bo'sh nom bilan yozadi (`seq` to'qnashuvda oshadi)."""
+    seq = _next_seq(session)
+    for _attempt in range(_MAX_PATH_ATTEMPTS):
+        relative_path = _build_relative_path(
+            exam_id=session.exam_id, session_id=session.pk,
+            captured_at=captured_at, seq=seq, extension=extension,
+        )
+        try:
+            storage.save(relative_path, data)
+            return relative_path, seq
+        except ScreenshotAlreadyExists:
+            seq += 1
+        except OSError as exc:
+            logger.error("Skrinshot diskka yozilmadi (%s): %s", relative_path, exc)
+            raise ScreenshotStoreFailed() from exc
+    raise ScreenshotStoreFailed()
 
 
 def screenshot_delete(screenshot: ProctoringScreenshot) -> bool:

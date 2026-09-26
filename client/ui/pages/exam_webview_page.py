@@ -94,18 +94,29 @@ class DomainAllowlistInterceptor(QWebEngineUrlRequestInterceptor):
     backendda ham "tekshiruv o'chirilgan" degani.
     """
 
-    def __init__(self, allowed: list, on_blocked=None) -> None:
+    def __init__(self, allowed: list, on_blocked=None, local_port: int = 0) -> None:
         super().__init__()
         self._allowed = [domain.lower().strip() for domain in allowed if domain]
         self._on_blocked = on_blocked
+        self._local_port = local_port
 
     def interceptRequest(self, info) -> None:
         if not self._allowed:
             return
-        host = (info.requestUrl().host() or "").lower()
+        url = info.requestUrl()
+        host = (url.host() or "").lower()
         if not host:
             # `data:`, `blob:`, `about:` - host yo'q. Ular sahifaning o'z
             # ichki resurslari, tashqi manzil emas.
+            return
+        # LOKAL XIZMAT (`services/local_service.py`): platforma frontendi
+        # `device_info` va skrinshot buyrug'ini shu yerga yuboradi. Faqat
+        # AYNAN o'sha port - loopback'dagi boshqa xizmatlar yopiq qoladi.
+        if (
+            self._local_port
+            and host in ("localhost", "127.0.0.1", "::1")
+            and url.port() == self._local_port
+        ):
             return
         for domain in self._allowed:
             if host == domain or host.endswith("." + domain):
@@ -152,7 +163,8 @@ class ExamWebViewPage(QWidget):
     # urinishi mumkin, sessiya esa o'z o'rnida qoladi.
     session_blocked = pyqtSignal(str, str)  # (kod, xabar)
 
-    def __init__(self, state: AppState, repo: ProctoringRepository, parent=None) -> None:
+    def __init__(self, state: AppState, repo: ProctoringRepository, parent=None,
+                 local_service=None) -> None:
         super().__init__(parent)
         self._state = state
         self._repo = repo
@@ -173,6 +185,11 @@ class ExamWebViewPage(QWidget):
         self._screenshots = ScreenshotService(repo, parent=self)
         self._screenshots.sent.connect(self._on_screenshot_sent)
         self._screenshots.failed.connect(self._on_screenshot_failed)
+        # Skrinshot BUYRUQ bilan: test platformasi javob belgilanganda
+        # lokal xizmatga yuboradi (`services/screen_capture.py`).
+        self._local_service = local_service
+        if local_service is not None:
+            local_service.capture_requested.connect(self._screenshots.request_capture)
 
         # Proktor buyruqlari. Bu TEZLIK qatlami: u uzilsa ham imtihon
         # to'xtamaydi va sessiyaning yakunlangani heartbeat orqali
@@ -576,6 +593,8 @@ class ExamWebViewPage(QWidget):
         ularning tartibi kafolatlanmagan.
         """
         self._capture_deadline.stop()
+        if self._local_service is not None:
+            self._local_service.set_capture_target(False)
         self._screenshots.stop()
         self._supervisor.set_capture_enabled(False)
         result = self._recorder.stop()
@@ -760,11 +779,16 @@ class ExamWebViewPage(QWidget):
             runtime_settings.get(self._state.config, "face.interval")
         )
         self._face_timer.start()
-        # Sozlama handshake'dan keladi: interval, sifat, kenglik va
-        # dedup chegarasi imtihonga biriktirilgan profilga bog'liq.
-        self._screenshots.start(
+        # Sozlama imtihon profilidan: sifat, kenglik, serverga yuborish.
+        # Kadr bu yerda OLINMAYDI - faqat platforma buyrug'i bilan.
+        if self._screenshots.start(
             self._state.config, camera_provider=self._screenshot_cameras
-        )
+        ) and self._local_service is not None:
+            # Origin qoidasi WebView allowlist'i bilan BIR XIL (`policy`
+            # yuqorida, `webview_policy`).
+            self._local_service.set_capture_target(
+                True, policy.get("allowed_domains") or []
+            )
         self._start_recording()
 
         session = self._state.session
@@ -778,6 +802,7 @@ class ExamWebViewPage(QWidget):
         # qulflashning o'zi dastur bo'yicha ishlaydi (login sahifasida
         # ham), lekin hodisa yozadigan sessiya faqat shu yerda bor.
         lockdown.set_observer(self._watcher.report_blocked_key)
+        lockdown.set_issue_observer(self._watcher.report_keyboard_issue)
 
     def _configure_profile(self, policy: dict) -> None:
         """
@@ -794,7 +819,10 @@ class ExamWebViewPage(QWidget):
         )
 
         allowed = policy.get("allowed_domains") or []
-        self._interceptor = DomainAllowlistInterceptor(allowed, self._on_blocked_host)
+        self._interceptor = DomainAllowlistInterceptor(
+            allowed, self._on_blocked_host,
+            local_port=self._local_service.port if self._local_service is not None else 0,
+        )
         profile.setUrlRequestInterceptor(self._interceptor)
 
         if policy.get("block_downloads", True):
@@ -865,6 +893,18 @@ class ExamWebViewPage(QWidget):
     def _on_device_event(self, event_type: str, severity: int, payload: dict) -> None:
         """Kuzatuvchi chiqargan hodisani buferga qo'yadi."""
         self._monitor.push_event(event_type, severity=severity, payload=payload)
+        if (event_type == "proctoring_degraded" and payload.get("module") == "keyboard"
+                and payload.get("reason") == "stuck_key"):
+            # Talabgor sababni bilishi kerak: tugma qo'yib yuborilgunga
+            # qadar u yoza olmagan (har harf Alt+harf edi) va buni
+            # "dastur qotdi" deb o'ylashi mumkin.
+            self.message.show_message(
+                "«{}» tugmasi yopishib qolgan edi - dastur uni qo'yib yubordi. "
+                "Yozish davom etadi; klaviaturani operatorga ko'rsating.".format(
+                    str(payload.get("key") or "").title()
+                ),
+                "warning",
+            )
 
     def _attach_camera(self, camera: Optional[CameraWorker]) -> None:
         """4-sahifadan kelgan kamerani davriy tekshiruvga ulaydi."""
@@ -1467,6 +1507,7 @@ class ExamWebViewPage(QWidget):
         # Observer kuzatuvchidan OLDIN olib tashlanadi: hook thread'i
         # to'xtagan obyektga hodisa yuborib qolmasin.
         lockdown.set_observer(None)
+        lockdown.set_issue_observer(None)
         self._watcher.stop()
         # Skrinshot xizmati sessiya tokeni bekor qilinishidan OLDIN
         # to'xtatiladi: u yakunda qolgan kadrlarni va commit'larni

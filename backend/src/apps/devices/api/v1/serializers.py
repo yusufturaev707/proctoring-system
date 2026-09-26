@@ -2,6 +2,12 @@ from rest_framework import serializers
 from rest_framework.validators import UniqueValidator
 
 from apps.common.region_scope import ensure_in_region, zone_region
+from apps.common.utils.validators import (
+    mac_address_validator,
+    machine_uuid_validator,
+    normalize_mac,
+    normalize_machine_uuid,
+)
 from apps.devices import services
 from apps.devices.models import Camera, Computer, DeviceToken
 
@@ -12,8 +18,9 @@ from apps.devices.models import Camera, Computer, DeviceToken
 _alive_camera_mac = UniqueValidator(
     queryset=Camera.objects.alive(), message="Bunday MAC manzilli kamera allaqachon mavjud"
 )
-_alive_computer_mac = UniqueValidator(
-    queryset=Computer.objects.alive(), message="Bunday MAC manzilli kompyuter allaqachon mavjud"
+_alive_computer_uuid = UniqueValidator(
+    queryset=Computer.objects.alive(),
+    message="Bunday Machine UUID li kompyuter allaqachon mavjud",
 )
 _alive_computer_code = UniqueValidator(
     queryset=Computer.objects.alive(), message="Bunday inventar kodi allaqachon ishlatilgan"
@@ -92,7 +99,19 @@ class ComputerSerializer(serializers.ModelSerializer):
     cameras_detail = serializers.SerializerMethodField()
     active_session_id = serializers.IntegerField(read_only=True, required=False)
     inventory_code = serializers.CharField(max_length=50, validators=[_alive_computer_code])
-    mac_address = serializers.CharField(max_length=17, validators=[_alive_computer_mac])
+    #: ASOSIY identifikator (SMBIOS UUID). Yangi kompyuterda MAJBURIY
+    #: (`validate`); UUID'dan oldingi yozuvni tahrirlashda bo'sh qolishi
+    #: mumkin - u birinchi handshake'da MAC orqali bog'lanadi.
+    machine_uuid = serializers.CharField(
+        max_length=64, required=False, allow_blank=True, allow_null=True,
+        validators=[machine_uuid_validator],
+    )
+    #: Ikkilamchi, ixtiyoriy. Unikallik `validate_mac_address` da: bo'sh
+    #: qiymatlar bir-biriga to'qnashmasligi kerak, `UniqueValidator` esa
+    #: bo'sh satrni ham solishtirardi.
+    mac_address = serializers.CharField(
+        max_length=17, required=False, allow_blank=True, validators=[mac_address_validator]
+    )
     # Raqam IXTIYORIY va `0` QABUL QILINMAYDI: "0-kompyuter" degan
     # o'rin bo'lmaydi va bo'sh maydon o'rniga tushgan nol jimgina
     # yolg'on raqam yaratardi.
@@ -109,7 +128,7 @@ class ComputerSerializer(serializers.ModelSerializer):
         fields = (
             "id", "zone", "zone_name", "region", "region_name", "number",
             "inventory_code", "label",
-            "ip_address", "mac_address", "info_pc", "cameras", "cameras_detail",
+            "machine_uuid", "ip_address", "mac_address", "info_pc", "cameras", "cameras_detail",
             "status", "last_seen_at", "is_active", "active_session_id", "created_at",
             "deleted_at",
         )
@@ -131,6 +150,33 @@ class ComputerSerializer(serializers.ModelSerializer):
         return CameraSerializer(
             self._alive_cameras(obj), many=True, context=self.context
         ).data
+
+    def _alive_others(self):
+        queryset = Computer.objects.alive()
+        if self.instance is not None:
+            queryset = queryset.exclude(pk=self.instance.pk)
+        return queryset
+
+    def validate_machine_uuid(self, value):
+        """
+        Kanonik shakl (katta harf) va tirik yozuvlar orasida unikallik.
+
+        Kanonik shaklga keltirish SHART: client katta harf yuboradi,
+        administrator esa kichik harf bilan ko'chirib qo'yishi mumkin -
+        bazada ikki xil yozuv mashinani "ro'yxatda yo'q" qilardi.
+        """
+        value = normalize_machine_uuid(value)
+        if not value:
+            return None
+        if self._alive_others().filter(machine_uuid=value).exists():
+            raise serializers.ValidationError("Bunday Machine UUID li kompyuter allaqachon mavjud")
+        return value
+
+    def validate_mac_address(self, value):
+        value = normalize_mac(value) or ""
+        if value and self._alive_others().filter(mac_address=value).exists():
+            raise serializers.ValidationError("Bunday MAC manzilli kompyuter allaqachon mavjud")
+        return value
 
     def to_representation(self, instance):
         # `cameras` ham, `cameras_detail` ham bir xil ro'yxatni ko'rsatishi
@@ -157,6 +203,22 @@ class ComputerSerializer(serializers.ModelSerializer):
             self, attrs, "zone", region_of=zone_region,
             message="Kompyuterni faqat o'z viloyatingiz binosiga qo'sha olasiz",
         )
+        # Yangi kompyuter UUID'siz bo'lmaydi: u ASOSIY identifikator va
+        # usiz mashina tekshiruvi hech qachon "ok" bermasdi (MAC orqali
+        # bog'lash faqat eski yozuvlar uchun).
+        if self.instance is None and not attrs.get("machine_uuid"):
+            raise serializers.ValidationError(
+                {"machine_uuid": "Machine UUID kiritilishi shart (wmic csproduct get uuid)"}
+            )
+        if (
+            self.instance is not None
+            and "machine_uuid" in attrs
+            and not attrs["machine_uuid"]
+            and self.instance.machine_uuid
+        ):
+            raise serializers.ValidationError(
+                {"machine_uuid": "Machine UUID ni o'chirib bo'lmaydi — to'g'ri qiymatga almashtiring"}
+            )
         zone = attrs.get("zone") or getattr(self.instance, "zone", None)
         cameras = attrs.get("cameras")
 
@@ -205,6 +267,11 @@ class DeviceTokenSerializer(serializers.ModelSerializer):
         source="computer.zone.region.name", read_only=True, default=""
     )
     computer_status = serializers.CharField(source="computer.status", read_only=True, default="")
+    #: Kompyuter yozuvidagi (administrator kiritgan) UUID - client
+    #: aytgan `reported_machine_uuid` bilan yonma-yon ko'rsatiladi.
+    computer_machine_uuid = serializers.CharField(
+        source="computer.machine_uuid", read_only=True, default=""
+    )
     is_online = serializers.SerializerMethodField()
     #: Client'ga kirgan xodim (Redis'dagi presence yozuvidan).
     online_staff = serializers.SerializerMethodField()
@@ -218,6 +285,7 @@ class DeviceTokenSerializer(serializers.ModelSerializer):
             "hardware_fingerprint", "app_version", "app_hash", "status",
             "computer_status", "is_online", "online_staff", "online_state",
             "last_used_at", "last_ip", "reported_public_ip", "reported_lan_ip",
+            "reported_machine_uuid", "computer_machine_uuid",
             "gpu_name", "performance_profile",
             "revoked_at", "revoke_reason", "created_at",
         )
@@ -238,8 +306,8 @@ class DeviceTokenSerializer(serializers.ModelSerializer):
         """
         Qayta biriktirish — obraz ko'chirilgan mashinaning TUZATISHI.
 
-        `verify_machine` `mismatch` desa (client aytgan MAC boshqa
-        kompyuterniki), administrator qurilmani to'g'ri kompyuterga
+        `verify_machine` `mismatch` desa (client aytgan Machine UUID
+        boshqa kompyuterniki), administrator qurilmani to'g'ri kompyuterga
         o'tkazadi. Ikki chegara: hisobdan chiqarilgan mashinaga
         biriktirib bo'lmaydi va viloyat administratori qurilmani boshqa
         viloyatning kompyuteriga "olib keta" olmaydi — aks holda
@@ -283,6 +351,10 @@ class DeviceRegisterSerializer(serializers.Serializer):
     """Client birinchi marta ro'yxatdan o'tishi."""
 
     inventory_code = serializers.CharField(max_length=50, required=False, allow_blank=True)
+    #: Asosiy belgi (`resolve_computer` birinchi shu bo'yicha qidiradi).
+    machine_uuid = serializers.CharField(
+        max_length=64, required=False, allow_blank=True, validators=[machine_uuid_validator]
+    )
     mac_address = serializers.CharField(max_length=17, required=False, allow_blank=True)
     ip_address = serializers.IPAddressField(required=False, allow_blank=True)
     # Client o'zi aniqlagan tashqi manzil. Ixtiyoriy: internet bo'lmasa
@@ -294,8 +366,12 @@ class DeviceRegisterSerializer(serializers.Serializer):
     info_pc = serializers.JSONField(required=False)
 
     def validate(self, attrs):
-        if not any([attrs.get("inventory_code"), attrs.get("mac_address"), attrs.get("ip_address")]):
+        attrs["machine_uuid"] = normalize_machine_uuid(attrs.get("machine_uuid"))
+        if not any([
+            attrs.get("machine_uuid"), attrs.get("inventory_code"),
+            attrs.get("mac_address"), attrs.get("ip_address"),
+        ]):
             raise serializers.ValidationError(
-                "inventory_code, mac_address yoki ip_address dan kamida bittasi kerak"
+                "machine_uuid, inventory_code, mac_address yoki ip_address dan kamida bittasi kerak"
             )
         return attrs

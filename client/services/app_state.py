@@ -79,7 +79,7 @@ class DeviceInfo:
     zone_name: str = ""
     cameras: list = field(default_factory=list)
     #: Server baholagan mashina tekshiruvi (`machine` bloki):
-    #: `status`, `allowed`, `message`, `expected_mac`.
+    #: `status`, `allowed`, `message`, `basis` (`uuid`/`mac`), `expected_uuid`.
     #:
     #: Bo'sh lug'at - eski server yoki handshake bajarilmagan. U
     #: holda tekshiruv O'TKAZILGAN deb hisoblanadi: client tomonda

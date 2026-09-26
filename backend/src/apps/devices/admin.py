@@ -5,9 +5,9 @@ from apps.devices.models import Camera, Computer, DeviceToken
 
 @admin.register(Computer)
 class ComputerAdmin(admin.ModelAdmin):
-    list_display = ("number", "inventory_code", "zone", "ip_address", "mac_address", "status", "last_seen_at")
+    list_display = ("number", "inventory_code", "zone", "machine_uuid", "ip_address", "mac_address", "status", "last_seen_at")
     list_filter = ("status", "zone__region", "is_active")
-    search_fields = ("number", "inventory_code", "ip_address", "mac_address")
+    search_fields = ("number", "inventory_code", "machine_uuid", "ip_address", "mac_address")
     list_select_related = ("zone", "zone__region")
     filter_horizontal = ("cameras",)
 

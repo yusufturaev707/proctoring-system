@@ -6,7 +6,8 @@ Ustunlar (nomdagi qavs ichi e'tiborsiz qoldiriladi -
 
     dtm_id          viloyat (`Region.dtm_id`)          majburiy
     zone_number     bino (`Zone.number`, o'sha viloyatda) majburiy
-    mac_address     mashina                            majburiy
+    machine_uuid    mashina (SMBIOS UUID) - ASOSIY      majburiy
+    mac_address     tarmoq kartasi                     ixtiyoriy
     number          xonadagi tartib raqami             majburiy
     inventory_code  buxgalteriya kodi                  ixtiyoriy
 
@@ -21,10 +22,17 @@ qayta yuklash endi yarmi "allaqachon bor" bo'lib chiqardi. Shu sababli
 funksiya, ya'ni tekshiruvda "o'tdi" degan fayl yozishda yiqilmaydi
 (poyga holatidan tashqari, uni bazadagi cheklovlar ushlaydi).
 
-MAC ALLAQACHON RO'YXATDA - XATO EMAS, O'TKAZIB YUBORILADI. Tuzatilgan
+UUID ALLAQACHON RO'YXATDA - XATO EMAS, O'TKAZIB YUBORILADI. Tuzatilgan
 yoki to'ldirilgan faylni qayta yuklash odatiy ish va u oldingi safar
 qo'shilgan mashinalar tufayli yiqilmasligi kerak. Mavjud yozuv
 O'ZGARTIRILMAYDI: import - qo'shish vositasi, tahrirlash emas.
+
+YAGONA ISTISNO - UUID'NI TO'LDIRISH. UUID'dan oldingi (MAC bilan
+qo'shilgan) kompyuter qatordagi MAC bo'yicha topilsa va uning UUID'i
+BO'SH bo'lsa, faqat `machine_uuid` yoziladi (raqam, kod, bino
+o'zgarmaydi). Ya'ni eski faylga bitta ustun qo'shib qayta yuklash butun
+bino inventarini yangi identifikatorga o'tkazadi. Bino mos kelmasa -
+xato: bu boshqa binoning mashinasi bo'lishi mumkin.
 """
 
 from __future__ import annotations
@@ -33,23 +41,27 @@ import io
 import re
 
 from django.db import transaction
+from django.utils import timezone
 
-from apps.common.utils.validators import normalize_mac
+from apps.common.utils.validators import normalize_mac, normalize_machine_uuid
 from apps.regions.models import Region, Zone
 
 from .models import Computer
+from .services import auto_inventory_code
 
 MAX_ROWS = 5000
 MAX_FILE_BYTES = 5 * 1024 * 1024
 
 #: (ustun kodi, shablondagi sarlavha, majburiymi)
 COLUMNS = (
-    ("dtm_id", "dtm_id (region.dtm_id)", True),
-    ("zone_number", "zone_number (zone.number)", True),
-    ("mac_address", "mac_address", True),
+    ("dtm_id", "dtm_id", True),
+    ("zone_number", "zone_number", True),
+    ("machine_uuid", "machine_uuid", True),
+    ("mac_address", "mac_address", False),
     ("number", "number", True),
     ("inventory_code", "inventory_code", False),
 )
+_CODES = {code for code, _, _ in COLUMNS}
 _REQUIRED = [code for code, _, required in COLUMNS if required]
 _INVENTORY_RE = re.compile(r"^[A-Za-z0-9_\-]{3,50}$")
 
@@ -101,16 +113,18 @@ def build_template() -> bytes:
         ws.column_dimensions[cell.column_letter].width = 28
     ws.row_dimensions[1].height = 24
     ws.freeze_panes = "A2"
-    # MAC va inventar kodi MATN bo'lishi kerak: Excel "00-1A-..." yoki
-    # "0012" ni son/sana deb o'girib qo'yardi.
-    for letter in ("C", "E"):
+    ws.column_dimensions["C"].width = 42  # UUID 36 belgi
+    # UUID, MAC va inventar kodi MATN bo'lishi kerak: Excel "00-1A-..."
+    # yoki "0012" ni son/sana deb, "1E10-..." ni esa ilmiy son deb
+    # o'girib qo'yardi.
+    for letter in ("C", "D", "F"):
         for row in range(2, MAX_ROWS + 2):
             ws[f"{letter}{row}"].number_format = "@"
     positive = DataValidation(type="whole", operator="greaterThan", formula1="0", allow_blank=True)
     positive.error = "Musbat butun son kiriting"
     ws.add_data_validation(positive)
     positive.add(f"A2:B{MAX_ROWS + 1}")
-    positive.add(f"D2:D{MAX_ROWS + 1}")
+    positive.add(f"E2:E{MAX_ROWS + 1}")
 
     guide = wb.create_sheet("Yo'riqnoma")
     guide.column_dimensions["A"].width = 22
@@ -119,15 +133,25 @@ def build_template() -> bytes:
         ("Ustun", "Qiymat"),
         ("dtm_id", "Viloyatning DTM ID raqami (Viloyatlar sahifasidagi «DTM ID»). Majburiy."),
         ("zone_number", "Binoning raqami - o'sha viloyat ichida (Binolar sahifasi). Majburiy."),
-        ("mac_address", "AA:BB:CC:DD:EE:FF yoki AA-BB-CC-DD-EE-FF. Majburiy, tizim bo'ylab unikal."),
+        ("machine_uuid", "Mashinaning ASOSIY identifikatori - ona platadagi SMBIOS UUID "
+                         "(XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX). Majburiy, tizim bo'ylab unikal. "
+                         "Mashinada: `wmic csproduct get uuid` yoki PowerShell "
+                         "`(Get-CimInstance Win32_ComputerSystemProduct).UUID`. Client o'rnatilgan "
+                         "bo'lsa - panel «Qurilmalar» sahifasida (mashina UUID'i)."),
+        ("mac_address", "Ixtiyoriy. AA:BB:CC:DD:EE:FF yoki AA-BB-CC-DD-EE-FF. Berilsa tizim bo'ylab "
+                        "unikal. MAC o'zgarishi mumkin (tarmoq kartasi), shuning uchun u identifikator emas."),
         ("number", "Xonadagi tartib raqami (stoldagi raqam), 1..32767. Majburiy, bino ichida unikal."),
         ("inventory_code", "Ixtiyoriy. 3-50 belgi: lotin harfi, raqam, '-', '_'. "
-                           "Bo'sh bo'lsa AUTO-<MAC> ko'rinishida yaratiladi."),
+                           "Bo'sh bo'lsa AUTO-<UUID> ko'rinishida yaratiladi."),
         ("", ""),
         ("Qoidalar", "Sarlavhadagi qavs ichi e'tiborsiz qoldiriladi. Bitta qatorda xato bo'lsa "
-                     "hech narsa yozilmaydi. MAC allaqachon ro'yxatda bo'lsa qator o'tkazib "
+                     "hech narsa yozilmaydi. UUID allaqachon ro'yxatda bo'lsa qator o'tkazib "
                      "yuboriladi (mavjud yozuv o'zgarmaydi). Ko'pi bilan {} qator.".format(MAX_ROWS)),
-        ("Namuna", "dtm_id=10, zone_number=1, mac_address=00:1A:2B:3C:4D:5E, number=12, inventory_code=INV-0012"),
+        ("UUID'siz eski yozuvlar", "Kompyuter ilgari MAC bilan qo'shilgan va UUID'i bo'sh bo'lsa, "
+                                   "shu MAC va o'sha bino ko'rsatilgan qator unga FAQAT UUID yozadi "
+                                   "(raqam va kod o'zgarmaydi)."),
+        ("Namuna", "dtm_id=10, zone_number=1, machine_uuid=4C4C4544-0038-4A10-805A-C7C04F4B3A12, "
+                   "mac_address=00:1A:2B:3C:4D:5E, number=12, inventory_code=INV-0012"),
     ]
     for row in rows:
         guide.append(row)
@@ -164,7 +188,7 @@ def read_rows(upload) -> list[dict]:
         index = {}
         for position, value in enumerate(header):
             code = _header(value)
-            if code in dict((c, 1) for c, _, _ in COLUMNS) and code not in index:
+            if code in _CODES and code not in index:
                 index[code] = position
         missing = [code for code in _REQUIRED if code not in index]
         if missing:
@@ -197,7 +221,7 @@ def import_computers(rows: list[dict], *, user, dry_run: bool) -> dict:
     Qatorlarni tekshiradi va (xato bo'lmasa, `dry_run=False` da) yozadi.
 
     Barcha bazaviy qidiruvlar TO'PLAM bo'yicha - qator soniga bog'liq
-    bo'lmagan 5 ta so'rov (viloyat, bino, MAC, inventar, raqam).
+    bo'lmagan bir necha so'rov (viloyat, bino, UUID, MAC, inventar, raqam).
     """
     errors: list[dict] = []
     skipped: list[dict] = []
@@ -232,54 +256,85 @@ def import_computers(rows: list[dict], *, user, dry_run: bool) -> dict:
             elif zone is None:
                 fail(row, "zone_number", "«{}» viloyatida {}-bino topilmadi.".format(region.name, zone_number))
 
-        mac = normalize_mac(row.get("mac_address"))
-        if not row.get("mac_address"):
-            fail(row, "mac_address", "MAC manzil kiritilmagan.")
-        elif mac is None:
-            fail(row, "mac_address", "MAC formati noto'g'ri (AA:BB:CC:DD:EE:FF).")
+        machine_uuid = normalize_machine_uuid(row.get("machine_uuid"))
+        if not row.get("machine_uuid"):
+            fail(row, "machine_uuid", "Machine UUID kiritilmagan.")
+        elif not machine_uuid:
+            fail(row, "machine_uuid", "Machine UUID noto'g'ri yoki to'ldirilmagan "
+                                      "(XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX).")
+
+        mac = None
+        if row.get("mac_address"):
+            mac = normalize_mac(row.get("mac_address"))
+            if mac is None:
+                fail(row, "mac_address", "MAC formati noto'g'ri (AA:BB:CC:DD:EE:FF).")
 
         number = _int(row.get("number"))
         if number is None or not 1 <= number <= 32767:
             fail(row, "number", "Kompyuter raqami 1..32767 oralig'idagi butun son bo'lishi kerak.")
 
         code = row.get("inventory_code", "")
+        auto = not code
         if code and not _INVENTORY_RE.match(code):
             fail(row, "inventory_code", "Inventar kodi: 3-50 belgi, lotin harfi, raqam, '-' yoki '_'.")
-        if not code and mac:
-            code = "AUTO-" + mac.replace(":", "")
+        if not code and machine_uuid:
+            code = auto_inventory_code(machine_uuid=machine_uuid)
 
         if len(errors) == before:
-            parsed.append({"row": row["row"], "zone": zone, "mac": mac, "number": number, "code": code})
+            parsed.append({"row": row["row"], "zone": zone, "uuid": machine_uuid, "mac": mac,
+                           "number": number, "code": code, "auto": auto})
 
     # --- fayl ichidagi takrorlar -----------------------------------------
     def duplicates(key, column, message):
         seen = {}
         for item in parsed:
             value = key(item)
+            if value is None:
+                continue
             if value in seen:
                 errors.append({"row": item["row"], "column": column,
                                "message": message.format(seen[value])})
             else:
                 seen[value] = item["row"]
 
+    duplicates(lambda i: i["uuid"], "machine_uuid", "Bu Machine UUID faylda takrorlangan ({}-qator).")
     duplicates(lambda i: i["mac"], "mac_address", "Bu MAC faylda takrorlangan ({}-qator).")
-    duplicates(lambda i: i["code"].upper(), "inventory_code", "Bu inventar kodi faylda takrorlangan ({}-qator).")
+    # UUID dan hosil qilingan kod tekshirilmaydi: uning takrori - UUID
+    # takrori va u yuqorida allaqachon xato bo'ldi (bitta sabab uchun
+    # ikkita xato jadvalni chalkashtirardi).
+    duplicates(lambda i: None if i["auto"] else i["code"].upper(), "inventory_code", "Bu inventar kodi faylda takrorlangan ({}-qator).")
     duplicates(lambda i: (i["zone"].pk, i["number"]), "number", "Bu raqam shu binoda faylda takrorlangan ({}-qator).")
 
     # --- bazadagi mavjud yozuvlar -----------------------------------------
     alive = Computer.objects.filter(deleted_at__isnull=True)
+    existing_uuid = {
+        c.machine_uuid: c
+        for c in alive.filter(machine_uuid__in={i["uuid"] for i in parsed}).select_related("zone")
+    }
     existing_mac = {
         c.mac_address: c
-        for c in alive.filter(mac_address__in={i["mac"] for i in parsed}).select_related("zone")
+        for c in alive.filter(mac_address__in={i["mac"] for i in parsed if i["mac"]}).select_related("zone")
     }
-    to_create = []
+    to_create, to_bind = [], []
     for item in parsed:
-        known = existing_mac.get(item["mac"])
+        known = existing_uuid.get(item["uuid"])
         if known is not None:
-            skipped.append({"row": item["row"], "mac_address": item["mac"],
+            skipped.append({"row": item["row"], "machine_uuid": item["uuid"],
                             "message": "Allaqachon ro'yxatda: {} ({}).".format(known.label, known.zone.name)})
-        else:
+            continue
+        by_mac = existing_mac.get(item["mac"]) if item["mac"] else None
+        if by_mac is None:
             to_create.append(item)
+        elif by_mac.machine_uuid:
+            errors.append({"row": item["row"], "column": "mac_address",
+                           "message": "Bu MAC {} kompyuterida band (uning UUID'i boshqa: {}).".format(
+                               by_mac.label, by_mac.machine_uuid)})
+        elif by_mac.zone_id != item["zone"].pk:
+            errors.append({"row": item["row"], "column": "zone_number",
+                           "message": "Bu MAC «{}» binosidagi {} kompyuteriga tegishli.".format(
+                               by_mac.zone.name, by_mac.label)})
+        else:
+            to_bind.append({**item, "computer": by_mac})
 
     taken_codes = set(
         alive.filter(inventory_code__in={i["code"] for i in to_create})
@@ -301,22 +356,35 @@ def import_computers(rows: list[dict], *, user, dry_run: bool) -> dict:
     errors.sort(key=lambda e: (e["row"], e["column"]))
     report = {
         "total": len(rows),
-        "to_create": len(to_create) if not errors else 0,
+        "to_create": 0 if errors else len(to_create),
+        #: UUID'si bo'sh mavjud kompyuterlarga faqat UUID yoziladi.
+        "to_bind": 0 if errors else len(to_bind),
+        "binds": [
+            {"row": i["row"], "machine_uuid": i["uuid"],
+             "message": "UUID yoziladi: {} ({}).".format(i["computer"].label, i["computer"].zone.name)}
+            for i in to_bind
+        ],
         "skipped": skipped,
         "errors": errors,
         "created": 0,
+        "bound": 0,
         "dry_run": dry_run,
     }
-    if errors or dry_run or not to_create:
-        report["to_create"] = 0 if errors else len(to_create)
+    if errors or dry_run or not (to_create or to_bind):
         return report
 
     with transaction.atomic():
         Computer.objects.bulk_create([
-            Computer(zone=item["zone"], mac_address=item["mac"], number=item["number"],
-                     inventory_code=item["code"], is_active=True)
+            Computer(zone=item["zone"], machine_uuid=item["uuid"], mac_address=item["mac"] or "",
+                     number=item["number"], inventory_code=item["code"], is_active=True)
             for item in to_create
         ])
+        for item in to_bind:
+            # `machine_uuid IS NULL` sharti - tekshiruvdan keyin handshake
+            # UUID'ni bog'lab ulgurgan bo'lsa, uning ustidan yozilmaydi.
+            Computer.objects.filter(pk=item["computer"].pk, machine_uuid__isnull=True).update(
+                machine_uuid=item["uuid"], updated_at=timezone.now()
+            )
     report["created"] = len(to_create)
-    report["to_create"] = len(to_create)
+    report["bound"] = len(to_bind)
     return report

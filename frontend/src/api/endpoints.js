@@ -132,7 +132,32 @@ export const roles = crud('/roles/')
 export const permissions = { list: list('/permissions/') }
 export const regions = crud('/regions/')
 export const zones = crud('/zones/')
-export const computers = crud('/computers/')
+export const computers = {
+  ...crud('/computers/'),
+  /** Excel shablon (blob). */
+  importTemplate: () =>
+    api.get('/computers/import-template/', { responseType: 'blob' }).then((r) => r.data),
+  /**
+   * Excel'dan ommaviy qo'shish. `dryRun` — faqat tekshiruv. Xato qatorlar
+   * 200 javobning `errors` ida keladi (fayl o'qilmasa — 400).
+   */
+  importExcel: (file, dryRun) => {
+    const form = new FormData()
+    form.append('file', file)
+    form.append('dry_run', dryRun ? 'true' : 'false')
+    // Sarlavha OCHIQ: `api` da standart `application/json` va axios 1.x
+    // u bilan FormData'ni JSON'ga aylantiradi - fayl serverga umuman
+    // yetmay, 400 "Excel fayl yuklanmagan" qaytardi. `multipart/form-data`
+    // da axios boundary'ni brauzerga qoldiradi.
+    return api
+      .post('/computers/import/', form, { headers: { 'Content-Type': 'multipart/form-data' } })
+      .then((r) => r.data)
+  },
+  /** Ommaviy o'chirish: `ids` yoki `all` + ro'yxat filtrlari (`params`). */
+  bulkDelete: ({ ids, all, params }) =>
+    api.post('/computers/bulk-delete/', all ? { all: true } : { ids }, { params: all ? params : undefined })
+      .then((r) => r.data),
+}
 export const cameras = {
   ...crud('/cameras/'),
   /** Kamerani HOZIR tekshiradi (RTSP) va yangi holatni qaytaradi. */
@@ -166,6 +191,10 @@ export const deviceTokens = {
   approve: (id) => api.post(`/device-tokens/${id}/approve/`).then((r) => r.data),
   revoke: (id, reason) => api.post(`/device-tokens/${id}/revoke/`, { reason }).then((r) => r.data),
   stats: () => api.get('/device-tokens/stats/').then((r) => r.data),
+  /** Faqat KUTAYOTGANLARNI tasdiqlaydi; qolganlari `skipped` da. */
+  bulkApprove: ({ ids, all, params }) =>
+    api.post('/device-tokens/bulk-approve/', all ? { all: true } : { ids }, { params: all ? params : undefined })
+      .then((r) => r.data),
 }
 
 export const settings = {

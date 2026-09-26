@@ -510,18 +510,38 @@ function BookingMap({
   })
   const zones = zonesQuery.data?.results || []
 
+  // Tanlov URL'da: `?region=` (viloyat) va `?zone=` (bino). Bino
+  // AVTOMATIK tanlanmaydi — ilgari birinchi bino o'zi ochilardi va
+  // umumiy sessiyada operator avval kerak bo'lmagan zalni ko'rardi.
+  // Istisno: tanlov yagona bo'lsa (bitta viloyat / viloyatda bitta bino).
   const urlZone = Number(searchParams.get('zone')) || null
-  const zoneId = zones.some((zone) => zone.zone === urlZone) ? urlZone : zones[0]?.zone ?? null
-  const zone = zones.find((item) => item.zone === zoneId) || null
+  const urlRegion = Number(searchParams.get('region')) || null
+  const regionIds = useMemo(() => [...new Set(zones.map((item) => item.region))], [zones])
+  const urlZoneRow = zones.find((item) => item.zone === urlZone) || null
+  const regionId = urlZoneRow?.region
+    ?? (regionIds.includes(urlRegion) ? urlRegion : regionIds.length === 1 ? regionIds[0] : null)
+  const regionZones = zones.filter((item) => item.region === regionId)
+  const zone = urlZoneRow || (regionZones.length === 1 ? regionZones[0] : null)
+  const zoneId = zone?.zone ?? null
 
-  const setZone = useCallback(
-    (id) =>
+  const updateParams = useCallback(
+    (values) =>
       setSearchParams((prev) => {
         const params = new URLSearchParams(prev)
-        params.set('zone', String(id))
+        for (const [key, value] of Object.entries(values)) {
+          if (value == null) params.delete(key)
+          else params.set(key, String(value))
+        }
         return params
       }, { replace: true }),
     [setSearchParams],
+  )
+  const setRegion = useCallback((id) => updateParams({ region: id, zone: null }), [updateParams])
+  // Bino har doim o'z viloyati bilan — JSHSHIR qidiruvi boshqa viloyatdagi
+  // joyga ham olib boradi.
+  const setZone = useCallback(
+    (id) => updateParams({ zone: id, region: zones.find((item) => item.zone === id)?.region ?? null }),
+    [updateParams, zones],
   )
 
   const seatsQuery = useQuery({
@@ -626,8 +646,18 @@ function BookingMap({
         alignItems: 'start',
       }}
     >
-      <ZoneRail zones={zones} loading={zonesQuery.isLoading} value={zoneId} onChange={setZone} />
+      <ZoneRail
+        zones={zones}
+        loading={zonesQuery.isLoading}
+        regionId={regionId}
+        zoneId={zoneId}
+        onRegion={setRegion}
+        onZone={setZone}
+      />
 
+      {!zone && !zonesQuery.isLoading ? (
+        <PickPrompt regionName={regionZones[0]?.region_name} zoneCount={regionZones.length} moving={Boolean(moveFrom)} />
+      ) : (
       <Card sx={{ overflow: 'visible' }}>
         <Stack spacing={2} sx={{ p: { xs: 2, sm: 2.5 } }}>
           <Stack
@@ -708,6 +738,7 @@ function BookingMap({
           )}
         </Stack>
       </Card>
+      )}
 
       <SeatPanel
         seat={moveFrom ? null : selected}
@@ -724,6 +755,41 @@ function BookingMap({
         onToggleActive={onToggleActive}
       />
     </Box>
+  )
+}
+
+/**
+ * Bino tanlanmaguncha o'ng tomon — keyingi qadamni aytadigan bo'sh holat
+ * (MD3: tonal belgi, sarlavha, bitta jumla). Zal o'rnida bo'sh karta
+ * qoldirish "yuklanmadi" deb o'qilardi.
+ */
+function PickPrompt({ regionName, zoneCount, moving }) {
+  return (
+    <Card sx={{ minHeight: { md: 360 }, display: 'grid', placeItems: 'center', p: { xs: 3, sm: 5 } }}>
+      <Stack spacing={1.5} alignItems="center" sx={{ textAlign: 'center', maxWidth: 380 }}>
+        <Box
+          sx={{
+            width: 72, height: 72, borderRadius: '24px', display: 'grid', placeItems: 'center',
+            bgcolor: 'm3.primaryContainer', color: 'm3.onPrimaryContainer',
+          }}
+        >
+          <SeatIcon sx={{ fontSize: 36 }} />
+        </Box>
+        <Typography variant="h6">
+          {regionName ? 'Binoni tanlang' : 'Viloyatni tanlang'}
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          {regionName
+            ? `«${regionName}» — ${zoneCount} ta bino. Bino tanlangach, uning zali va proktor stoli shu yerda ochiladi.`
+            : 'Viloyat, keyin bino tanlang — shu binodagi o‘rindiqlar va proktor stoli shu yerda ochiladi.'}
+        </Typography>
+        {moving && (
+          <Alert severity="info" icon={<MoveIcon />} sx={{ borderRadius: '12px', textAlign: 'left' }}>
+            Ko‘chirish davom etmoqda — bino tanlab, bo‘sh o‘rindiqni bosing.
+          </Alert>
+        )}
+      </Stack>
+    </Card>
   )
 }
 
@@ -832,8 +898,14 @@ function ScheduleBar({ options, loading, value, onChange }) {
  * talabgorga joy yetadimi?". Buzilgan joylar ALOHIDA sanaladi va ular
  * bo'sh joylar sonidan chiqarilgan — bo'sh deb ko'rsatilgan joy
  * haqiqatan talabgor qabul qila oladi.
+ *
+ * BITTA IXCHAM QATOR (katta ekranda).
+ * Ilgari to'rtta katta plita + alohida bandlik qatori ~150 px egallardi
+ * va zal (proktor stoli) ekranning pastiga tushib, har safar aylantirish
+ * kerak edi. Endi ko'rsatkich "yorliq — qiymat" juftligi, bandlik esa
+ * shu qatorning oxirida: ~56 px. Telefonda 2x2 + bandlik pastda.
  */
-function StatsStrip({ stats, scope }) {
+function StatsStrip({ stats }) {
   const total = stats?.total ?? 0
   const booked = stats?.booked ?? 0
   const usable = total - (stats?.broken ?? 0)
@@ -845,59 +917,64 @@ function StatsStrip({ stats, scope }) {
     { key: 'broken', label: 'Buzilgan', value: stats?.broken, color: 'error' },
   ]
   return (
-    <Paper variant="outlined" sx={{ p: 2, borderRadius: '16px' }}>
-      {/* Telefonda 2x2: bittadan bo'lganda to'rtta plita ~340 px egallardi. */}
+    <Paper variant="outlined" sx={{ p: 1, borderRadius: '16px' }}>
       <Box
         sx={{
           display: 'grid',
-          gridTemplateColumns: { xs: 'repeat(2, minmax(0, 1fr))', sm: 'repeat(4, minmax(0, 1fr))' },
-          gap: 1.5,
+          gap: 1,
+          alignItems: 'center',
+          gridTemplateColumns: {
+            xs: 'repeat(2, minmax(0, 1fr))',
+            sm: 'repeat(4, minmax(0, 1fr))',
+            lg: 'repeat(4, minmax(120px, 170px)) minmax(240px, 1fr)',
+          },
         }}
       >
         {tiles.map((tile) => (
-          <Box
+          <Stack
             key={tile.key}
+            direction="row"
+            alignItems="center"
+            justifyContent="space-between"
+            spacing={1}
             sx={(theme) => ({
-              px: 2,
-              py: 1.25,
-              borderRadius: '12px',
+              px: 1.5, py: 0.75, borderRadius: '12px', minWidth: 0,
               bgcolor: alpha(theme.palette[tile.color].main, 0.08),
             })}
           >
-            <Typography variant="caption" color="text.secondary" fontWeight={600}>
+            <Typography variant="caption" color="text.secondary" fontWeight={600} noWrap>
               {tile.label}
             </Typography>
-            <Typography variant="h5" fontWeight={800} color={`${tile.color}.main`}>
+            <Typography
+              sx={{ fontSize: 20, fontWeight: 800, lineHeight: 1.2, fontVariantNumeric: 'tabular-nums' }}
+              color={`${tile.color}.main`}
+            >
               {tile.value ?? '—'}
             </Typography>
-          </Box>
+          </Stack>
         ))}
-      </Box>
-      <Stack
-        direction={{ xs: 'column', md: 'row' }}
-        spacing={{ xs: 1.5, md: 2 }}
-        alignItems={{ md: 'center' }}
-        sx={{ mt: 1.75 }}
-      >
-        <Box sx={{ flexShrink: 0 }}>{scope}</Box>
-        <LinearProgress
-          variant="determinate"
-          value={Math.min(100, percent)}
-          sx={{ flex: 1, height: 8, borderRadius: 4 }}
-        />
-        <Box sx={{ minWidth: { md: 170 }, textAlign: { md: 'right' } }}>
-          <Typography variant="body2" fontWeight={700} noWrap>
-            Bandlik: {percent}% ({booked} / {usable})
-          </Typography>
-          {/* Yakunlagan talabgorning joyi bo'shaydi va "Band" dan chiqadi —
-              usiz bandlik kamayib borishi "talabgorlar kelmadi" bo'lib o'qilardi. */}
-          {stats?.finished > 0 && (
-            <Typography variant="caption" color="text.secondary" noWrap>
-              Yakunlaganlar: {stats.finished}
+        <Box sx={{ gridColumn: { xs: '1 / -1', lg: 'auto' }, px: 1.5, py: 0.5, minWidth: 0 }}>
+          <Stack direction="row" alignItems="baseline" spacing={0.75} sx={{ mb: 0.75 }}>
+            <Typography variant="caption" color="text.secondary" fontWeight={600}>Bandlik</Typography>
+            <Typography variant="body2" fontWeight={800}>{percent}%</Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }} noWrap>
+              {booked} / {usable}
             </Typography>
-          )}
+            {/* Yakunlagan talabgorning joyi bo'shaydi va "Band" dan chiqadi —
+                usiz bandlik kamayib borishi "talabgorlar kelmadi" bo'lib o'qilardi. */}
+            {stats?.finished > 0 && (
+              <Typography variant="caption" color="text.secondary" noWrap>
+                Yakunlaganlar: {stats.finished}
+              </Typography>
+            )}
+          </Stack>
+          <LinearProgress
+            variant="determinate"
+            value={Math.min(100, percent)}
+            sx={{ height: 6, borderRadius: 999 }}
+          />
         </Box>
-      </Stack>
+      </Box>
     </Paper>
   )
 }

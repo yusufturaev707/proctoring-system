@@ -1,4 +1,5 @@
 src/config/settings/local.py
+script/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

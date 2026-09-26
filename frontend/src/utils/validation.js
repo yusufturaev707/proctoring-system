@@ -11,13 +11,28 @@
 const MAC_RE = /^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$/
 const IPV4_RE = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/
 const PINFL_RE = /^\d{14}$/
+// Machine UUID (SMBIOS). `{...}` qavs ham qabul qilinadi (registrdan
+// ko'chirilganda shunday bo'ladi) - `normalizeMachineUuid` olib tashlaydi.
+const UUID_RE = /^\{?[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}?$/
 
 export const PATTERNS = {
   mac: { re: MAC_RE, message: 'Format: AA:BB:CC:DD:EE:FF' },
+  uuid: { re: UUID_RE, message: 'Format: XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX' },
   ipv4: { re: IPV4_RE, message: 'To‘g‘ri IPv4 manzil kiriting' },
   pinfl: { re: PINFL_RE, message: 'JSHSHIR 14 ta raqamdan iborat' },
   slug: { re: /^[A-Za-z0-9_-]+$/, message: 'Faqat harf, raqam, `-` va `_`' },
   url: { re: /^https?:\/\/.+/i, message: 'URL http:// yoki https:// bilan boshlanishi kerak' },
+}
+
+/**
+ * Machine UUID -> kanonik shakl (katta harf, qavssiz).
+ *
+ * Server ham shunday qiladi (`normalize_machine_uuid`), lekin shaklni
+ * shu yerda ham keltirish «saqlanmagan o'zgarish» ogohlantirishini va
+ * dublikat xatosini (kichik harfli nusxa) oldini oladi.
+ */
+export function normalizeMachineUuid(value) {
+  return String(value || '').trim().replace(/^\{|\}$/g, '').trim().toUpperCase()
 }
 
 /**

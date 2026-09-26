@@ -121,10 +121,11 @@ def _serialize(setting) -> dict:
         },
         "capture": {
             "screen_record": setting.is_screen_record,
-            "screenshot_interval": setting.screenshot_interval,
+            # Skrinshot BUYRUQ bilan (interval yo'q); `upload` - serverga
+            # ham yuborilsinmi, mashinada esa har doim saqlanadi.
+            "upload": setting.is_screenshot_upload,
             "quality": setting.screenshot_quality,
             "max_width": setting.screenshot_max_width,
-            "dedup_threshold": setting.screenshot_dedup_threshold,
             # Foizda (5..40), client ulushga o'zi o'giradi: panel ham,
             # model ham administrator tushunadigan birlikda qoladi.
             "record_fps": setting.screen_record_fps,
@@ -462,10 +463,9 @@ def _default_config() -> dict:
             # Modeldagi standart bilan bir xil (`True`): sozlamasi yo'q
             # tizim dalilni jimgina yozmay qo'ymasligi kerak.
             "screen_record": True,
-            "screenshot_interval": 10,
+            "upload": True,
             "quality": 80,
             "max_width": 1920,
-            "dedup_threshold": 6,
             "record_fps": 5,
             "record_width": 1600,
             "record_pip_percent": 12,
