@@ -15,7 +15,7 @@ WorkingDirectory=/srv/proctoring/backend
 # yerda ochiq yozilgani ustun — `.env` da xato qolsa ham production.
 Environment=DJANGO_SETTINGS_MODULE=config.settings.production
 Environment=PYTHONPATH=/srv/proctoring/backend/src
-ExecStart=/srv/proctoring/backend/.venv/bin/uvicorn config.asgi:application --host 0.0.0.0 --port 8003 --workers 2 --proxy-headers --forwarded-allow-ips 0.0.0.0 --no-access-log
+ExecStart=/srv/proctoring/backend/.venv/bin/uvicorn config.asgi:application --host 0.0.0.0 --port 8003 --workers 2 --proxy-headers --forwarded-allow-ips 127.0.0.1 --no-access-log
 Restart=always
 RestartSec=5
 # `--no-access-log`: panel xodim JWT'sini query'da yuboradi (nginx'da ham o'chiq).
