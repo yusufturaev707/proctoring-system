@@ -12,9 +12,14 @@ from django.core.exceptions import ImproperlyConfigured
 from .base import *  # noqa: F403
 from .base import DB_CONN_MAX_AGE, env, env_bool, env_int, env_list
 
-DEBUG = True
+DEBUG = False
 
-ALLOWED_HOSTS = env_list("ALLOWED_HOSTS")
+#ALLOWED_HOSTS = env_list("ALLOWED_HOSTS")
+ALLOWED_HOSTS = [
+    "localhost",
+    "127.0.0.1",
+    "w2.uzbmb.uz",
+]
 if not ALLOWED_HOSTS:
     raise ImproperlyConfigured("ALLOWED_HOSTS production'da bo'sh bo'lishi mumkin emas")
 
