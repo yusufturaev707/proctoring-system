@@ -8,7 +8,7 @@ export default defineConfig({
     proxy: {
       // Dev'da CORS bilan ovora bo'lmaslik uchun backend'ga proxy.
       '/api': { target: 'http://127.0.0.1:8002', changeOrigin: true },
-      '/ws': { target: 'ws://127.0.0.1:8001', ws: true },
+      '/ws': { target: 'ws://127.0.0.1:8003', ws: true },
     },
   },
   build: {
