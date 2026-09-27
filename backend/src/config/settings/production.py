@@ -12,7 +12,7 @@ from django.core.exceptions import ImproperlyConfigured
 from .base import *  # noqa: F403
 from .base import DB_CONN_MAX_AGE, env, env_bool, env_int, env_list
 
-DEBUG = False
+DEBUG = True
 
 ALLOWED_HOSTS = env_list("ALLOWED_HOSTS")
 if not ALLOWED_HOSTS:
