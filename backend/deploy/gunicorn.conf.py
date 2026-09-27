@@ -31,7 +31,7 @@ pythonpath = str(Path(__file__).resolve().parent.parent / "src")
 # tarmoqqa to'g'ridan-to'g'ri ochardi: nginx'dagi rate limit chetlab
 # o'tiladi, `TRUSTED_PROXY_COUNT=1` da esa soxta `X-Forwarded-For` bilan
 # IP ro'yxatini aldash mumkin bo'lardi. Bir necha node — `GUNICORN_BIND`.
-bind = os.getenv("GUNICORN_BIND", "127.0.0.1:8002")
+bind = os.getenv("GUNICORN_BIND", "0.0.0.0:8002")
 
 worker_class = "gthread"
 workers = int(os.getenv("GUNICORN_WORKERS", multiprocessing.cpu_count() * 2 + 1))
