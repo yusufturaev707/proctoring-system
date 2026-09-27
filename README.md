@@ -24,13 +24,13 @@ python manage.py setup_partitions --apply            # hodisa jadvalini partitsi
 python manage.py seed_base_data --demo               # rollar, ruxsatlar, demo ma'lumot
 python manage.py createsuperuser
 
-python manage.py runserver                           # HTTP API  :8000
+python manage.py runserver 8002                          # HTTP API  :8000
 ```
 
 ```bash
 # --- WebSocket (alohida process) ---
 cd backend/src
-uvicorn config.asgi:application --port 8001
+uvicorn config.asgi:application --port 8003
 ```
 
 ```bash

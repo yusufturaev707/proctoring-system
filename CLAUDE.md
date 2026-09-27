@@ -20,10 +20,10 @@ cd backend && .venv/Scripts/activate
 python manage.py migrate
 python manage.py setup_partitions --apply --days 30   # proctoring_event partitsiyalari
 python manage.py seed_base_data --demo                # rol/ruxsat matritsasi + demo data
-python manage.py runserver                            # HTTP API :8000
+python manage.py runserver 8002                           # HTTP API :8000
 
 # WebSocket — ALOHIDA process, `src/` dan
-cd backend/src && uvicorn config.asgi:application --port 8001
+cd backend/src && uvicorn config.asgi:application --port 8003
 
 # Celery — `backend/` dan
 celery -A config worker -Q ingest -c 4

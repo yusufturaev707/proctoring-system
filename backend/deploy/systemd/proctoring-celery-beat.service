@@ -3,6 +3,9 @@ Description=Proctoring — Celery beat (AYNAN BITTA nusxa!)
 After=network-online.target postgresql.service redis-server.service
 Wants=network-online.target
 
+Requires=redis-server.service
+PartOf=proctoring.target
+
 [Service]
 Type=simple
 User=proctoring
