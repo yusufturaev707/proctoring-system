@@ -117,7 +117,7 @@ export default function Users() {
               isEdit ? 'Login o‘zgartirilmaydi' : 'Faqat harf, raqam, `-` va `_`',
           },
           {
-            name: 'password', label: 'Parol', type: 'password', minLength: 8,
+            name: 'password', label: 'Parol', type: 'password', minLength: 3,
             colSpan: 6, password: true, clearable: false,
             helperText: (isEdit) =>
               isEdit ? 'Bo‘sh qoldirilsa — o‘zgarmaydi' : 'Kamida 8 ta belgi',
