@@ -75,7 +75,7 @@ class UserDetailSerializer(UserListSerializer):
 
 
 class UserWriteSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True, required=False, min_length=8)
+    password = serializers.CharField(write_only=True, required=False, min_length=3)
     role = serializers.PrimaryKeyRelatedField(
         queryset=Role.objects.all(), required=False, allow_null=True
     )
