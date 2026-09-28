@@ -204,7 +204,7 @@ class UserWriteSerializer(serializers.ModelSerializer):
 
 
 class SetPasswordSerializer(serializers.Serializer):
-    password = serializers.CharField(min_length=8, write_only=True)
+    password = serializers.CharField(min_length=3, write_only=True)
 
     def validate_password(self, value):
         validate_password(value)
