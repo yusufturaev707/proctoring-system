@@ -94,6 +94,8 @@ export default function Login() {
                 required
                 autoComplete="current-password"
                 InputProps={{
+                  minLength: 3,
+                  maxLength: 128,
                   endAdornment: (
                     <InputAdornment position="end">
                       <IconButton size="small" onClick={() => setShowPassword((p) => !p)} edge="end">
