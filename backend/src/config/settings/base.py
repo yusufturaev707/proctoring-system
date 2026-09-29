@@ -539,6 +539,17 @@ PROCTORING = {
     "REQUIRE_MACHINE_MATCH": env_bool(
         "REQUIRE_MACHINE_MATCH", env_bool("REQUIRE_MAC_MATCH", True)
     ),
+    # UUID mos kelgan mashinada MAC ham yozuvdagiga mos bo'lishi shart
+    # (`devices.services.mac_matches`). Handshake'da `mac_mismatch`,
+    # JSHSHIR tekshiruvida `machine_mac_mismatch` (409).
+    #
+    # Standart `false`: MAC amalda o'zgaradi (tarmoq kartasi, Wi-Fi
+    # yoqilib marshrut boshqa adapterga o'tishi) va yoqilgan zahoti
+    # ishlab turgan mashinalar to'silardi. Administrator avval
+    # `manage.py audit_machine_macs` bilan kim to'silishini ko'radi,
+    # yozuvlarni tuzatadi, keyin yoqadi. Yozuvida MAC yo'q kompyuter
+    # faqat UUID bilan o'tadi - MAC'ni client hech qachon yozmaydi.
+    "REQUIRE_MACHINE_MAC": env_bool("REQUIRE_MACHINE_MAC", False),
 
     # --- Avtomatik inventarizatsiya ---
     # `true` bo'lsa, ro'yxatda yo'q kompyuter avtomatik yaratiladi -

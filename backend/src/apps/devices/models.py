@@ -339,6 +339,13 @@ class DeviceToken(TimeStampedModel):
     # `wmic` yozish shart emas). ISHONCHSIZ - ruxsat qarori bunga
     # tayanmaydi, `verify_machine` uni kompyuter yozuvi bilan solishtiradi.
     reported_machine_uuid = models.CharField(max_length=36, blank=True, default="")
+    #: Client aytgan MAC (marshrut tanlagan adapter) - oxirgi handshake'dagi.
+    #
+    # `REQUIRE_MACHINE_MAC` ni yoqishdan OLDIN kerak: administrator
+    # qaysi mashinalar to'silishini shu qiymat va `Computer.mac_address`
+    # farqidan ko'radi (`audit_machine_macs`, panel). ISHONCHSIZ - qaror
+    # handshake'dagi qiymat bilan qilinadi, bu faqat diagnostika.
+    reported_mac = models.CharField(max_length=17, blank=True, default="")
     revoked_at = models.DateTimeField(null=True, blank=True)
     revoke_reason = models.CharField(max_length=255, blank=True, default="")
 

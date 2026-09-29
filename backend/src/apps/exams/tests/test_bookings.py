@@ -9,6 +9,8 @@ Eng qimmat xatolar — ikkita va testlar aynan ularni ushlaydi:
     (mavjud o'rnatishlar imtihon kuni hech kimni kiritmaydi).
 """
 
+from unittest.mock import patch
+
 from django.conf import settings
 from django.core.cache import cache
 from django.db import IntegrityError, transaction
@@ -17,6 +19,7 @@ from django.urls import reverse
 from rest_framework.test import APIClient
 
 from apps.common.exceptions import (
+    CandidateNotFound,
     SeatInUse,
     SeatNotBooked,
     SeatOutOfService,
@@ -312,6 +315,63 @@ class LookupEndpointSeatTests(TestCase):
     def test_malformed_machine_uuid_is_400(self):
         response = self._lookup(uuid="not-a-uuid")
         self.assertEqual(response.status_code, 400)
+
+
+class LookupMachineMacTests(TestCase):
+    """
+    JSHSHIR tekshiruvidagi MAC (qat'iy rejim) - himoyaning ikkinchi qatlami.
+
+    Handshake login'da bir marta o'tadi, MAC esa undan keyin o'zgarishi
+    mumkin. Tekshiruv bron qoidasidan MUSTAQIL va tashqi platformaga
+    so'rovdan OLDIN. Platforma soxtasi `CandidateNotFound` beradi:
+    "so'rov ketdimi" savoliga shu yetarli.
+    """
+
+    FOREIGN_MAC = "00:E0:4C:68:01:02"
+
+    setUp = LookupEndpointSeatTests.setUp
+    _lookup = LookupEndpointSeatTests._lookup
+
+    def _lookup_with(self, *, strict=True, **kwargs):
+        with patch.dict(settings.PROCTORING, {"REQUIRE_MACHINE_MAC": strict}), patch(
+            "apps.integrations.exam_site.check_candidate", side_effect=CandidateNotFound()
+        ) as check:
+            response = self._lookup(**kwargs)
+        return response, check
+
+    def test_mac_mismatch_is_409_before_platform(self):
+        response, check = self._lookup_with(uuid=self.pc2.machine_uuid, mac=self.FOREIGN_MAC)
+
+        self.assertEqual(response.status_code, 409, response.content)
+        error = response.json()["error"]
+        self.assertEqual(error["code"], "machine_mac_mismatch")
+        self.assertEqual(error["details"]["expected_mac"], self.pc2.mac_address)
+        self.assertEqual(error["details"]["reported_mac"], self.FOREIGN_MAC)
+        self.assertEqual(error["details"]["computer"]["computer_id"], self.pc2.pk)
+        check.assert_not_called()
+
+    def test_mac_mismatch_precedes_booking_check(self):
+        """Kimligi shubhali mashinaga "boshqa stolga boring" deyilmaydi."""
+        bookings.assign(self.schedule, PINFL, computer=self.pc1)
+
+        response, check = self._lookup_with(uuid=self.pc2.machine_uuid, mac=self.FOREIGN_MAC)
+
+        self.assertEqual(response.json()["error"]["code"], "machine_mac_mismatch")
+        check.assert_not_called()
+
+    def test_matching_mac_reaches_platform(self):
+        response, check = self._lookup_with(
+            uuid=self.pc2.machine_uuid, mac=self.pc2.mac_address.lower().replace(":", "-")
+        )
+        self.assertEqual(response.json()["error"]["code"], "candidate_not_found")
+        check.assert_called_once()
+
+    def test_default_setting_ignores_mac(self):
+        response, check = self._lookup_with(
+            strict=False, uuid=self.pc2.machine_uuid, mac=self.FOREIGN_MAC
+        )
+        self.assertEqual(response.json()["error"]["code"], "candidate_not_found")
+        check.assert_called_once()
 
 
 class BookingApiTests(TestCase):

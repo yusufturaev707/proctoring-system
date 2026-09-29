@@ -370,7 +370,7 @@ class DeviceTokenViewSet(
     ]
     search_fields = [
         "device_id", "hardware_fingerprint", "app_version", "gpu_name",
-        "reported_machine_uuid",
+        "reported_machine_uuid", "reported_mac",
         "computer__number",
         "computer__inventory_code",
         "computer__machine_uuid",

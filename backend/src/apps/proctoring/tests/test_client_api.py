@@ -839,6 +839,25 @@ class HandshakeMachineTests(TestCase):
         self.assertEqual(machine["status"], "not_found")
         self.assertFalse(machine["allowed"])
 
+    def test_mac_mismatch_blocks_in_strict_mode(self):
+        """`REQUIRE_MACHINE_MAC=true`: UUID mos, MAC boshqa - `ok` emas, to'siq."""
+        payload = {
+            "app_version": "1.0.0",
+            "machine_uuid": self.computer.machine_uuid,
+            "mac_address": "00-E0-4C-68-01-02",
+        }
+        with patch.dict(settings.PROCTORING, {"REQUIRE_MACHINE_MAC": True}):
+            machine = self.machine(payload)
+
+        self.assertEqual(machine["status"], "mac_mismatch")
+        self.assertFalse(machine["allowed"])
+        self.assertEqual(machine["expected_mac"], "AA:BB:CC:DD:EE:10")
+        self.assertIn("00:e0:4c:68:01:02", machine["message"])
+        self.device.refresh_from_db()
+        self.assertEqual(self.device.reported_mac, "00:E0:4C:68:01:02")
+        # Standart rejimda xuddi shu so'rov o'tadi.
+        self.assertEqual(self.machine(payload)["status"], "ok")
+
     def test_legacy_computer_binding_is_audited(self):
         Computer.objects.filter(pk=self.computer.pk).update(machine_uuid=None)
         machine = self.machine({

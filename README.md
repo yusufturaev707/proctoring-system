@@ -45,10 +45,10 @@ celery -A config beat                                # FAQAT BITTA
 # --- Frontend ---
 cd frontend
 npm install
-npm run dev                                          # http://localhost:5173
+npm run dev                                          # http://localhost:5175
 ```
 
-API hujjati: `http://localhost:8000/api/docs/`
+API hujjati: `http://localhost:8002/api/docs/`
 
 ---
 

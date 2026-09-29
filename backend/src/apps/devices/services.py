@@ -122,6 +122,9 @@ def record_handshake(
     reported_machine_uuid = normalize_machine_uuid(reported_machine_uuid)
     if reported_machine_uuid and reported_machine_uuid != device.reported_machine_uuid:
         updates["reported_machine_uuid"] = reported_machine_uuid
+    normalized_mac = normalize_mac(reported_mac) or ""
+    if normalized_mac and normalized_mac != device.reported_mac:
+        updates["reported_mac"] = normalized_mac
 
     # Versiya anomaliya EMAS — client yangilanishi normal holat. Lekin u
     # faqat ro'yxatdan o'tishda yozilsa, "qaysi bino eski build'da"
@@ -425,6 +428,55 @@ MACHINE_NO_COMPUTER = "no_computer"
 MACHINE_NOT_FOUND = "not_found"
 MACHINE_MISMATCH = "mismatch"
 MACHINE_INACTIVE = "inactive"
+MACHINE_MAC_MISMATCH = "mac_mismatch"
+
+
+# MAC - QAT'IY REJIMDA IKKINCHI BELGI (`REQUIRE_MACHINE_MAC`). Qoida
+# shu ikki funksiyada: handshake (`verify_machine`) ham, JSHSHIR
+# tekshiruvi (`exams.bookings.ensure_machine_mac`) ham shularni
+# chaqiradi - ikki joyda yashagan qoida albatta ajralib ketadi va
+# operator bir ekranda "o'tdi", keyingisida "mos emas" ko'rardi.
+def mac_check_required() -> bool:
+    return bool(settings.PROCTORING.get("REQUIRE_MACHINE_MAC"))
+
+
+def mac_matches(computer: Computer, reported_mac: str) -> bool:
+    """
+    Client aytgan MAC kompyuter yozuvidagiga mos keladimi.
+
+    Yozuvda MAC YO'Q - `True` (faqat UUID): MAC'ni administrator
+    kiritadi, client hech qachon yozmaydi; aks holda birinchi kelgan
+    mashina o'z MAC'ini "etalon" qilib qo'yardi.
+
+    Client MAC yubormagan - `False`: aks holda qat'iy rejimni maydonni
+    bo'sh yuborib chetlab o'tish mumkin bo'lardi (`unknown` ni to'siq
+    qilgan sabab bilan bir xil).
+    """
+    expected = normalize_mac(computer.mac_address)
+    if not expected:
+        return True
+    return normalize_mac(reported_mac) == expected
+
+
+def mac_mismatch_message(computer: Computer, reported_mac: str) -> str:
+    # Ikkala qiymat BIR XIL shaklda (kichik harf, ikki nuqta): yozuvda
+    # `2C-F0-...`, mashinada `2c:f0:...` turgan bo'lsa, administrator
+    # farqni format farqi deb o'ylab qolardi.
+    def shown(value):
+        mac = normalize_mac(value)
+        return mac.lower() if mac else ""
+
+    return (
+        "«{label}» kompyuterining MAC manzili yozuvdagiga mos kelmadi: "
+        "yozuvda {expected}, mashinada {actual}. Tarmoq kartasi "
+        "almashtirilgan bo'lsa administrator yozuvni yangilashi kerak; "
+        "mashinada bir nechta adapter yoqilgan bo'lsa, ortiqchasini "
+        "(Wi-Fi) o'chiring.".format(
+            label=computer.label,
+            expected=shown(computer.mac_address),
+            actual=shown(reported_mac) or "MAC aniqlanmadi",
+        )
+    )
 
 
 def bind_machine_uuid(computer: Computer, value: str) -> bool:
@@ -453,8 +505,14 @@ def bind_machine_uuid(computer: Computer, value: str) -> bool:
     return bool(updated)
 
 
-def _matched(result: dict, computer: Computer) -> dict:
-    """Mashina - qurilma biriktirilgan kompyuterning O'ZI."""
+def _matched(result: dict, computer: Computer, *, check_mac: bool = False) -> dict:
+    """
+    Mashina - qurilma biriktirilgan kompyuterning O'ZI.
+
+    `check_mac` faqat UUID bo'yicha moslikda: bog'lash va eski client
+    yo'lida MAC allaqachon solishtirilgan. "Hisobdan chiqarilgan" MAC'dan
+    OLDIN - u yakuniy qaror, MAC'ni tuzatish esa foyda bermaydi.
+    """
     result["computer_code"] = computer.inventory_code
     if not computer.is_active:
         result["status"] = MACHINE_INACTIVE
@@ -462,6 +520,10 @@ def _matched(result: dict, computer: Computer) -> dict:
             "«{}» kompyuteri hisobdan chiqarilgan — imtihon o'tkazib "
             "bo'lmaydi.".format(computer.label)
         )
+        return result
+    if check_mac and mac_check_required() and not mac_matches(computer, result["mac_address"]):
+        result["status"] = MACHINE_MAC_MISMATCH
+        result["message"] = mac_mismatch_message(computer, result["mac_address"])
         return result
     result["status"] = MACHINE_OK
     return result
@@ -476,7 +538,9 @@ def verify_machine(
 
     Asos - Machine UUID. MAC faqat ikki joyda: UUID'ni bir marta
     bog'lash (yuqoridagi izoh) va UUID yubormaydigan ESKI client
-    (`basis="mac"`).
+    (`basis="mac"`). `REQUIRE_MACHINE_MAC=true` da uchinchisi: UUID mos
+    kelgan mashinada MAC ham yozuvdagiga mos bo'lishi shart
+    (`mac_matches`, aks holda `mac_mismatch`).
 
     Qidiruv KO'LAMI - qurilmaning binosi: savol "shu mashina umuman
     bazada bormi?" emas, "AYNAN SHU binoda bormi?". Boshqa binodagi
@@ -534,7 +598,7 @@ def verify_machine(
         return _verify_by_mac(result, computer, zone, reported_mac)
 
     if computer.machine_uuid == reported_uuid:
-        return _matched(result, computer)
+        return _matched(result, computer, check_mac=True)
 
     if (
         not computer.machine_uuid

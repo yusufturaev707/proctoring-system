@@ -272,6 +272,11 @@ class DeviceTokenSerializer(serializers.ModelSerializer):
     computer_machine_uuid = serializers.CharField(
         source="computer.machine_uuid", read_only=True, default=""
     )
+    #: Yozuvdagi MAC - `reported_mac` bilan yonma-yon: `REQUIRE_MACHINE_MAC`
+    #: yoqilsa qaysi mashina to'silishi shu farqdan ko'rinadi.
+    computer_mac_address = serializers.CharField(
+        source="computer.mac_address", read_only=True, default=""
+    )
     is_online = serializers.SerializerMethodField()
     #: Client'ga kirgan xodim (Redis'dagi presence yozuvidan).
     online_staff = serializers.SerializerMethodField()
@@ -286,6 +291,7 @@ class DeviceTokenSerializer(serializers.ModelSerializer):
             "computer_status", "is_online", "online_staff", "online_state",
             "last_used_at", "last_ip", "reported_public_ip", "reported_lan_ip",
             "reported_machine_uuid", "computer_machine_uuid",
+            "reported_mac", "computer_mac_address",
             "gpu_name", "performance_profile",
             "revoked_at", "revoke_reason", "created_at",
         )

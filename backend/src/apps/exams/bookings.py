@@ -31,6 +31,7 @@ from django.utils import timezone
 
 from apps.common.exceptions import (
     DomainError,
+    MachineMacMismatch,
     SeatInUse,
     SeatNotBooked,
     SeatOutOfService,
@@ -469,6 +470,38 @@ def _physical_computer(zone_id, *, machine_uuid: str = "", mac_address: str = ""
     if uuid_value:
         queryset = queryset.filter(machine_uuid__isnull=True)
     return queryset.first()
+
+
+def ensure_machine_mac(*, device=None, zone=None, machine_uuid: str = "", mac_address: str = "") -> None:
+    """
+    Qat'iy rejimda (`REQUIRE_MACHINE_MAC`) UUID bo'yicha tanilgan
+    mashinaning MAC'i yozuvdagiga mos bo'lishi shart.
+
+    Bron qoidasidan MUSTAQIL: savol "talabgor qaysi stolda" emas, "bu
+    mashina o'zi aytgan mashinami". Faqat UUID bo'yicha topilgan yozuv
+    tekshiriladi - UUID'siz (eski) yozuv MAC bilan TOPILADI, ya'ni u
+    yerda MAC ta'rifga ko'ra mos. Qoidaning o'zi `devices.services`
+    da (`mac_matches`) - handshake bilan bir xil.
+    """
+    from apps.devices import services as device_services
+
+    if not device_services.mac_check_required():
+        return
+    bound = device.computer if device is not None else None
+    zone_id = bound.zone_id if bound is not None else getattr(zone, "pk", None)
+    if zone_id is None or not normalize_machine_uuid(machine_uuid):
+        return
+    physical = _physical_computer(zone_id, machine_uuid=machine_uuid)
+    if physical is None or device_services.mac_matches(physical, mac_address):
+        return
+    raise MachineMacMismatch(
+        device_services.mac_mismatch_message(physical, mac_address),
+        extra={
+            "expected_mac": physical.mac_address,
+            "reported_mac": normalize_mac(mac_address) or "",
+            "computer": computer_payload(physical),
+        },
+    )
 
 
 def resolve_candidate_seat(

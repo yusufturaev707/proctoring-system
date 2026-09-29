@@ -59,6 +59,7 @@ PROCTORING["REQUIRE_DEVICE_ID"] = False  # noqa: F405
 # testlar ularni `override_settings` bilan o'zi yoqadi.
 PROCTORING["REQUIRE_COMPUTER_BOOKING"] = False  # noqa: F405
 PROCTORING["ALLOW_PRIVATE_SOURCE_IP"] = False  # noqa: F405
+PROCTORING["REQUIRE_MACHINE_MAC"] = False  # noqa: F405
 EXTERNAL_PLATFORM["MOCK"] = True  # noqa: F405
 STORAGE["ENABLED"] = False  # noqa: F405
 

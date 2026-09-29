@@ -134,6 +134,26 @@ export default function DeviceDetailSheet({
                   device.reported_machine_uuid !== device.computer_machine_uuid,
                 )}
               />
+              {/* MAC - `REQUIRE_MACHINE_MAC` yoqilsa farq to'siq bo'ladi; administrator
+                  uni yoqishdan OLDIN shu yerda (va `audit_machine_macs` da) ko'radi. */}
+              <Field
+                label="MAC (client aytgan)"
+                value={device.reported_mac}
+                hint="Client hali yubormagan"
+                mono
+                onCopy={copy}
+              />
+              <Field
+                label="Kompyuter yozuvidagi MAC"
+                value={device.computer_mac_address}
+                hint="Yozilmagan — faqat UUID tekshiriladi"
+                mono
+                onCopy={copy}
+                warn={Boolean(
+                  device.reported_mac && device.computer_mac_address &&
+                  normalizeMac(device.reported_mac) !== normalizeMac(device.computer_mac_address),
+                )}
+              />
             </Section>
 
             <Section title="Apparat">
@@ -186,6 +206,9 @@ export default function DeviceDetailSheet({
 }
 
 const dateText = (value) => (value ? `${formatDateTime(value)} · ${fromNow(value)}` : '')
+
+// Server `normalize_mac` bilan bir xil: `2C-F0-...` va `2c:f0:...` farq emas.
+const normalizeMac = (value) => String(value || '').trim().replace(/-/g, ':').toUpperCase()
 
 function Section({ title, children }) {
   return (
