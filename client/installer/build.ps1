@@ -7,8 +7,11 @@
       1. venv va build vositalarini tekshirish (-InstallBuildDeps o'rnatadi);
       2. onnxruntime paketi nashrga mosligini tekshirish (GPU -> provayder DLL);
       3. PyInstaller spec -> dist\<nashr>\ProctoringClient\;
+         3a. models_manifest.json (.exe yonida, model yaxlitligi);
+         3b. kod imzosi - faqat SIGN_CERT_THUMBPRINT berilganda;
       4. ProctoringClientCheck.exe bilan tutun tekshiruvi (-SkipSmoke o'chiradi);
       5. Inno Setup (ISCC.exe) topilsa -> dist\installer\ProctoringClientSetup-<ver>-<nashr>.exe
+         (imzo bilan: setup.exe va uninstaller ham ISCC ichida imzolanadi)
 
     SERVER MANZILI O'RNATUVCHIGA BUILD PAYTIDA JOYLANADI: installer\client.env
     (yoki -EnvFile) tekshiriladi va setup.exe ichiga qo'yiladi - o'rnatishda
@@ -62,7 +65,11 @@ param(
 
     # O'rnatuvchiga joylanadigan tayyor .env (standart: installer\client.env).
     # Bir nechta o'rnatish (viloyat/markaz) bo'lsa - har biriga alohida fayl.
-    [string]$EnvFile = ""
+    [string]$EnvFile = "",
+
+    # Imzolashda _internal dagi IMZOSIZ PE fayllarni (.dll/.pyd/.exe) ham
+    # imzolash. Faqat SIGN_CERT_THUMBPRINT berilganda ishlaydi.
+    [switch]$SignAllUnsigned
 )
 
 $ErrorActionPreference = "Stop"
@@ -76,6 +83,65 @@ function Write-Step([string]$Text) {
 function Fail([string]$Text) {
     Write-Host ("XATO: " + $Text) -ForegroundColor Red
     exit 1
+}
+
+# --------------------------------------------------------------------------
+# Kod imzosi (ixtiyoriy)
+# --------------------------------------------------------------------------
+# Sertifikat berilmasa HECH NARSA qilinmaydi (dev va sinov build'lari).
+# Muhit o'zgaruvchilari - parol yoki kalit fayli skriptda/git'da emas:
+#   SIGN_CERT_THUMBPRINT  sertifikat izi (CurrentUser\My; EV token ham shu yerda ko'rinadi)
+#   SIGN_MACHINE_STORE=1  sertifikat LocalMachine\My da
+#   SIGN_TIMESTAMP_URL    RFC 3161 server (standart http://timestamp.digicert.com)
+#   SIGNTOOL_PATH         signtool.exe (standart: eng yangi Windows Kits\10\bin\*\x64)
+# Vaqt tamg'asi MAJBURIY: usiz imzo sertifikat muddati tugashi bilan
+# yaroqsiz bo'ladi va 500 mashinadagi client bir kunda "noma'lum nashriyot"
+# ga aylanadi.
+$SignThumbprint = ""
+if ($env:SIGN_CERT_THUMBPRINT) { $SignThumbprint = ($env:SIGN_CERT_THUMBPRINT -replace "[^0-9A-Fa-f]", "") }
+$SignTimestamp = "http://timestamp.digicert.com"
+if ($env:SIGN_TIMESTAMP_URL) { $SignTimestamp = $env:SIGN_TIMESTAMP_URL }
+$SignTool = $null
+
+function Resolve-SignTool {
+    if ($env:SIGNTOOL_PATH) {
+        if (Test-Path $env:SIGNTOOL_PATH) { return $env:SIGNTOOL_PATH }
+        Fail ("SIGNTOOL_PATH topilmadi: " + $env:SIGNTOOL_PATH)
+    }
+    $kits = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\bin"
+    if (Test-Path $kits) {
+        $found = Get-ChildItem -Path $kits -Filter signtool.exe -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.Directory.Name -eq "x64" } |
+            Sort-Object { $_.Directory.Parent.Name } -Descending |
+            Select-Object -First 1
+        if ($found) { return $found.FullName }
+    }
+    $cmd = Get-Command "signtool.exe" -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    Fail "SIGN_CERT_THUMBPRINT berilgan, lekin signtool.exe topilmadi (Windows SDK yoki SIGNTOOL_PATH)."
+}
+
+function Get-SignArgs {
+    $a = @("sign", "/sha1", $SignThumbprint, "/fd", "sha256", "/tr", $SignTimestamp, "/td", "sha256")
+    if ($env:SIGN_MACHINE_STORE -eq "1") { $a += "/sm" }
+    return $a
+}
+
+function Invoke-CodeSign([string[]]$Paths, [string]$What) {
+    if (-not $SignThumbprint) { return }
+    if (-not $Paths -or $Paths.Count -eq 0) { return }
+    if (-not $script:SignTool) { $script:SignTool = Resolve-SignTool }
+    Write-Host ("Imzolash: " + $What + " (" + $Paths.Count + " fayl)")
+    # Bir chaqiruvda ko'p fayl - vaqt tamg'asi serveriga kamroq murojaat,
+    # lekin buyruq satri ~32K bilan cheklangan: 50 tadan bo'lamiz.
+    $signArgs = @(Get-SignArgs)
+    for ($i = 0; $i -lt $Paths.Count; $i += 50) {
+        $chunk = @($Paths[$i..([Math]::Min($i + 49, $Paths.Count - 1))])
+        & $script:SignTool @signArgs /d "Proctoring Client" @chunk
+        if ($LASTEXITCODE -ne 0) { Fail ("signtool sign yiqildi (" + $What + ")") }
+        & $script:SignTool verify /pa /q @chunk
+        if ($LASTEXITCODE -ne 0) { Fail ("signtool verify yiqildi (" + $What + ")") }
+    }
 }
 
 # --------------------------------------------------------------------------
@@ -258,6 +324,43 @@ foreach ($sub in @("_internal\cuda", "_internal\models", "_internal\PyQt6", "_in
         Write-Host ("  {0,-24} {1,8:N0} MB" -f $sub, ($s / 1MB))
     }
 }
+# O'rnatuvchining disk tekshiruvi uchun (ISCC /DBundleMB) - manifest va
+# imzodan keyingi o'sish ahamiyatsiz (KB).
+$BundleMB = [int][Math]::Ceiling($total / 1MB)
+
+# --------------------------------------------------------------------------
+# 3a. Model manifesti (models_manifest.json, .exe yonida)
+# --------------------------------------------------------------------------
+# Client ishga tushishda modellar yaxlitligini shu fayl bilan tekshiradi.
+# Tutun tekshiruvidan OLDIN: u manifestni bundle bilan solishtiradi.
+Write-Step "Model manifesti"
+& $Python (Join-Path $InstallerDir "make_models_manifest.py") --app-dir $AppDir
+if ($LASTEXITCODE -ne 0) { Fail "models_manifest.json yozilmadi" }
+
+# --------------------------------------------------------------------------
+# 3b. Kod imzosi (SIGN_CERT_THUMBPRINT bo'lmasa - o'tkazib yuboriladi)
+# --------------------------------------------------------------------------
+# Tutun tekshiruvidan OLDIN: tekshiruv aynan tarqatiladigan (imzolangan)
+# fayllar ustida o'tishi kerak. UPX yo'q (spec) - imzo siqilgan faylni
+# buzmaydi.
+if ($SignThumbprint) {
+    Write-Step "Kod imzosi"
+    Invoke-CodeSign @($MainExe, (Join-Path $AppDir "ProctoringClientCheck.exe") | Where-Object { Test-Path $_ }) "client .exe"
+    if ($SignAllUnsigned) {
+        # Uchinchi tomon DLL'larining ko'pchiligi (Qt, ORT, CUDA, python312)
+        # o'z nashriyoti imzosi bilan keladi - ularga TEGILMAYDI. Imzosiz
+        # qolganlari (.pyd, ba'zi DLL'lar) bizning imzo bilan yopiladi:
+        # antivirus evristikasi "imzosiz modul yuklayotgan imzolangan exe"
+        # ni ham shubhali deb biladi.
+        $unsigned = @(Get-ChildItem -Path (Join-Path $AppDir "_internal") -Recurse -File -Include *.dll, *.pyd, *.exe |
+            Where-Object { (Get-AuthenticodeSignature -FilePath $_.FullName).Status -eq "NotSigned" } |
+            ForEach-Object { $_.FullName })
+        Invoke-CodeSign $unsigned "_internal dagi imzosiz modullar"
+    }
+} else {
+    Write-Host ""
+    Write-Host "Kod imzosi: SIGN_CERT_THUMBPRINT yo'q - imzolanmadi (SmartScreen/antivirus ogohlantirishi mumkin)." -ForegroundColor Yellow
+}
 
 # --------------------------------------------------------------------------
 # 4. Tutun tekshiruvi
@@ -318,15 +421,46 @@ $isccArgs = @(
     ("/DVariant=" + $Variant),
     ("/DSourceDir=" + $AppDir),
     ("/DEnvSource=" + $EnvStaged),
-    ("/DOutputDir=" + $InstallerOut)
+    ("/DOutputDir=" + $InstallerOut),
+    ("/DBundleMB=" + $BundleMB)
 )
+# Nashriyot nomi version.py dan - .exe resursi (spec), setup.exe resursi
+# va "Programs and Features" dagi nom BIR XIL bo'lishi kerak: antivirus
+# reputatsiyasi va imzo egasi bilan solishtirish shu nomga tayanadi.
+$Publisher = & $Python -c "import os, runpy; print(runpy.run_path(os.path.join(os.environ['PROCTORING_CLIENT_DIR'], 'version.py'))['COMPANY_NAME'])"
+if ($LASTEXITCODE -eq 0 -and $Publisher) { $isccArgs += ("/DAppPublisher=" + $Publisher.Trim()) }
 # PyInstaller spec'ning `workpath` i = <workpath>\<spec nomi>.
 $icon = Join-Path $WorkDir "proctoring_client\app.ico"
 if (Test-Path $icon) { $isccArgs += ("/DIconFile=" + $icon) }
 $redist = Join-Path $InstallerDir "redist\vc_redist.x64.exe"
 if (Test-Path $redist) {
+    # Bu fayl 500 mashinada ADMINISTRATOR huquqida ishga tushadi -
+    # Microsoft imzosisiz (buzilgan yoki almashtirilgan) nusxa
+    # o'rnatuvchiga kirmasligi kerak.
+    $sig = Get-AuthenticodeSignature -FilePath $redist
+    if ($sig.Status -ne "Valid" -or -not $sig.SignerCertificate -or $sig.SignerCertificate.Subject -notmatch "O=Microsoft Corporation") {
+        Fail ("redist\vc_redist.x64.exe Microsoft imzosi bilan emas (" + $sig.Status + "): " + $redist)
+    }
     $isccArgs += ("/DVcRedist=" + $redist)
     Write-Host "VC++ runtime o'rnatuvchisi qo'shiladi: $redist"
+} else {
+    # Bundle runtime'ni app-local olib keladi, ya'ni bu to'siq emas. Lekin
+    # tizimdagi runtime 14.40 dan ESKI bo'lsa o'rnatuvchi uni yangilay
+    # olmaydi - faqat ogohlantiradi (proctoring_client.iss, VcRuntimeOld).
+    Write-Host "DIQQAT: installer\redist\vc_redist.x64.exe yo'q - VC++ runtime o'rnatuvchiga qo'shilmadi." -ForegroundColor Yellow
+    Write-Host "  https://aka.ms/vs/17/release/vc_redist.x64.exe (README, 'VC++ runtime')" -ForegroundColor Yellow
+}
+if ($SignThumbprint) {
+    # setup.exe VA uninstaller'ni (unins000.exe) ISCC o'zi imzolaydi:
+    # uninstaller build paytida emas, ISCC ichida yasaladi, ya'ni uni
+    # keyin tashqaridan imzolab bo'lmaydi. `$f` / `$q` - ISCC o'rinbosarlari.
+    if (-not $SignTool) { $SignTool = Resolve-SignTool }
+    $storeFlag = ""
+    if ($env:SIGN_MACHINE_STORE -eq "1") { $storeFlag = " /sm" }
+    $signCmd = '$q' + $SignTool + '$q sign /sha1 ' + $SignThumbprint + ' /fd sha256 /tr ' + $SignTimestamp +
+               ' /td sha256' + $storeFlag + ' /d $qProctoring Client$q $f'
+    $isccArgs += ("/Sproctoringsign=" + $signCmd)
+    $isccArgs += "/DSignToolName=proctoringsign"
 }
 $isccArgs += $Iss
 
@@ -350,6 +484,11 @@ $elapsed = (Get-Date) - $started
 
 $setup = Join-Path $InstallerOut ("ProctoringClientSetup-" + $Version + "-" + $Variant + ".exe")
 if (Test-Path $setup) {
+    if ($SignThumbprint) {
+        & $SignTool verify /pa /q $setup
+        if ($LASTEXITCODE -ne 0) { Fail ("setup.exe imzosi tekshiruvdan o'tmadi: " + $setup) }
+        Write-Host "setup.exe imzolangan va tekshirildi."
+    }
     $size = (Get-Item $setup).Length
     Write-Host ""
     Write-Host ("O'rnatuvchi: {0} ({1:N0} MB, {2:N1} daqiqa)" -f $setup, ($size / 1MB), $elapsed.TotalMinutes) -ForegroundColor Green

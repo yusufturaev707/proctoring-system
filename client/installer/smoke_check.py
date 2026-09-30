@@ -187,6 +187,50 @@ def _models() -> str:
     return "buffalo_l tayyor; qo'shimcha: {}".format(", ".join(extras) or "yo'q")
 
 
+def _models_manifest() -> str:
+    """
+    `models_manifest.json` (build.ps1 yozadi) bundle'dagi modellarga mosmi.
+
+    Client ishga tushishda shu manifestga tayanadi; build'da uni
+    tekshirmasak, xato manifest 500 mashinaga tarqalib, har birida
+    "model buzilgan" degan YOLG'ON signal berardi. Ikki tomon: manifestdagi
+    har fayl bor va o'lcham/xesh mos, `models/` dagi har fayl manifestda.
+    Kalitlar `resource_root()` ga nisbatan (`make_models_manifest.py`).
+    """
+    import hashlib
+
+    from core.bundle_paths import resource_root
+
+    manifest_path = Path(sys.executable).resolve().parent / "models_manifest.json"
+    if not manifest_path.is_file():
+        raise FileNotFoundError(str(manifest_path))
+    files = json.loads(manifest_path.read_text(encoding="utf-8"))["files"]
+
+    root = resource_root()
+    problems: list[str] = []
+    for key, expected in files.items():
+        path = root / key
+        if not path.is_file():
+            problems.append("yo'q: " + key)
+            continue
+        if path.stat().st_size != expected["size"]:
+            problems.append("o'lcham: " + key)
+            continue
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for block in iter(lambda: handle.read(4 * 1024 * 1024), b""):
+                digest.update(block)
+        if digest.hexdigest() != expected["sha256"]:
+            problems.append("sha256: " + key)
+    listed = set(files)
+    for path in (root / "models").rglob("*"):
+        if path.is_file() and path.relative_to(root).as_posix() not in listed:
+            problems.append("manifestda yo'q: " + path.relative_to(root).as_posix())
+    if problems:
+        raise RuntimeError("; ".join(problems))
+    return "{} ta fayl mos".format(len(files))
+
+
 def _cuda_status() -> dict:
     from proctoring.hardware import cuda_runtime
 
@@ -381,6 +425,8 @@ def run(argv: list[str] | None = None) -> int:
     _check(report, "kutubxonalar", _libraries)
     _check(report, "client modullari", _client_modules)
     _check(report, "modellar", _models)
+    # Dev rejimda manifest yo'q (u faqat build natijasida) — ogohlantirish.
+    _check(report, "model manifesti", _models_manifest, required=bool(getattr(sys, "frozen", False)))
     cuda = _check(report, "CUDA", _cuda_status, required=args.require_gpu)
     if isinstance(cuda, dict) and not cuda["available"]:
         report.add("CUDA holati", "WARN" if not args.require_gpu else "FAIL",

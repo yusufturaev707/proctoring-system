@@ -22,6 +22,7 @@ TUZILMA (`dist/ProctoringClient/`):
 
     ProctoringClient.exe         oynali, konsolsiz
     ProctoringClientCheck.exe    konsolli tutun tekshiruvi (smoke_check.py)
+    models_manifest.json         model yaxlitligi (build.ps1, make_models_manifest.py)
     _internal/
         resources/               logotip (`--add-data "resources;resources"`)
         models/buffalo_l/        InsightFace (det + rec + 2d106)
@@ -348,11 +349,46 @@ EXCLUDES = [
     "scipy.datasets", "scipy.misc", "scipy.fftpack", "scipy.differentiate",
 ]
 
-# Aniq tahlil natijasida kerak bo'lgan yashirin importlar. Hozir BO'SH:
-# `skimage.transform` ning lazy `.pyi` fayllarini
-# contrib hook yig'adi. Bu ro'yxatga faqat `ProctoringClientCheck.exe`
-# (client modullari tekshiruvi) ko'rsatgan modul qo'shiladi.
+# Uchinchi tomon paketlari uchun yashirin importlar. Hozir BO'SH va bu
+# tahlil natijasi (`warn-proctoring_client.txt` + tutun tekshiruvi):
+#   * insightface.model_zoo — `model_zoo.py` barcha kichik modullarini
+#     statik import qiladi (arcface_onnx, retinaface, scrfd, landmark...);
+#   * onnxruntime.capi (`onnxruntime_pybind11_state`), cv2 (`config.py`,
+#     ffmpeg DLL), skimage (lazy `.pyi`), scipy, certifi — contrib hook'lari;
+#   * PyQt6 (QtWebEngine*, QtWebSockets, QtNetwork + `tls/` plaginlari) —
+#     PyInstaller'ning o'z hook'lari.
+# Bu ro'yxatga faqat `ProctoringClientCheck.exe` ko'rsatgan modul qo'shiladi.
 HIDDENIMPORTS: list = []
+
+
+def _client_modules() -> list:
+    """
+    Client'ning barcha modullari — fayl tizimidan.
+
+    IKKALA `.exe` ga ham yashirin import sifatida beriladi. Har `.exe`
+    o'z PYZ arxiviga ega: tutun tekshiruvi `importlib` bilan (dinamik)
+    yuklaydigan modullarni ASOSIY `.exe` ham o'z ichida olib yurishi
+    kerak — aks holda tekshiruv o'z arxivini sinab "hammasi joyida"
+    derdi, asosiy `.exe` da esa `main.py` dan statik yetib bo'lmaydigan
+    modul (masalan kelajakdagi ixtiyoriy/dinamik import) yo'q bo'lardi.
+    Client modullari kichik (~1 MB), paritet narxi arzon.
+
+    Ro'yxat qo'lda yozilmaydi: yangi modul (masalan `--watchdog` rejimi)
+    tekshiruvdan tushib qolmasligi kerak. `collect_submodules`
+    ishlatilmadi: u paketlarni build jarayonida IMPORT qiladi (config
+    `.env` o'qiydi, services Qt'ni yuklaydi).
+    """
+    names = ["config", "main_window", "version"]
+    for package in ("core", "services", "proctoring", "ui"):
+        for path in sorted((CLIENT_DIR / package).rglob("*.py")):
+            parts = list(path.relative_to(CLIENT_DIR).with_suffix("").parts)
+            if parts[-1] == "__init__":
+                parts = parts[:-1]
+            names.append(".".join(parts))
+    return names
+
+
+CLIENT_MODULES = _client_modules()
 
 
 # --------------------------------------------------------------------------
@@ -488,7 +524,7 @@ def _version_file(original_filename: str, description: str) -> str:
 ICON = _make_icon()
 COMMON_ANALYSIS = dict(
     pathex=[str(CLIENT_DIR)],
-    hiddenimports=HIDDENIMPORTS,
+    hiddenimports=HIDDENIMPORTS + CLIENT_MODULES,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -521,6 +557,13 @@ exe = EXE(  # noqa: F821
     name=EXE_NAME,
     icon=ICON,
     version=_version_file(EXE_NAME + ".exe", VERSION["FILE_DESCRIPTION"]),
+    # console=False: GUI subsystem — `--keyboard-hook` / `--watchdog`
+    # bolalari ham (xuddi shu `.exe`) konsol oynasini CHAQNATMAYDI.
+    # Qulf jarayonining stdin/stdout'i quvur (pipe) orqali meros qilinadi
+    # va CRT 0/1 deskriptorlarini ulardan ochadi (`keyboard_hook_process`
+    # `os.fdopen(0)` / `os.write(1)`), ya'ni oynali `.exe` da ham ishlaydi.
+    # `multiprocessing` client'da ishlatilmaydi — `freeze_support()` shart
+    # emas; qo'shilsa, `main.py` da bayroq tekshiruvlaridan OLDIN chaqiring.
     console=False,
     # asInvoker: kiosk oddiy foydalanuvchi ostida ishlaydi. Administrator
     # huquqi kerak bo'lgan tozalash (xizmatlarni to'xtatish) uchun
@@ -542,33 +585,14 @@ binaries, datas = a.binaries, a.datas
 # --------------------------------------------------------------------------
 # Tutun tekshiruvi — o'sha `_internal` ustida, konsol bilan
 # --------------------------------------------------------------------------
-def _client_modules() -> list:
-    """
-    Client'ning barcha modullari — fayl tizimidan.
-
-    Har `.exe` o'z PYZ arxiviga ega va `smoke_check` client modullarini
-    `importlib` bilan (dinamik) yuklaydi — statik tahlil ularni
-    ko'rmaydi. Ro'yxat qo'lda yozilmaydi: yangi modul tekshiruvdan
-    tushib qolmasligi kerak. `collect_submodules` ishlatilmadi: u
-    paketlarni build jarayonida IMPORT qiladi (config `.env` o'qiydi,
-    services Qt'ni yuklaydi).
-    """
-    names = ["config", "main_window", "version"]
-    for package in ("core", "services", "proctoring", "ui"):
-        for path in sorted((CLIENT_DIR / package).rglob("*.py")):
-            parts = list(path.relative_to(CLIENT_DIR).with_suffix("").parts)
-            if parts[-1] == "__init__":
-                parts = parts[:-1]
-            names.append(".".join(parts))
-    return names
-
-
+# Client modullari COMMON_ANALYSIS orqali ikkala `.exe` da bir xil
+# (`_client_modules` docstring'i).
 if not OPTS.no_check_exe:
     check = Analysis(  # noqa: F821
         [str(SPEC_DIR / "smoke_check.py")],
         binaries=[],
         datas=[],
-        **{**COMMON_ANALYSIS, "hiddenimports": HIDDENIMPORTS + _client_modules()},
+        **COMMON_ANALYSIS,
     )
     check.binaries = _filter_binaries(check.binaries)
     check.datas = _filter_datas(check.datas)

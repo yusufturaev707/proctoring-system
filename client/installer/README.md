@@ -12,6 +12,7 @@ tushiradi.
 | `proctoring_client.spec` | PyInstaller (`onedir`), GPU/CPU nashri |
 | `proctoring_client.iss` | Inno Setup 6 skripti |
 | `smoke_check.py` | yig'ilgan `.exe` ning tutun tekshiruvi (`ProctoringClientCheck.exe`) |
+| `make_models_manifest.py` | `models_manifest.json` — model yaxlitligi etaloni (build yozadi, client `core/self_check.py` o'qiydi) |
 | `make_icon.py` | `resources/images/logo.png` → `.ico` (build vaqtida) |
 | `autostart.ps1` | Task Scheduler "at logon" vazifasi (o'rnatuvchi chaqiradi) |
 | `env.production.template` | `client.env` namunasi (server manzili o'rinbosarlari bilan) |
@@ -88,6 +89,7 @@ manzili — BUILD paytida»); faqat `.exe` yig'ishga u kerak emas.
 | `-FullBuffalo` | buffalo_l ning ishlatilmaydigan modellarini ham qo'shish |
 | `-NoCheckExe` | `ProctoringClientCheck.exe` siz |
 | `-EnvFile <yo'l>` | o'rnatuvchiga joylanadigan `.env` (standart `installer\client.env`) |
+| `-SignAllUnsigned` | imzolashda `_internal` dagi imzosiz `.dll/.pyd/.exe` ni ham imzolash (faqat `SIGN_CERT_THUMBPRINT` bilan) |
 
 ### Server manzili — BUILD paytida
 
@@ -186,12 +188,41 @@ modullari import qilinib, InsightFace'ga haqiqiy yuz rasmi berilib,
   qiladi, qoladi.
 * `torch` (venv'da 4.3 GB), `sympy`, `networkx`, `PIL`, `imageio`,
   `matplotlib`, `tkinter` — client ishlatmaydi, chiqarilgan.
-* Yashirin import (`hiddenimports`) KERAK EMAS: `keyboard._winkeyboard`
-  shartli, lekin statik import; `skimage` ning lazy `.pyi` fayllarini
-  contrib hook yig'adi. Buni `ProctoringClientCheck.exe` tasdiqlaydi.
+* Uchinchi tomon uchun yashirin import KERAK EMAS: `insightface.model_zoo`
+  kichik modullarini statik import qiladi; `onnxruntime.capi`, `cv2`
+  (ffmpeg DLL), `skimage` (lazy `.pyi`), `scipy`, `certifi` — contrib
+  hook'lari; PyQt6 (WebEngine, WebSockets, `tls/` plaginlari) —
+  PyInstaller hook'lari. `warn-*.txt` dagi qolgan "missing" lar
+  (`numpy.core.*`, `pwd`, IronPython) — soxta.
+* **Client modullari (`core`, `services`, `proctoring`, `ui`, `config`,
+  `main_window`, `version`) IKKALA `.exe` ga yashirin import**
+  (`CLIENT_MODULES`): tutun tekshiruvi ularni `importlib` bilan yuklaydi
+  va o'z PYZ'ini sinaydi — paritetsiz asosiy `.exe` da `main.py` dan
+  statik yetib bo'lmaydigan modul yo'qligini u ko'rmasdi.
+* `--keyboard-hook` / `--watchdog` — xuddi shu oynali `.exe`
+  (`console=False`): konsol oynasi chaqnamaydi, qulf jarayonining
+  stdin/stdout'i pipe orqali meros qilinadi. `multiprocessing`
+  ishlatilmaydi — `freeze_support()` shart emas.
 
 Yangi paket qo'shilganda tutun tekshiruvi (u client'ning BARCHA
 modullarini import qiladi) birinchi bo'lib xabar beradi.
+
+### Model manifesti
+
+`build.ps1` PyInstaller'dan keyin `dist\<nashr>\ProctoringClient\models_manifest.json`
+ni yozadi (`.exe` YONIDA):
+
+```json
+{"files": {"models/buffalo_l/det_10g.onnx": {"size": 16923827, "sha256": "..."}}, "base": "_internal"}
+```
+
+Kalitlar `core.bundle_paths.resource_root()` ga nisbatan (onedir'da
+`<exe yoni>\_internal`) — client (`core/self_check.py`) aynan shu ildiz
+bilan o'qiydi. `models/` ostidagi HAR fayl kiradi (`.onnx`,
+`*.labels.txt`). Tutun tekshiruvi manifestni bundle bilan ikki tomonlama
+solishtiradi. Modelni qo'lda almashtirsangiz — manifestni ham qayta yozing
+(`make_models_manifest.py --app-dir ...`), aks holda client "model
+buzilgan" deydi.
 
 ### Tutun tekshiruvi
 
@@ -234,7 +265,36 @@ ProctoringClientSetup-1.0.0-gpu.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART ^
 Server manzili parametri YO'Q — u setup.exe ichida. Boshqa manzil
 kerak bo'lsa: yangi `client.env` bilan qayta build yoki `/ENVFILE=`.
 
-O'chirish: `"C:\Program Files\ProctoringClient\unins000.exe" /VERYSILENT`.
+O'chirish: `"C:\Program Files\ProctoringClient\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`.
+
+**`/NORESTART` ni tushirib qoldirmang**: `/SUPPRESSMSGBOXES` "qayta
+yuklash kerak" savoliga standart bo'yicha HA deydi — VC++ runtime 3010
+qaytargan mashina o'rnatish oxirida o'zi qayta yuklanardi.
+
+Chiqish kodlari (SCCM/PDQ uchun): `0` — tayyor; `1` — ishga tushmadi
+(eski Windows, 32-bit, xato `/INVENTORY_CODE`, `/ENVFILE` yo'q); `2` —
+bekor qilindi; `5` — o'rnatish yarmida to'xtadi (eski versiya QAYTARILDI);
+`7` — oldindan tekshiruv to'xtatdi (disk joyi, jarayon to'xtamadi,
+zaxiraga olib bo'lmadi) — hech narsa o'zgarmagan.
+
+### Oldindan tekshiruvlar (fayllarga tegishdan OLDIN)
+
+| Tekshiruv | Qayerda | Natija |
+|---|---|---|
+| Windows 10 1809+ (`MinVersion=10.0.17763`), 64-bit | Inno o'zi | to'xtaydi, kod 1 |
+| Administrator | `PrivilegesRequired=admin` — UAC so'raladi (SYSTEM'da so'ralmaydi) | rad etilsa o'rnatilmaydi |
+| Disk joyi: bundle + 512 MB | `CheckDiskSpace` (silent'da ham) | kod 7 |
+| Client jarayonlari (asosiy, watchdog, klaviatura qulfi, tekshiruv, `{app}` dan ishga tushgan har jarayon) | `StopClient`: `schtasks /End` -> `taskkill /F /T` takrori ~10 s gacha -> yo'l bo'yicha | to'xtamasa kod 7 |
+| VC++ runtime 14.40+ | `EnsureVcRuntime` | `redist\vc_redist.x64.exe` bo'lsa jim o'rnatiladi; yo'q bo'lsa va runtime ESKI — ogohlantirish (to'siq emas: app-local nusxa bor) |
+
+### Rollback
+
+Inno faqat o'zi yozgan fayllarni qaytaradi, `[InstallDelete]` o'chirgan
+eski `_internal` ni emas. Shuning uchun eski versiya o'chirilmaydi —
+`{app}\_rollback` ga KO'CHIRILADI (bir disk — bir zumda). O'rnatish
+yarmida yiqilsa (kod 5) `DeinitializeSetup` uni joyiga qaytaradi;
+muvaffaqiyatda `ssPostInstall` da o'chiriladi. Elektr o'chib qolgan
+holatdagi qoldiqni keyingi o'rnatish yoki uninstall tozalaydi.
 
 ### Yangilash
 
@@ -242,11 +302,12 @@ Xuddi o'sha buyruq, yangi `setup.exe` bilan. Mavjud `.env` saqlanadi
 (inventar kodi ham) — setup.exe ichidagi manzil faqat `.env` hali yo'q
 bo'lsa yoki `/FORCEENV` bilan yoziladi. O'rnatuvchi:
 
-1. ishlab turgan client'ni majburan yopadi (kiosk oddiy yopilishni rad
-   etadi);
-2. `{app}\_internal` ni butunlay o'chiradi (eski DLL qolib ketmasligi
-   uchun);
-3. yangi fayllarni yozadi, avtostart vazifasini yangilaydi.
+1. ishlab turgan client'ni (watchdog va klaviatura qulfi bilan birga)
+   majburan yopadi (kiosk oddiy yopilishni rad etadi);
+2. eski `{app}\_internal` ni `{app}\_rollback` ga ko'chiradi (eski DLL
+   yangisi bilan aralashmasligi va yiqilishda qaytarish uchun);
+3. yangi fayllarni yozadi, zaxirani o'chiradi, avtostart vazifasini
+   yangilaydi.
 
 **Yangilashni imtihon vaqtidan tashqarida o'tkazing**: majburan
 yopilgan client o'chirilgan qo'shimcha monitorlarni QAYTARMAYDI va
@@ -286,16 +347,53 @@ o'ldiradi va ustuvorlikni pasaytiradi. Tafsilot — `autostart.ps1`.
 Bundle VC++ runtime DLL'larini o'zi bilan olib keladi (app-local,
 14.44). Tizimdagi runtime juda eski bo'lsa (onnxruntime 1.2x eski
 `msvcp140` bilan `std::mutex` da qulaydi), `installer\redist\vc_redist.x64.exe`
-ni qo'ying (https://aka.ms/vs/17/release/vc_redist.x64.exe) — build
-uni avtomatik qo'shadi va o'rnatuvchi tizim runtime'i 14.40 dan eski
-bo'lgandagina ishga tushiradi.
+ni qo'ying (https://aka.ms/vs/17/release/vc_redist.x64.exe; git'da yo'q) —
+build uni Microsoft imzosini tekshirib qo'shadi va o'rnatuvchi tizim
+runtime'i 14.40 dan eski (yoki yo'q) bo'lgandagina, fayllardan OLDIN,
+`/install /quiet /norestart` bilan ishga tushiradi (3010 — oxirida qayta
+yuklash taklifi; boshqa xato — ogohlantirish, to'siq emas). Fayl
+bo'lmasa build sariq ogohlantiradi, o'rnatuvchi esa faqat ESKI runtime
+haqida ogohlantiradi.
+
+## Kod imzosi va antivirus
+
+Imzo ixtiyoriy va muhit o'zgaruvchisi bilan yoqiladi (sertifikat/parol
+skriptda va git'da yo'q):
+
+```powershell
+$env:SIGN_CERT_THUMBPRINT = "<sertifikat izi>"          # CurrentUser\My (EV token ham)
+# $env:SIGN_MACHINE_STORE = "1"                          # LocalMachine\My
+# $env:SIGN_TIMESTAMP_URL = "http://timestamp.digicert.com"
+# $env:SIGNTOOL_PATH = "C:\...\signtool.exe"           # standart: Windows Kits\10\bin\*\x64
+powershell -ExecutionPolicy Bypass -File installer\build.ps1 -Gpu [-SignAllUnsigned]
+```
+
+Imzolanadi: `ProctoringClient.exe`, `ProctoringClientCheck.exe`
+(tutun tekshiruvidan OLDIN), `-SignAllUnsigned` bilan `_internal` dagi
+imzosiz modullar, `setup.exe` va uninstaller (ISCC `SignTool=`,
+`SignedUninstaller=yes`). Har fayl `signtool verify /pa` dan o'tadi.
+Iz berilmasa — hech narsa qilinmaydi (sariq ogohlantirish).
+
+Tavsiyalar (false-positive'ni kamaytiradi):
+
+* **OV/EV sertifikat** (EV SmartScreen reputatsiyasini darhol beradi) +
+  **vaqt tamg'asi** (usiz imzo sertifikat muddati bilan o'ladi).
+* **UPX yo'q** (spec'da `upx=False`), `onefile` yo'q — "packed/dropper"
+  evristikasining asosiy sabablari. Boshqa packer/obfuskator qo'shmang.
+* **VERSIONINFO** har `.exe` da (`version.py`), nashriyot nomi hamma
+  joyda bir xil — `COMPANY_NAME` imzo egasi (Subject O=) bilan mos bo'lsin.
+* Har yangi versiyani tarqatishdan oldin **Microsoft Security
+  Intelligence** portaliga yuboring (https://www.microsoft.com/wdsi/filesubmission,
+  "Software developer": setup.exe + ProctoringClient.exe) va VirusTotal'da
+  tekshiring.
+* Imtihon mashinalarida (GPO) `C:\Program Files\ProctoringClient` ni
+  Defender istisnosiga qo'shish — oxirgi chora, imzo o'rniga emas.
 
 ## Ma'lum cheklovlar
 
-* `.exe` va `setup.exe` IMZOLANMAGAN — SmartScreen ogohlantiradi va
-  ba'zi antiviruslar PyInstaller bootloader'ini shubhali deb
-  belgilaydi. Tarqatishdan oldin `signtool` bilan imzolash tavsiya
-  etiladi (ikkala `.exe` va `setup.exe`; Inno'da `SignTool=`).
+* Sertifikatsiz build IMZOLANMAGAN — SmartScreen ogohlantiradi va
+  ba'zi antiviruslar PyInstaller bootloader'ini shubhali deb belgilaydi
+  (yuqoridagi bo'lim).
 * Inno Setup'da siqilgan hajm ~2.1 GB dan oshsa `DiskSpanning=yes`
   kerak bo'ladi (bir nechta `.bin`). Hozirgi GPU nashri chegaradan
   past.
