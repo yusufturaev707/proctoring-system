@@ -785,7 +785,70 @@ def _create_session(
         last_heartbeat_at=timezone.now(),
     )
     logger.info("Sessiya yaratildi: %s (urinish %s)", session.public_id, session.attempt_no)
+    _replace_previous_on_device(session)
     return session
+
+
+def _replace_previous_on_device(session: ExamSession) -> None:
+    """
+    Shu mashinadagi oldingi ochiq sessiyani DARHOL yopadi va bog'laydi.
+
+    Client qulab qayta ishga tushsa, operator JSHSHIR va yuz
+    tekshiruvidan qayta o'tadi va yangi urinish yaratiladi (tokenni
+    diskda saqlamaslik — ataylab). Eskisi esa `close_stale_sessions`
+    gacha (`STALE_SESSION_AFTER`) "jarayonda" turardi, va bu uch muammo
+    berardi:
+      * panelda bitta talabgorning ikkita faol sessiyasi;
+      * eskisi yopilganda `_release` "bitta talabgor - bitta sessiya"
+        qulfini o'chirardi - egasi qurilma, ya'ni ikkalasida BIR XIL,
+        va yangi sessiya qulfsiz qolardi;
+      * proktor ikki urinish bog'liqligini ko'rmasdi (FaceID xatolari
+        hisoblagichi yangisida noldan boshlanadi).
+
+    Shuning uchun qulfga TEGILMAYDI: u endi yangi sessiyaniki. Boshqa
+    mashinadagi sessiya bu yerga yetmaydi - uni `lookup_candidate`
+    (`SessionAlreadyActive`) oldinroq to'xtatadi.
+    """
+    if session.device_id is None:
+        return
+    previous = (
+        ExamSession.objects.select_for_update()
+        .filter(
+            pinfl=session.pinfl,
+            exam_id=session.exam_id,
+            exam_date=session.exam_date,
+            device_id=session.device_id,
+        )
+        .exclude(pk=session.pk)
+        .exclude(status__in=ExamSession.TERMINAL_STATUSES)
+        .order_by("-attempt_no")
+        .first()
+    )
+    if previous is None:
+        return
+
+    _flush_counters(previous)
+    previous.status = ExamSession.Status.EXPIRED
+    previous.finished_at = timezone.now()
+    previous.meta = {**(previous.meta or {}), "replaced_by": str(session.public_id)}
+    previous.save(
+        update_fields=[
+            "status", "finished_at", "meta", "event_count", "screenshot_count",
+            "face_fail_count", "face_check_count", "risk_score", "updated_at",
+        ]
+    )
+    _complete_proctoring(previous, reason="replaced")
+    # `_release` EMAS: u qulfni ham olib tashlardi.
+    session_state.revoke_session_token(previous.token_hash)
+    session_state.clear_state(previous.pk, previous.zone_id)
+    _broadcast_status(previous)
+
+    session.meta = {**(session.meta or {}), "previous_session": str(previous.public_id)}
+    session.save(update_fields=["meta", "updated_at"])
+    logger.info(
+        "Oldingi sessiya %s yangisi bilan almashtirildi: %s",
+        previous.public_id, session.public_id,
+    )
 
 
 def _log_face_attempt(*, pinfl: str, faces_detected: int, reason: str) -> None:

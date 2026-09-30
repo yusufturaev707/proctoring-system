@@ -56,6 +56,61 @@ def client_ip(request) -> str:
     return remote_addr
 
 
+#: Ma'lum qurilma keshi. Faqat TOPILGAN qurilma keshlanadi: noma'lum
+#: ID'larni keshlash tasodifiy ID yuborib keshni to'ldirish yo'li
+#: bo'lardi, ular esa baribir qat'iy IP chegarasiga tushadi.
+_KNOWN_DEVICE_CACHE_SECONDS = 300
+
+
+def known_device_pk(request) -> int | None:
+    """
+    `X-Device-ID` bazadagi qurilmaniki bo'lsa — uning `pk` si, aks holda `None`.
+
+    Ochiq endpointlarda (`preflight`, `access-attempt`, `devices/register`)
+    `DeviceResolution` ishlamaydi, shuning uchun qurilma shu yerda
+    aniqlanadi. Header'ning O'ZIGA ishonilmaydi: uni istalgan client
+    yozadi va har so'rovda yangi ID yuborib chegarani chetlab o'tardi.
+    Bazada bor qurilmalar esa soni cheklangan va har birini
+    administrator ko'radi (`device_register` chegarasi ostida yaratiladi).
+    """
+    from django.core.cache import cache
+
+    from apps.devices.models import DeviceToken
+
+    device_id = (request.META.get("HTTP_X_DEVICE_ID") or "").strip()
+    max_length = DeviceToken._meta.get_field("device_id").max_length
+    if not device_id or len(device_id) > max_length:
+        return None
+
+    cache_key = "throttle_known_device:" + hashlib.sha256(device_id.encode()).hexdigest()[:32]
+    pk = cache.get(cache_key)
+    if pk:
+        return pk
+
+    pk = DeviceToken.objects.filter(device_id=device_id).values_list("pk", flat=True).first()
+    if pk:
+        cache.set(cache_key, pk, _KNOWN_DEVICE_CACHE_SECONDS)
+    return pk
+
+
+def device_or_ip_ident(request) -> str:
+    """
+    Ochiq endpointlar kaliti: ma'lum qurilma — o'z byudjeti, qolgani — IP.
+
+    Server internetda turganda butun bino bitta NAT manzili bilan
+    keladi. Faqat IP bo'yicha chegarada imtihon boshida 500 mashina
+    bitta byudjetni bo'lishardi va ~94% i 429 olardi. Ro'yxatdagi
+    qurilma shuning uchun o'z kalitini oladi (IP ham kalitda: ID
+    boshqa tarmoqdan ishlatilsa, bino byudjetiga tegmaydi). Noma'lum
+    yoki header'siz so'rov esa avvalgidek qat'iy IP chegarasida.
+    """
+    ip = client_ip(request)
+    pk = known_device_pk(request)
+    if pk:
+        return f"dev:{pk}:{ip}"
+    return f"ip:{ip}"
+
+
 class BaseScopedThrottle(SimpleRateThrottle):
     """Berilgan `scope` va ident bo'yicha cheklaydi."""
 
@@ -194,15 +249,19 @@ class DeviceRegisterThrottle(BaseScopedThrottle):
     ma'lum MAC/IP bo'yicha cheksiz `PENDING` qator yaratish yo'li bo'lib
     qolardi.
 
-    Kalit — IP. Bino ichida har bir kompyuterning o'z manzili bor
-    (`unique_computer_zone_ip`), shuning uchun ommaviy o'rnatishda
-    mashinalar bir-birining byudjetini yemaydi.
+    Kalit — `device_or_ip_ident`: qayta ro'yxatdan o'tayotgan ma'lum
+    qurilma o'z byudjetini oladi. YANGI qurilma esa ta'rifga ko'ra
+    noma'lum va IP bo'yicha cheklanadi — aynan shu chegara `PENDING`
+    qatorlarni cheksiz yaratishni to'xtatadi. Server internetda
+    bo'lsa bu IP binoning NAT manzili, ya'ni birinchi ommaviy
+    o'rnatishda butun bino shu byudjetni bo'lishadi
+    (`THROTTLE_DEVICE_REGISTER`).
     """
 
     scope = "device_register"
 
     def get_ident_value(self, request, view):
-        return client_ip(request)
+        return device_or_ip_ident(request)
 
 
 class PreflightThrottle(BaseScopedThrottle):
@@ -212,12 +271,15 @@ class PreflightThrottle(BaseScopedThrottle):
     Chegara `device_register` dan yumshoqroq: preflight hech narsa
     YARATMAYDI, u faqat o'qiydi. Lekin cheksiz bo'lishi ham mumkin emas
     — ro'yxatdagi IP'larni tashqaridan sanab chiqish yo'liga aylanardi.
+    Kalit — `device_or_ip_ident` (bino NAT'i ortidagi ommaviy ishga
+    tushish uchun); tashqi skaner noma'lum qurilma sifatida IP
+    chegarasida qoladi.
     """
 
     scope = "preflight"
 
     def get_ident_value(self, request, view):
-        return client_ip(request)
+        return device_or_ip_ident(request)
 
 
 class AccessAttemptThrottle(BaseScopedThrottle):
@@ -227,12 +289,13 @@ class AccessAttemptThrottle(BaseScopedThrottle):
     Chegara preflight'nikidan yumshoqroq bo'lishi mumkin emas: aks holda
     u jurnalni ma'nosiz yozuvlar bilan to'ldirish (log flooding) yo'liga
     aylanardi va haqiqiy urinishlar ular orasida ko'rinmay qolardi.
+    Kalit preflight'niki bilan bir xil (`device_or_ip_ident`).
     """
 
     scope = "access_attempt"
 
     def get_ident_value(self, request, view):
-        return client_ip(request)
+        return device_or_ip_ident(request)
 
 
 class StaffLoginThrottle(BaseScopedThrottle):
