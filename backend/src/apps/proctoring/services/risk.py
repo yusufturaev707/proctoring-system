@@ -176,7 +176,17 @@ def current(*, session_id: int, config: dict, now: float | None = None) -> int:
     Redis'dagi xom qiymat eskirgan bo'lishi mumkin: u oxirgi
     hodisadan beri o'zgarmagan, vaqt esa o'tgan.
     """
-    raw = session_state.get_state(session_id)
+    return current_from_state(session_state.get_state(session_id), config=config, now=now)
+
+
+def current_from_state(raw: dict, *, config: dict, now: float | None = None) -> int:
+    """
+    `current` ning Redis'ga bormaydigan varianti — holat allaqachon o'qilgan.
+
+    `flush_session_state` 5000 sessiya holatini BITTA pipeline bilan
+    oladi; ilgari u har sessiya uchun `current` orqali o'sha hash'ni
+    yana bir marta o'qirdi (5000 qo'shimcha round-trip har 10 s da).
+    """
     return _decayed(
         value=int(raw.get(_RISK_FIELD) or 0),
         updated_at=float(raw.get(_RISK_AT_FIELD) or 0),
@@ -192,6 +202,31 @@ def breakdown(session_id: int) -> dict:
     except Exception:
         logger.debug("Ball tarkibini o'qib bo'lmadi", exc_info=True)
         return {}
+    return _parse_breakdown(raw)
+
+
+def breakdowns(session_ids: list[int]) -> dict[int, dict]:
+    """
+    Bir nechta sessiya tarkibi BITTA pipeline'da (`flush_session_state`).
+
+    Redis yiqilsa bo'sh lug'atlar — `breakdown` bilan bir xil yumshoq xulq.
+    """
+    if not session_ids:
+        return {}
+    try:
+        pipe = get_redis().pipeline(transaction=False)
+        for session_id in session_ids:
+            pipe.hgetall(breakdown_key(session_id))
+        results = pipe.execute()
+    except Exception:
+        logger.debug("Ball tarkiblarini o'qib bo'lmadi", exc_info=True)
+        return {session_id: {} for session_id in session_ids}
+    return {
+        session_id: _parse_breakdown(raw) for session_id, raw in zip(session_ids, results)
+    }
+
+
+def _parse_breakdown(raw) -> dict:
     result = {}
     for key, value in (raw or {}).items():
         try:

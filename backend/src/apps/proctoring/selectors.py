@@ -7,6 +7,8 @@ sessiya ro'yxatida N+1 muammosi 30 000 ta qo'shimcha so'rovga aylanadi.
 
 from __future__ import annotations
 
+from datetime import date, datetime, time, timedelta
+
 from django.db.models import Count, Q
 from django.utils import timezone
 
@@ -217,44 +219,80 @@ def dashboard_summary(*, region_id=None, exam_date=None) -> dict:
 
 
 def zone_breakdown(*, region_id=None, exam_date=None) -> list[dict]:
-    """Bino bo'yicha kesim — dashboard xaritasi uchun."""
+    """
+    Bino bo'yicha kesim — dashboard xaritasi uchun.
+
+    IKKI so'rov, bitta JOIN emas. Ilgari `Zone LEFT JOIN exam_session`
+    + `COUNT(DISTINCT ...) FILTER (exam_date = ...)` edi: sana sharti
+    FILTER ichida bo'lgani uchun JOIN butun sessiyalar TARIXINI
+    o'qirdi (perf bazasida 300 000 sessiya — 280-580 ms, har proktor
+    har 15 s da). Endi sessiyalar faqat shu sana bo'yicha indeks bilan
+    guruhlanadi va binolar ro'yxatiga Python'da qo'shiladi; natija
+    shakli (kalitlar, tartib, sessiyasiz binoda nollar) o'zgarmagan.
+    """
     from apps.regions.models import Zone
 
     exam_date = exam_date or timezone.localdate()
     queryset = Zone.objects.filter(deleted_at__isnull=True, is_active=True)
+    sessions = ExamSession.objects.filter(exam_date=exam_date)
     if region_id:
         queryset = queryset.filter(region_id=region_id)
+        sessions = sessions.filter(zone__region_id=region_id)
 
-    session_filter = Q(sessions__exam_date=exam_date)
-    return list(
-        queryset.select_related("region")
-        .annotate(
-            total=Count("sessions", filter=session_filter, distinct=True),
-            active=Count(
-                "sessions",
-                filter=session_filter & Q(sessions__status=ExamSession.Status.IN_PROGRESS),
-                distinct=True,
-            ),
-            terminated=Count(
-                "sessions",
-                filter=session_filter & Q(sessions__status=ExamSession.Status.TERMINATED),
-                distinct=True,
-            ),
-            problems=Count(
-                "sessions",
-                filter=session_filter & Q(sessions__status=ExamSession.Status.TECHNICAL_PROBLEM),
-                distinct=True,
-            ),
-        )
-        .values("id", "name", "number", "region__name", "total", "active", "terminated", "problems")
-        .order_by("region__name", "number")
+    zones = list(
+        queryset.values("id", "name", "number", "region__name").order_by("region__name", "number")
     )
+    counts = {
+        row["zone_id"]: row
+        for row in sessions.filter(zone_id__isnull=False)
+        .values("zone_id")
+        .annotate(
+            total=Count("id"),
+            active=Count("id", filter=Q(status=ExamSession.Status.IN_PROGRESS)),
+            terminated=Count("id", filter=Q(status=ExamSession.Status.TERMINATED)),
+            problems=Count("id", filter=Q(status=ExamSession.Status.TECHNICAL_PROBLEM)),
+        )
+        .order_by()
+    }
+    for zone in zones:
+        row = counts.get(zone["id"]) or {}
+        for key in ("total", "active", "terminated", "problems"):
+            zone[key] = row.get(key, 0)
+    return zones
+
+
+def _as_date(value):
+    """So'rov parametridagi sana (`?date=`) — satr yoki `date`."""
+    if value in (None, ""):
+        return None
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value))
+    except ValueError:
+        return None
 
 
 def event_type_breakdown(*, exam_date=None, region_id=None, limit: int = 15) -> list[dict]:
-    """Eng ko'p uchraydigan hodisa turlari."""
-    exam_date = exam_date or timezone.localdate()
+    """
+    Eng ko'p uchraydigan hodisa turlari.
+
+    `occurred_at` oralig'i PARTITSIYA KESISH uchun: faqat
+    `session__exam_date` sharti bilan PostgreSQL `proctoring_event` ning
+    BARCHA partitsiyalarini (tarix bilan) skanerlardi — perf bazasida
+    7 mln hodisada 600 ms, dashboard esa har proktorda 15 s da so'raydi.
+    Oraliq sana kunidan +-6 soat keng: kun oxirida boshlangan smena va
+    oflayn buferdan kechikib kelgan hodisalar ham kiradi. Soati 6 soatdan
+    ko'p adashgan mashinaning hodisasi faqat shu diagrammadan tushadi
+    (sessiya sahifasida ko'rinadi).
+    """
+    exam_date = _as_date(exam_date) or timezone.localdate()
     queryset = ProctoringEvent.objects.filter(session__exam_date=exam_date)
+    day_start = timezone.make_aware(datetime.combine(exam_date, time.min))
+    queryset = queryset.filter(
+        occurred_at__gte=day_start - timedelta(hours=6),
+        occurred_at__lt=day_start + timedelta(days=1, hours=6),
+    )
     if region_id:
         queryset = queryset.filter(session__zone__region_id=region_id)
 

@@ -1,0 +1,27 @@
+; PgBouncer — DB serverida (yoki app serverda), transaction pooling.
+; Kim ulanadi: FAQAT app server jarayonlari (clientlar emas):
+;   gunicorn 10 worker x 8 thread = 80, uvicorn 2 x ~10 = 20,
+;   celery ingest 4 + maintenance 2 + beat 1 = 7  => ~110 client ulanish
+;   (hisoblangan; zaxira bilan max_client_conn = 400).
+; Server tomoni: default_pool_size + reserve <= PostgreSQL max_connections - 10.
+[databases]
+proctoring = host=127.0.0.1 port=5432 dbname=proctoring
+
+[pgbouncer]
+listen_addr = 0.0.0.0
+listen_port = 6432
+auth_type = scram-sha-256
+auth_file = /etc/pgbouncer/userlist.txt
+pool_mode = transaction
+max_client_conn = 400
+default_pool_size = 40
+reserve_pool_size = 10
+reserve_pool_timeout = 3
+server_idle_timeout = 60
+query_wait_timeout = 30
+; `options` startup parametri (statement_timeout) o'tmaydi — rolga qo'ying:
+;   ALTER ROLE proctoring SET statement_timeout = '15s';
+;   ALTER ROLE proctoring SET idle_in_transaction_session_timeout = '30s';
+ignore_startup_parameters = extra_float_digits
+admin_users = pgbouncer_admin
+stats_users = pgbouncer_admin

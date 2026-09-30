@@ -23,7 +23,14 @@ def cameras_base(*, include_deleted: bool = False):
 
 
 def device_tokens_base():
-    return DeviceToken.objects.select_related("computer", "computer__zone")
+    # `computer__zone__region` ham JOIN'da: serializer `region_name` ni
+    # beradi va usiz `/device-tokens` ning har sahifasi qatorga bitta
+    # qo'shimcha so'rov qilardi (25 qator - 28 so'rov, perf bazasida
+    # `CaptureQueriesContext` bilan o'lchangan). Sahifa 30 s da o'zi
+    # yangilanadi.
+    return DeviceToken.objects.select_related(
+        "computer", "computer__zone", "computer__zone__region"
+    )
 
 
 def stale_computers(timeout_seconds: int = 120):

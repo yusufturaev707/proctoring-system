@@ -219,13 +219,16 @@ def get_states(session_ids: list[int]) -> dict[int, dict]:
 
 
 def drain_dirty(limit: int = 5000) -> list[int]:
-    """Yangilangan sessiyalar ro'yxatini oladi va to'plamni tozalaydi."""
-    client = get_redis()
-    pipe = client.pipeline()
-    pipe.smembers(dirty_set_key())
-    pipe.delete(dirty_set_key())
-    members, _ = pipe.execute()
-    return [int(item) for item in list(members)[:limit]]
+    """
+    Yangilangan sessiyalardan ko'pi bilan `limit` tasini OLADI (`SPOP`).
+
+    Ilgari to'plam BUTUNLAY o'chirilib, `limit` dan ortig'i tashlab
+    yuborilardi: 5000 dan ko'p faol sessiyada ortiqchasining holati shu
+    siklda yo'qolardi. `SPOP count` atomik va qolganini keyingi siklga
+    qoldiradi.
+    """
+    members = get_redis().spop(dirty_set_key(), limit) or []
+    return [int(item) for item in members]
 
 
 def clear_state(session_id: int, zone_id: int | None = None) -> None:

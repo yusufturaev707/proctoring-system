@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from datetime import datetime, timedelta
 
 from celery import shared_task
@@ -56,10 +57,33 @@ def flush_event_buffer():
     """
     stream = settings.PROCTORING["EVENT_STREAM_KEY"]
     client = get_redis()
+    batch_size = settings.PROCTORING["EVENT_BATCH_SIZE"]
 
-    entries = stream_service.read_batch(
-        client, stream, settings.PROCTORING["EVENT_BATCH_SIZE"]
-    )
+    # BITTA ishga tushishda bir necha batch — vaqt byudjeti ichida.
+    #
+    # Ilgari vazifa 5 s da BITTA batch (2000) o'qirdi, ya'ni oqimning
+    # yuqori chegarasi 2000 / 5 s = 400 hodisa/s edi (hisoblangan). Undan
+    # tez kelsa navbat o'sadi va `EVENT_STREAM_MAXLEN` (approximate trim)
+    # oxir-oqibat HALI YOZILMAGAN yozuvlarni ham kesib tashlardi. Bitta
+    # batch perf bazasida ~0.3 s yoziladi (o'lchangan: 2000 qator, ~6600
+    # hodisa/s), shuning uchun byudjet (`EVENT_FLUSH_BUDGET_S`, 3 s)
+    # jadval oralig'idan (5 s) va `expires` (10 s) dan qisqa qoladi.
+    # Har batch avvalgidek alohida yoziladi va ACK qilinadi — ishonchlilik
+    # mexanikasi (`XAUTOCLAIM`, qator-ma-qator, `:dead`) o'zgarmagan.
+    budget = float(settings.PROCTORING.get("EVENT_FLUSH_BUDGET_S", 3.0))
+    deadline = time.monotonic() + budget
+    total = {"read": 0, "written": 0, "dead": 0}
+    while True:
+        result = _flush_event_batch(client, stream, batch_size)
+        for key in total:
+            total[key] += result[key]
+        if result["read"] < batch_size or time.monotonic() >= deadline:
+            return total
+
+
+def _flush_event_batch(client, stream: str, batch_size: int) -> dict:
+    """Bitta batch: o'qish -> yozish -> ACK (avvalgi `flush_event_buffer` tanasi)."""
+    entries = stream_service.read_batch(client, stream, batch_size)
     if not entries:
         return {"read": 0, "written": 0, "dead": 0}
 
@@ -217,6 +241,11 @@ def flush_session_state():
         return {"updated": 0}
 
     now = timezone.now()
+    now_ts = now.timestamp()
+    breakdowns = risk_service.breakdowns([session.pk for session in sessions])
+    # Siyosat imtihonga bog'liq - imtihon bo'yicha BIR MARTA o'qiladi
+    # (ilgari har sessiyada kesh so'rovi, ya'ni Redis round-trip).
+    risk_configs: dict[int, dict] = {}
     to_update: list[ExamSession] = []
 
     for session in sessions:
@@ -235,26 +264,66 @@ def flush_session_state():
         session.face_check_count = int(state.get("face_checks", session.face_check_count) or 0)
         # Ball PASAYISH bilan o'qiladi: Redis'dagi xom qiymat oxirgi
         # hodisadan beri o'zgarmagan, vaqt esa o'tgan
-        # (`services/risk.py` - lazy pasayish).
-        session.risk_score = risk_service.current(
-            session_id=session.pk,
-            config=risk_service.resolve_config(_policy_for(session)),
-        )
-        session.risk_breakdown = risk_service.breakdown(session.pk)
+        # (`services/risk.py` - lazy pasayish). Holat yuqorida pipeline
+        # bilan o'qilgan - qayta so'ralmaydi.
+        config = risk_configs.get(session.exam_id)
+        if config is None:
+            config = risk_configs[session.exam_id] = risk_service.resolve_config(
+                _policy_for(session)
+            )
+        session.risk_score = risk_service.current_from_state(state, config=config, now=now_ts)
+        session.risk_breakdown = breakdowns.get(session.pk) or {}
         session.updated_at = now
         to_update.append(session)
 
     if to_update:
-        ExamSession.objects.bulk_update(
-            to_update,
-            [
-                "last_heartbeat_at", "event_count", "screenshot_count",
-                "face_fail_count", "face_check_count", "risk_score",
-                "risk_breakdown", "updated_at",
-            ],
-            batch_size=500,
-        )
+        _write_session_state(to_update)
     return {"updated": len(to_update)}
+
+
+#: `_write_session_state` bitta UPDATE'dagi qatorlar soni (parametrlar
+#: soni = 9 x shu; PostgreSQL chegarasi 65535).
+_STATE_UPDATE_CHUNK = 1000
+
+
+def _write_session_state(sessions: list[ExamSession]) -> None:
+    """
+    Issiq holat ustunlarini `UPDATE ... FROM (VALUES ...)` bilan yozadi.
+
+    `bulk_update` EMAS — o'lchangan sabab: 5000 sessiyada u 8 ustun x
+    5000 qatorlik `CASE WHEN` ifodasini Python'da quradi va flush 11.9 s
+    davom etardi (jadval 10 s da bir ishga tushadi, ya'ni vazifalar
+    ustma-ust yig'ilardi); DB'ning o'z vaqti atigi ~1.1 s edi. Natija
+    bir xil: xuddi shu 8 ustun, xuddi shu qiymatlar, bitta tranzaksiya.
+    """
+    from django.db import connections, transaction
+
+    columns = "(id, hb, ev, sh, ff, fc, rs, rb, ua)"
+    first_row = (
+        "(%s::bigint, %s::timestamptz, %s::integer, %s::integer, %s::integer,"
+        " %s::integer, %s::integer, %s::jsonb, %s::timestamptz)"
+    )
+    row = "(%s, %s, %s, %s, %s, %s, %s, %s, %s)"
+    with transaction.atomic(using="default"), connections["default"].cursor() as cursor:
+        for start in range(0, len(sessions), _STATE_UPDATE_CHUNK):
+            chunk = sessions[start:start + _STATE_UPDATE_CHUNK]
+            params: list = []
+            for session in chunk:
+                params.extend([
+                    session.pk, session.last_heartbeat_at, session.event_count,
+                    session.screenshot_count, session.face_fail_count,
+                    session.face_check_count, session.risk_score,
+                    json.dumps(session.risk_breakdown or {}), session.updated_at,
+                ])
+            values = ", ".join([first_row] + [row] * (len(chunk) - 1))
+            cursor.execute(
+                f"UPDATE {ExamSession._meta.db_table} AS s SET "
+                "last_heartbeat_at = v.hb, event_count = v.ev, screenshot_count = v.sh, "
+                "face_fail_count = v.ff, face_check_count = v.fc, risk_score = v.rs, "
+                "risk_breakdown = v.rb, updated_at = v.ua "
+                f"FROM (VALUES {values}) AS v {columns} WHERE s.id = v.id",
+                params,
+            )
 
 
 def _policy_for(session) -> dict:

@@ -17,6 +17,8 @@ Environment=DJANGO_SETTINGS_MODULE=config.settings.production
 Environment=PYTHONPATH=/srv/proctoring/backend/src
 ExecStart=/srv/proctoring/backend/.venv/bin/uvicorn config.asgi:application --host 127.0.0.1 --port 8003 --workers 2 --proxy-headers --forwarded-allow-ips 127.0.0.1 --no-access-log
 Restart=always
+# 5000 client ulanishi + DB/Redis — standart 1024 yetmaydi.
+LimitNOFILE=65536
 RestartSec=5
 # `--no-access-log`: panel xodim JWT'sini query'da yuboradi (nginx'da ham o'chiq).
 # Qattiqlashtirish: kod o'qish uchun, yozish faqat quyidagi kataloglarga.

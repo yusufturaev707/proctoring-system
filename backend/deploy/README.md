@@ -107,6 +107,14 @@ celery -A config beat --scheduler celery.beat:PersistentScheduler
 
 ## Infratuzilma
 
+### Sig'im va OS sozlamasi (5000 talaba)
+
+`deploy/sysctl-proctoring.conf`, `deploy/pgbouncer.ini.example`,
+`deploy/MONITORING.md`. Redis `maxmemory 2gb` yetadi (o'lchangan: 684
+B/sessiya, oqim ~95 MB) — 15 GB serverda 8 GB bermang. Skrinshot diski:
+5000 x 100 x ~0.23 MB ~ 115 GB/smena (hisoblangan, o'lchangan 225 KB matnli
+kadr).
+
 ### PgBouncer (majburiy, 1000+ rps da)
 
 ```ini

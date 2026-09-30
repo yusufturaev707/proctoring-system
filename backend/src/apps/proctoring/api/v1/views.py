@@ -414,6 +414,39 @@ class _DashboardView(APIView):
     permission_classes = [IsAuthenticated, HasRegionAssignment, HasRolePermission]
     required_permission = "dashboard.view"
 
+    @staticmethod
+    def cached(name: str, request, build):
+        """
+        Agregat natijani QISQA muddat umumiy keshda saqlaydi.
+
+        Dashboard har ochiq panelda 15 s da so'raladi va agregatlar butun
+        kunlik sessiya/hodisa jadvalini o'qiydi (perf bazasida 5000 faol
+        sessiya, 1 mln bugungi hodisa: summary ~440 ms, zones ~580 ms).
+        50 proktor x 2 so'rov / 15 s = ~7 so'rov/s — ya'ni DB'da doimiy
+        ~7 yadro faqat bir xil sonlarni qayta hisoblashga ketardi. Kalit
+        ko'rish doirasi (viloyat) va sana bo'yicha — hamma bir xil
+        doiradagi proktor BITTA hisobni bo'lishadi. Muddat
+        (`DASHBOARD_CACHE_SECONDS`, 10 s) so'rov oralig'idan qisqa;
+        jonli holat baribir WebSocket orqali keladi. Kesh ishlamasa
+        (`IGNORE_EXCEPTIONS`) har so'rov oddiygidek hisoblanadi.
+        """
+        from django.conf import settings
+        from django.core.cache import cache
+
+        ttl = int(settings.PROCTORING.get("DASHBOARD_CACHE_SECONDS", 10) or 0)
+        if ttl <= 0:
+            return build()
+        key = "dash:{}:{}:{}".format(
+            name,
+            scope_region_id(request.user) or "all",
+            request.query_params.get("date") or timezone.localdate().isoformat(),
+        )
+        data = cache.get(key)
+        if data is None:
+            data = build()
+            cache.set(key, data, ttl)
+        return data
+
 
 class DashboardSummaryView(_DashboardView):
     def get(self, request):
@@ -422,26 +455,34 @@ class DashboardSummaryView(_DashboardView):
 
         from apps.integrations.exam_platform import platform_health
 
-        return Response(
-            {
+        data = self.cached(
+            "summary",
+            request,
+            lambda: {
                 "summary": selectors.dashboard_summary(region_id=region_id, exam_date=exam_date),
                 "events": selectors.event_type_breakdown(
                     exam_date=exam_date, region_id=region_id
                 ),
-                "external_platform": platform_health(),
-            }
+            },
         )
+        # Tashqi platforma holati keshlanmaydi: u Redis'dagi circuit
+        # breaker'dan arzon o'qiladi va uzilish darhol ko'rinishi kerak.
+        return Response({**data, "external_platform": platform_health()})
 
 
 class DashboardZonesView(_DashboardView):
     def get(self, request):
         region_id = scope_region_id(request.user)
         return Response(
-            {
-                "zones": selectors.zone_breakdown(
-                    region_id=region_id, exam_date=request.query_params.get("date")
-                ),
-            }
+            self.cached(
+                "zones",
+                request,
+                lambda: {
+                    "zones": selectors.zone_breakdown(
+                        region_id=region_id, exam_date=request.query_params.get("date")
+                    ),
+                },
+            )
         )
 
 

@@ -51,6 +51,9 @@ class Command(BaseCommand):
         if already:
             self.stdout.write(self.style.SUCCESS(f"{TABLE} allaqachon partitsiyalangan"))
             if options["apply"]:
+                # Oldingi (buzuq) konvertatsiyada tushib qolgan ustunlar shu
+                # yerda tiklanadi - qayta `--apply` yetarli, qo'lda SQL emas.
+                self._ensure_model_columns()
                 self._create_partitions(options["days"])
             return
 
@@ -130,18 +133,32 @@ class Command(BaseCommand):
                 f"(session_id, client_event_id, occurred_at) WHERE client_event_id <> ''"
             )
 
+        # Yuqoridagi CREATE TABLE faqat BOSHLANG'ICH 9 ustunni biladi.
+        # Keyingi migratsiyalar qo'shgan ustunlar (0011: `duration_ms`,
+        # `confidence`, `camera_role`, `evidence_id`, `track_id`) modeldan
+        # qo'shiladi. Usiz yangi o'rnatishda (migrate -> setup_partitions)
+        # har ingest `bulk_create` "column does not exist" bilan yiqilib,
+        # BARCHA hodisalar `:dead` oqimiga ketardi, panelning
+        # `sessions/{id}/events/` esa 500 qaytarardi (perf bazasida o'lchab
+        # topilgan).
+        self._ensure_model_columns()
+
         self.stdout.write(self.style.SUCCESS("Partitsiyalangan jadval yaratildi"))
 
         if row_count:
             # Ma'lumotni ko'chirishdan oldin kerakli partitsiyalar bo'lishi shart.
             self._create_partitions_for_existing_data()
             with connection.cursor() as cursor:
+                # Ustunlar ro'yxati QADALMAGAN: eski jadvalda bor va yangisida
+                # ham bor bo'lgan hamma ustun ko'chadi (dalil ustuni jimgina
+                # tushib qolmasligi uchun).
+                old_columns = self._columns(cursor, f"{TABLE}_old")
+                new_columns = self._columns(cursor, TABLE)
+                columns = ", ".join(
+                    f'"{name}"' for name in old_columns if name in new_columns
+                )
                 cursor.execute(
-                    f"INSERT INTO {TABLE} "
-                    f"(id, session_id, type, severity, occurred_at, received_at, "
-                    f" payload, screenshot_key, client_event_id) "
-                    f"SELECT id, session_id, type, severity, occurred_at, received_at, "
-                    f"       payload, screenshot_key, client_event_id FROM {TABLE}_old"
+                    f"INSERT INTO {TABLE} ({columns}) SELECT {columns} FROM {TABLE}_old"
                 )
                 cursor.execute(
                     f"SELECT setval(pg_get_serial_sequence('{TABLE}', 'id'), "
@@ -151,6 +168,42 @@ class Command(BaseCommand):
 
         with connection.cursor() as cursor:
             cursor.execute(f"DROP TABLE {TABLE}_old CASCADE")
+
+    @staticmethod
+    def _columns(cursor, table: str) -> list[str]:
+        return [
+            column.name
+            for column in connection.introspection.get_table_description(cursor, table)
+        ]
+
+    def _ensure_model_columns(self) -> None:
+        """
+        Modelda bor, jadvalda yo'q ustunlarni qo'shadi (idempotent).
+
+        `schema_editor.add_field` migratsiya bilan AYNAN bir xil DDL beradi;
+        partitsiyalangan jadvalga `ADD COLUMN` barcha partitsiyalarga
+        meros bo'ladi va NULL/standart qiymatli ustun uchun jadval qayta
+        yozilmaydi.
+        """
+        from apps.proctoring.models import ProctoringEvent
+
+        with connection.cursor() as cursor:
+            existing = set(self._columns(cursor, TABLE))
+        missing = [
+            field
+            for field in ProctoringEvent._meta.concrete_fields
+            if field.column not in existing
+        ]
+        if not missing:
+            return
+        with connection.schema_editor() as editor:
+            for field in missing:
+                editor.add_field(ProctoringEvent, field)
+        self.stdout.write(
+            self.style.WARNING(
+                "Tiklangan ustunlar: " + ", ".join(field.column for field in missing)
+            )
+        )
 
     def _create_partitions_for_existing_data(self):
         with connection.cursor() as cursor:

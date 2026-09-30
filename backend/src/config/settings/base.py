@@ -567,6 +567,10 @@ PROCTORING = {
     "SCREENSHOT_STREAM_KEY": "proctoring:screenshots",
     "EVENT_BATCH_SIZE": env_int("EVENT_BATCH_SIZE", 2000),
     "EVENT_STREAM_MAXLEN": env_int("EVENT_STREAM_MAXLEN", 500_000),
+    # `flush_event_buffer` bitta ishga tushishda shuncha soniya davomida
+    # batch'larni ketma-ket yozadi (sabab `tasks.flush_event_buffer` da).
+    # Jadval oralig'idan (5 s) qisqa bo'lishi SHART.
+    "EVENT_FLUSH_BUDGET_S": env_float("EVENT_FLUSH_BUDGET_S", 3.0),
 
     # Yiqilgan worker'dan qolgan yozuvni shuncha vaqtdan keyin boshqa
     # worker qaytarib oladi. Flush intervalidan (5s) ANCHA katta bo'lishi
@@ -581,6 +585,9 @@ PROCTORING = {
     # cheklanmasa soati adashgan bitta mashina butun batchni yiqitadi.
     "EVENT_MAX_FUTURE_SKEW": env_int("EVENT_MAX_FUTURE_SKEW", 300),      # 5 daqiqa
     "EVENT_MAX_BACKFILL": env_int("EVENT_MAX_BACKFILL", 24 * 60 * 60),   # 1 kun
+    # Dashboard agregatlari umumiy keshda shuncha soniya turadi
+    # (`_DashboardView.cached`). 0 — keshsiz. Panel 15 s da so'raydi.
+    "DASHBOARD_CACHE_SECONDS": env_int("DASHBOARD_CACHE_SECONDS", 10),
 
     # --- FaceID ---
     "FACE_EMBEDDING_DIM": env_int("FACE_EMBEDDING_DIM", 512),

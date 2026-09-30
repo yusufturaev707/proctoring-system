@@ -108,12 +108,17 @@ if PROCTORING["ALLOW_PRIVATE_SOURCE_IP"]:  # noqa: F405
 # --------------------------------------------------------------------------
 # PgBouncer transaction mode'da CONN_MAX_AGE=0 bo'lishi SHART, aks holda
 # prepared statement konfliktlari chiqadi.
-if env_bool("USE_PGBOUNCER", False):
-    DATABASES["default"]["CONN_MAX_AGE"] = 0  # noqa: F405
-    DATABASES["default"]["CONN_HEALTH_CHECKS"] = False  # noqa: F405
-    DATABASES["default"]["DISABLE_SERVER_SIDE_CURSORS"] = True  # noqa: F405
-else:
-    DATABASES["default"]["CONN_MAX_AGE"] = DB_CONN_MAX_AGE  # noqa: F405
+# `replica` ham (bor bo'lsa): u `base.py` da `default` dan NUSXA olingan
+# va ilgari PgBouncer sozlamasi unga o'tmasdi (server-side cursor
+# transaction pooling'da buziladi). psycopg2 prepared statement
+# ishlatmaydi, ya'ni transaction mode bilan boshqa to'qnashuv yo'q.
+for _alias in [a for a in ("default", "replica") if a in DATABASES]:  # noqa: F405
+    if env_bool("USE_PGBOUNCER", False):
+        DATABASES[_alias]["CONN_MAX_AGE"] = 0  # noqa: F405
+        DATABASES[_alias]["CONN_HEALTH_CHECKS"] = False  # noqa: F405
+        DATABASES[_alias]["DISABLE_SERVER_SIDE_CURSORS"] = True  # noqa: F405
+    else:
+        DATABASES[_alias]["CONN_MAX_AGE"] = DB_CONN_MAX_AGE  # noqa: F405
 
 # Template'larni har so'rovda qayta parse qilmaslik.
 TEMPLATES[0]["APP_DIRS"] = False  # noqa: F405

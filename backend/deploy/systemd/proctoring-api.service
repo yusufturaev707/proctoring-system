@@ -17,6 +17,8 @@ Environment=DJANGO_SETTINGS_MODULE=config.settings.production
 Environment=PYTHONPATH=/srv/proctoring/backend/src
 ExecStart=/srv/proctoring/backend/.venv/bin/gunicorn config.wsgi:application -c deploy/gunicorn.conf.py
 Restart=always
+# 5000 client ulanishi + DB/Redis — standart 1024 yetmaydi.
+LimitNOFILE=65536
 RestartSec=5
 KillMode=mixed
 TimeoutStopSec=40

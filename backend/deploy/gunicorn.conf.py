@@ -34,7 +34,13 @@ pythonpath = str(Path(__file__).resolve().parent.parent / "src")
 bind = os.getenv("GUNICORN_BIND", "127.0.0.1:8002")
 
 worker_class = "gthread"
-workers = int(os.getenv("GUNICORN_WORKERS", multiprocessing.cpu_count() * 2 + 1))
+# Standart 10 (ilgari `2*CPU+1` = 20 yadroda 41). Sabablar (L2 o'lchovi,
+# `deploy/MONITORING.md`): worker RSS ~105 MB (o'lchangan, Windows WS),
+# so'rov ~5–20 ms (o'lchangan, perf DB); 5000 talaba barqaror ~250 r/s ->
+# ~2.5 yadro, login to'lqini ~800 r/s -> ~8 yadro (hisoblangan). 10x8 = 80
+# parallel so'rov; qolgan yadrolar uvicorn/Celery/Redis/nginx uchun.
+# 41x8 = 328 potensial DB ulanishi PgBouncer pool'idan ancha ko'p edi.
+workers = int(os.getenv("GUNICORN_WORKERS", min(10, multiprocessing.cpu_count() * 2 + 1)))
 threads = int(os.getenv("GUNICORN_THREADS", 8))
 
 # Bitta so'rov 30 soniyadan ko'p ketmasligi kerak. Tashqi API timeout'i 8s,
@@ -43,6 +49,9 @@ timeout = 30
 graceful_timeout = 30
 # Nginx keep-alive'dan biroz uzunroq bo'lishi kerak, aks holda 502 chiqadi.
 keepalive = 65
+# Login to'lqinida navbat (5000 client 1–5 daqiqada); `net.core.somaxconn`
+# ham shundan kichik bo'lmasin (`deploy/sysctl-proctoring.conf`).
+backlog = int(os.getenv("GUNICORN_BACKLOG", 4096))
 
 # Xotira sizishining oldini olish: worker ma'lum so'rovdan keyin qayta tug'iladi.
 # `jitter` — barcha worker'lar bir vaqtda qayta ishga tushmasligi uchun.

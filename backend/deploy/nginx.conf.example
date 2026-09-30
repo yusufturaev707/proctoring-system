@@ -6,6 +6,13 @@
 # u Daphne/Uvicorn (ASGI) da yashaydi.
 #
 
+# /etc/nginx/nginx.conf (http{} dan tashqarida) — 5000 client, har biri
+# 1–2 ulanish + upstream ulanishlari:
+#   worker_processes auto;
+#   worker_rlimit_nofile 65536;
+#   events { worker_connections 16384; }
+#   http { keepalive_timeout 60s; gzip on; gzip_types application/json; }
+
 upstream proctoring_http {
     least_conn;
     server 127.0.0.1:8002 max_fails=3 fail_timeout=10s;
@@ -17,13 +24,28 @@ upstream proctoring_ws {
     # WebSocket ulanishlari uzun umrli — ip_hash bilan bir clientni
     # bitta node'ga bog'laymiz (Redis channel layer bo'lsa ham reconnect kam bo'ladi).
     ip_hash;
-    server 127.0.0.1:8001;
-    # server 10.0.0.11:8001;
+    # 8003 — `systemd/proctoring-ws.service` (uvicorn) va CLAUDE.md bilan bir
+    # xil. Ilgari bu yerda 8001 turardi: WebSocket 502 berib, proktor
+    # buyruqlari clientga yetmasdi.
+    server 127.0.0.1:8003;
+    # server 10.0.0.11:8003;
 }
 
-# Client ingest yo'li uchun alohida rate limit zonasi.
-limit_req_zone $binary_remote_addr zone=ingest:20m rate=60r/s;
-limit_req_zone $binary_remote_addr zone=login:10m  rate=2r/s;
+# Rate limit — BINO BITTA NAT IP ortida (~500 client) turadi.
+#
+# Ilgari: ingest 60 r/s va login 2 r/s — IP bo'yicha. Hisoblangan: 500
+# mashinalik bino login to'lqinida (1–5 daq) 500 login = 1.7–8.3 r/s
+# (2 r/s dan ko'p -> 503), ~10 so'rov/talabgor = 17–83 r/s (60 dan ko'p ->
+# 429). Endi: client yo'li QURILMA (`X-Device-ID`) bo'yicha, IP bo'yicha
+# esa faqat keng suiiste'mol chegarasi. Brute-force himoyasi
+# ilovada qoladi (`StaffLoginThrottle`: IP+login, `PinflLookup*`).
+map $http_x_device_id $ingest_device_key {
+    ""      $binary_remote_addr;
+    default $http_x_device_id;
+}
+limit_req_zone $ingest_device_key  zone=ingest_dev:50m rate=20r/s;
+limit_req_zone $binary_remote_addr zone=ingest_ip:20m  rate=600r/s;
+limit_req_zone $binary_remote_addr zone=login:10m      rate=30r/s;
 
 server {
     listen 443 ssl;
@@ -81,7 +103,8 @@ server {
     # qilmaydi. Nginx faylni to'liq qabul qilib, keyin Django'ga bir
     # zarbda uzatadi — worker faqat diskka yozish vaqtida band bo'ladi.
     location = /api/v1/client/screenshots/upload/ {
-        limit_req zone=ingest burst=120 nodelay;
+        limit_req zone=ingest_dev burst=40 nodelay;
+        limit_req zone=ingest_ip burst=1200 nodelay;
         limit_req_status 429;
 
         client_max_body_size 6m;          # SCREENSHOT_MAX_BYTES + zaxira
@@ -95,7 +118,8 @@ server {
 
     # ---- Client ingest (yuqori chastota) ----
     location /api/v1/client/ {
-        limit_req zone=ingest burst=120 nodelay;
+        limit_req zone=ingest_dev burst=40 nodelay;
+        limit_req zone=ingest_ip burst=1200 nodelay;
         limit_req_status 429;
 
         proxy_pass http://proctoring_http;
@@ -140,7 +164,8 @@ server {
 
     # ---- Login (brute-force himoyasi) ----
     location /api/v1/auth/login/ {
-        limit_req zone=login burst=5 nodelay;
+        limit_req zone=login burst=300 nodelay;
+        limit_req_status 429;
         proxy_pass http://proctoring_http;
         include /etc/nginx/proxy_common.conf;
     }
@@ -159,6 +184,14 @@ server {
     location /api/ {
         proxy_pass http://proctoring_http;
         include /etc/nginx/proxy_common.conf;
+    }
+
+    # ---- nginx holati (MONITORING.md) — faqat lokal ----
+    location = /nginx_status {
+        stub_status;
+        access_log off;
+        allow 127.0.0.1;
+        deny all;
     }
 
     # ---- Salomatlik (monitoring) ----
