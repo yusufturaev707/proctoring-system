@@ -464,7 +464,7 @@ Kompyuter jadvalidagi unikallik (hammasi shartli — tirik yozuvlar orasida):
 | `unique_computer_mac` | `mac_address` | tizim bo'ylab, bo'sh emas |
 
 `machine_uuid` O'ZI unikal EMAS (bir partiyadagi platalarda bir xil) —
-`devices.0013` `unique_computer_machine_uuid` ni olib tashladi.
+`unique_computer_machine_uuid` olib tashlangan (migratsiya serverda yaratiladi).
 
 * Raqam ro'yxatlarda birinchi, saralash `["zone", "number", "inventory_code"]`.
 * **Raqam ixtiyoriy**, `0` qabul qilinmaydi.
@@ -629,7 +629,7 @@ TANLANMAYDI. Faqat UUID yoki faqat MAC bo'yicha taxminiy moslik QO'SHMANG.
 | Qatlam | Qoida |
 |---|---|
 | model | `unique_computer_uuid_mac` (juftlik), `unique_computer_mac` (MAC tizim bo'ylab); `machine_uuid` NULL mumkin va o'zi unikal EMAS |
-| shakl | `normalize_machine_uuid` va `normalize_mac` (katta harf, ikki nuqta) — client bilan AYNAN bir xil; panel, import, Django admin (`ComputerAdminForm`) kanonik shaklda yozadi; `devices.0013` mavjud MAC'larni keltirdi |
+| shakl | `normalize_machine_uuid` va `normalize_mac` (katta harf, ikki nuqta) — client bilan AYNAN bir xil; panel, import, Django admin (`ComputerAdminForm`) kanonik shaklda yozadi; eski yozuvlardagi `2c-f0-...` shakli qidiruvda ham tanilanadi (`match_identity`) |
 | panel | UUID yangi kompyuterda MAJBURIY (bor UUID'ni o'chirib bo'lmaydi); MAC yangi VA tahrirlanayotgan yozuvda MAJBURIY |
 | client | UUID va MAC handshake, `candidate/lookup/`, `devices/register/`, `access-attempt/` da; sarlavhada UUID ko'rsatilmaydi |
 | sessiya | `ExamSession.machine_uuid` — kompyuter yozuvidan |
@@ -1487,8 +1487,14 @@ Yangi domen xatosi — `DomainError` merosxo'ri; `code` React'da tarjima kaliti.
 * **(client) WebSocket boshqa jarayon**: `WS_BASE_URL` berilmasa client uni
   API manzilidan chiqaradi va dev tartibini taniydi (`realtime.default_ws_url`);
   noto'g'ri port bilan proktor buyruqlari clientga yetmaydi.
-* **Migratsiyalar versiya nazoratida**; `src/config/settings/local.py`
-  `.gitignore` da.
+* **Yangi migratsiya fayllari git'ga YUBORILMAYDI** (`backend/.gitignore`:
+  `**/migrations/*`, `git add -f` QILMANG): serverda o'z migratsiya
+  fayllari bor va repodagi fayl ular bilan to'qnashadi. Server
+  `makemigrations` ni o'zi bajaradi — shuning uchun migratsiyadagi
+  `RunPython` (ma'lumot ko'chirish) serverga yetib bormaydi, uni alohida
+  aytish kerak. Repoda ilgari qo'shilgan eski migratsiyalar qoladi
+  (o'chirilsa `git pull` ularni serverdan ham o'chirardi).
+  `src/config/settings/local.py` ham `.gitignore` da.
 * **Read replica**: "yozdim va darhol o'qidim" da `.using("default")`
   (`common/db_router.py`).
 * **Konfiguratsiya modellari `SoftDeleteModel`** — `.delete()` `deleted_at`
