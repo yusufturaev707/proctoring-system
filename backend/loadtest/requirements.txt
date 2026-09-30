@@ -1,0 +1,5 @@
+# Yuklama generatori (ALOHIDA venv: backend/loadtest/.venv) — backend
+# bog'liqliklariga qo'shilmaydi.
+locust==2.37.*
+websocket-client==1.8.*
+Pillow>=10.1

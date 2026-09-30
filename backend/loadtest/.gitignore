@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+results/storage/
+results/*.log
+results/manifest.json
+results/local_*/
