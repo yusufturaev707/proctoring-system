@@ -413,22 +413,36 @@ def public_ip(timeout: float = 0.0) -> str:
 # ---------------------------------------------------------------------
 # Umumiy
 # ---------------------------------------------------------------------
-def hardware_fingerprint() -> str:
+def hardware_fingerprint(mac: Optional[str] = None) -> str:
     """
-    Apparat izi: `muid:<Machine UUID>`.
+    Apparat izi: `muid:<Machine UUID>|mac:<MAC>`.
 
     Kredensial EMAS - backend uni anomaliya signali sifatida ishlatadi
     ("bitta apparat ostida bir nechta qurilma", "device_id boshqa
     mashinaga ko'chirilgan"). Shuning uchun u BARQAROR bo'lishi shart.
 
-    Ilgari `MAC|host|OS|arch` edi va barqaror EMAS edi: tarmoq kartasi
-    almashsa, marshrut boshqa adapterga o'tsa yoki kompyuter nomi
-    o'zgarsa, o'sha mashina "boshqa apparat" bo'lib ko'rinardi. Server
-    eski izdan yangisiga o'tishni MAC bo'yicha taniydi
-    (`devices.services.is_fingerprint_upgrade`) - prefiks shartnomaning
-    qismi, o'zgartirmang.
+    MAC NIMA UCHUN QAYTDI. Arzon platalarda SMBIOS UUID bir partiyada
+    bir xil bo'ladi, ya'ni faqat `muid:<UUID>` izi ikki BOSHQA
+    mashinada bir xil chiqardi va ikkinchisi ro'yxatdan o'tishda
+    birinchisining `device_id` sini olib qo'yardi. Mashina server
+    uchun (UUID, MAC) JUFTLIGI - iz ham shu juftlik.
+
+    `mac` - so'rovning o'zida yuborilayotgan MAC (handshake'dagi
+    `machine["mac"]`): iz va `mac_address` maydoni BITTA adapterdan
+    bo'lishi shart, aks holda server ularni bir mashina deb bilmaydi.
+    Berilmasa `mac_address()` o'qiladi. MAC aniqlanmasa - eski
+    `muid:<UUID>` shakli (server uni eski iz deb taniydi).
+
+    Shakl server bilan AYNAN bir xil (katta harf, ikki nuqta -
+    `devices.services.fingerprint_for`). `muid:` prefiksi ikki
+    tomonlama shartnoma, o'zgartirmang. Eski izlardan o'tishni server
+    taniydi (`devices.services.is_fingerprint_upgrade`).
     """
-    return "muid:{}".format(machine_uuid())[:128]
+    uuid_value = machine_uuid()
+    mac_value = _normalize_mac(mac if mac is not None else mac_address())
+    if not mac_value:
+        return "muid:{}".format(uuid_value)[:128]
+    return "muid:{}|mac:{}".format(uuid_value, mac_value)[:128]
 
 
 def info_pc() -> dict:
@@ -575,13 +589,16 @@ def _all_addresses(primary_ip: str = "") -> list:
 
 def snapshot(public_ip_timeout: float = 0.0) -> dict:
     """Ro'yxatdan o'tish va handshake uchun to'liq to'plam."""
+    # MAC bir marta o'qiladi: `mac_address` maydoni va iz bitta
+    # qiymatdan bo'lishi kerak (server ikkalasini solishtiradi).
+    mac = mac_address()
     return {
-        # Server kompyuterni birinchi shu bo'yicha qidiradi.
+        # Server kompyuterni (UUID, MAC) juftligi bo'yicha qidiradi.
         "machine_uuid": machine_uuid(),
-        "mac_address": mac_address(),
+        "mac_address": mac,
         "ip_address": local_ip(),
         "public_ip": public_ip(public_ip_timeout),
-        "hardware_fingerprint": hardware_fingerprint(),
+        "hardware_fingerprint": hardware_fingerprint(mac),
         "info_pc": info_pc(),
     }
 

@@ -148,27 +148,49 @@ class CandidateSeatTests(TestCase):
             machine_uuid=uuid, mac_address=mac,
         )
 
-    def test_physical_uuid_decides_the_desk(self):
-        """JSHSHIR tekshiruvida "bu mashina" - Machine UUID bo'yicha."""
+    def test_physical_pair_decides_the_desk(self):
+        """JSHSHIR tekshiruvida "bu mashina" - (Machine UUID, MAC) juftligi."""
         bookings.assign(self.schedule, PINFL, computer=self.pc2)
         with self.assertRaises(WrongComputer) as ctx:
-            # MAC №2 niki, lekin ona plata №1 niki - UUID hal qiladi.
-            self._resolve(uuid=self.pc1.machine_uuid, mac=self.pc2.mac_address)
+            self._resolve(uuid=self.pc1.machine_uuid, mac=self.pc1.mac_address)
         self.assertEqual(ctx.exception.extra["current"]["number"], 1)
 
-        seat = self._resolve(uuid=self.pc2.machine_uuid.lower(), mac="00:00:00:00:00:01")
+        seat = self._resolve(
+            uuid=self.pc2.machine_uuid.lower(), mac=self.pc2.mac_address.lower().replace(":", "-")
+        )
         self.assertEqual(seat["computer_id"], self.pc2.pk)
 
-    def test_unknown_uuid_does_not_fall_back_to_mac_of_uuid_record(self):
+    def test_same_uuid_other_mac_is_not_this_desk(self):
         """
-        UUID bazada yo'q - MAC faqat UUID'SIZ yozuvda qidiriladi: UUID'i
-        boshqa bo'lgan mashina MAC bo'yicha "shu stol" bo'lib qolmasin.
+        UUID mos, MAC boshqa - "shu stol" EMAS, qurilma biriktiruvi ham
+        uni shu stol qilmaydi: bir partiyadagi qo'shni mashina bo'lishi mumkin.
         """
         bookings.assign(self.schedule, PINFL, computer=self.pc2)
-        seat = self._resolve(
-            uuid="4C4C4544-0038-4A10-805A-C7C04F4B3A77", mac=self.pc1.mac_address
+        with self.assertRaises(WrongComputer) as ctx:
+            self._resolve(uuid=self.pc2.machine_uuid, mac="00:00:00:00:00:01")
+        self.assertIsNone(ctx.exception.extra["current"])
+        self.assertIn("ro'yxatda yo'q", str(ctx.exception.detail))
+
+    def test_sibling_with_same_uuid_is_its_own_desk(self):
+        """Bir xil UUID'li qo'shni mashina - o'z yozuvi bo'yicha tanilgan boshqa stol."""
+        sibling = factories.make_computer(
+            zone=self.zone, number=3, machine_uuid=self.pc2.machine_uuid,
+            mac_address="AA:BB:CC:00:00:33",
         )
-        self.assertEqual(seat["computer_id"], self.pc2.pk)  # qurilma biriktiruvi
+        bookings.assign(self.schedule, PINFL, computer=self.pc2)
+        with self.assertRaises(WrongComputer) as ctx:
+            self._resolve(uuid=sibling.machine_uuid, mac=sibling.mac_address)
+        self.assertEqual(ctx.exception.extra["current"]["number"], 3)
+
+    def test_unknown_uuid_does_not_fall_back_to_mac_or_binding(self):
+        """
+        Juftlik bazada yo'q - na MAC bo'yicha (UUID'i boshqa mashina), na
+        qurilma biriktiruvi bo'yicha "shu stol" bo'lib qolmaydi.
+        """
+        bookings.assign(self.schedule, PINFL, computer=self.pc2)
+        with self.assertRaises(WrongComputer) as ctx:
+            self._resolve(uuid="4C4C4544-0038-4A10-805A-C7C04F4B3A77", mac=self.pc1.mac_address)
+        self.assertIsNone(ctx.exception.extra["current"])
 
     def test_not_enforced_without_any_booking(self):
         """Bron yuritilmaydigan sessiya avvalgidek ishlaydi."""
@@ -307,7 +329,7 @@ class LookupEndpointSeatTests(TestCase):
     def test_wrong_computer_by_machine_uuid(self):
         bookings.assign(self.schedule, PINFL, computer=self.pc2)
 
-        response = self._lookup(uuid=self.pc1.machine_uuid)
+        response = self._lookup(uuid=self.pc1.machine_uuid, mac=self.pc1.mac_address)
 
         self.assertEqual(response.status_code, 409, response.content)
         self.assertEqual(response.json()["error"]["details"]["current"]["number"], 1)
@@ -317,14 +339,11 @@ class LookupEndpointSeatTests(TestCase):
         self.assertEqual(response.status_code, 400)
 
 
-class LookupMachineMacTests(TestCase):
+class LookupMachinePairTests(TestCase):
     """
-    JSHSHIR tekshiruvidagi MAC (qat'iy rejim) - himoyaning ikkinchi qatlami.
-
-    Handshake login'da bir marta o'tadi, MAC esa undan keyin o'zgarishi
-    mumkin. Tekshiruv bron qoidasidan MUSTAQIL va tashqi platformaga
-    so'rovdan OLDIN. Platforma soxtasi `CandidateNotFound` beradi:
-    "so'rov ketdimi" savoliga shu yetarli.
+    JSHSHIR tekshiruvida stol (UUID, MAC) juftligi bo'yicha - tashqi
+    platformaga so'rovdan OLDIN. Platforma soxtasi `CandidateNotFound`
+    beradi: "so'rov ketdimi" savoliga shu yetarli.
     """
 
     FOREIGN_MAC = "00:E0:4C:68:01:02"
@@ -332,43 +351,28 @@ class LookupMachineMacTests(TestCase):
     setUp = LookupEndpointSeatTests.setUp
     _lookup = LookupEndpointSeatTests._lookup
 
-    def _lookup_with(self, *, strict=True, **kwargs):
-        with patch.dict(settings.PROCTORING, {"REQUIRE_MACHINE_MAC": strict}), patch(
+    def _lookup_with(self, **kwargs):
+        with patch(
             "apps.integrations.exam_site.check_candidate", side_effect=CandidateNotFound()
         ) as check:
             response = self._lookup(**kwargs)
         return response, check
 
-    def test_mac_mismatch_is_409_before_platform(self):
+    def test_same_uuid_other_mac_is_wrong_computer_before_platform(self):
+        bookings.assign(self.schedule, PINFL, computer=self.pc2)
+
         response, check = self._lookup_with(uuid=self.pc2.machine_uuid, mac=self.FOREIGN_MAC)
 
         self.assertEqual(response.status_code, 409, response.content)
         error = response.json()["error"]
-        self.assertEqual(error["code"], "machine_mac_mismatch")
-        self.assertEqual(error["details"]["expected_mac"], self.pc2.mac_address)
-        self.assertEqual(error["details"]["reported_mac"], self.FOREIGN_MAC)
-        self.assertEqual(error["details"]["computer"]["computer_id"], self.pc2.pk)
+        self.assertEqual(error["code"], "wrong_computer")
+        self.assertIsNone(error["details"]["current"])
         check.assert_not_called()
 
-    def test_mac_mismatch_precedes_booking_check(self):
-        """Kimligi shubhali mashinaga "boshqa stolga boring" deyilmaydi."""
-        bookings.assign(self.schedule, PINFL, computer=self.pc1)
-
-        response, check = self._lookup_with(uuid=self.pc2.machine_uuid, mac=self.FOREIGN_MAC)
-
-        self.assertEqual(response.json()["error"]["code"], "machine_mac_mismatch")
-        check.assert_not_called()
-
-    def test_matching_mac_reaches_platform(self):
+    def test_matching_pair_reaches_platform(self):
+        bookings.assign(self.schedule, PINFL, computer=self.pc2)
         response, check = self._lookup_with(
             uuid=self.pc2.machine_uuid, mac=self.pc2.mac_address.lower().replace(":", "-")
-        )
-        self.assertEqual(response.json()["error"]["code"], "candidate_not_found")
-        check.assert_called_once()
-
-    def test_default_setting_ignores_mac(self):
-        response, check = self._lookup_with(
-            strict=False, uuid=self.pc2.machine_uuid, mac=self.FOREIGN_MAC
         )
         self.assertEqual(response.json()["error"]["code"], "candidate_not_found")
         check.assert_called_once()

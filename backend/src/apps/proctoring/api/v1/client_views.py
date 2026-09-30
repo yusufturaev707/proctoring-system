@@ -451,8 +451,8 @@ class HandshakeView(ClientBaseView):
         if not machine["allowed"]:
             # Audit yozuvi bu yerda YOZILMAYDI va bu ataylab:
             # ko'chirilgan qurilma `record_handshake` da allaqachon
-            # `fingerprint_changed` anomaliyasini beradi (Machine UUID
-            # `hardware_fingerprint` ning o'zi), operator esa
+            # `fingerprint_changed` anomaliyasini beradi (iz - Machine
+            # UUID va MAC juftligi), operator esa
             # nosozlikni ko'rib "Yangilash" ni ketma-ket bosadi -
             # har bosishda audit yozuvi qoldirish jurnalni
             # foydasiz qilardi.

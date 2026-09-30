@@ -146,8 +146,11 @@ class Computer(SoftDeleteModel):
     # `unique_computer_zone_ip` esa binoda bittadan ortiq shunday
     # mashinaga yo'l qo'ymasdi. NULL bu cheklovga tushmaydi.
     ip_address = models.GenericIPAddressField(_("IP manzil"), null=True, blank=True)
-    #: MASHINANING ASOSIY IDENTIFIKATORI - ona platadagi SMBIOS UUID
-    #: (`wmic csproduct get uuid` bilan bir xil satr, katta harf).
+    #: MASHINA IDENTIFIKATORI - (machine_uuid, mac_address) JUFTLIGI.
+    #: UUID - ona platadagi SMBIOS UUID (`wmic csproduct get uuid` bilan
+    #: bir xil satr, katta harf). U TAKRORLANADI: arzon platalarda bir
+    #: partiyada bir xil, shuning uchun o'zi unikal emas (juftlik -
+    #: `unique_computer_uuid_mac`, qidiruv - `services.find_computer_by_identity`).
     #
     # Ilgari bu rolni MAC bajarardi va u amalda o'zgaradi: tarmoq kartasi
     # almashtiriladi, USB/Wi-Fi adapter ulanadi, marshrut boshqa adapterga
@@ -164,8 +167,12 @@ class Computer(SoftDeleteModel):
         _("Machine UUID"), max_length=36, null=True, blank=True,
         validators=[machine_uuid_validator],
     )
-    #: IKKILAMCHI belgi (ixtiyoriy): UUID'siz eski client'lar va UUID'ni
-    #: bir marta bog'lash uchun. Qaror unga tayanmaydi.
+    #: Juftlikning ikkinchi yarmi. Yangi va tahrirlanayotgan yozuvda
+    #: MAJBURIY (panel serializer'i, Excel import, Django admin) va doim
+    #: `normalize_mac` shaklida. Modelda `blank=True` faqat MAC'siz ESKI
+    #: yozuvlar uchun (o'tish davri: ular faqat UUID bilan, shu UUID'li
+    #: yagona yozuv bo'lsa tanladi - `find_computer_by_identity`).
+    #: Client uni HECH QACHON yozmaydi.
     mac_address = models.CharField(
         _("MAC manzil"), max_length=17, blank=True, default="",
         validators=[mac_address_validator],
@@ -230,15 +237,22 @@ class Computer(SoftDeleteModel):
                 condition=models.Q(deleted_at__isnull=True),
                 name="unique_computer_inventory_code",
             ),
-            # ASOSIY identifikator - tizim bo'ylab unikal (bitta ona plata
-            # ikki joyda bo'lolmaydi). Hisobdan chiqarilgan mashina UUID'ni
-            # band qilmaydi: u ta'mirdan qaytib qayta qo'shilishi mumkin.
+            # IDENTIFIKATOR - (UUID, MAC) juftligi. Faqat UUID unikal
+            # EMAS: bir partiyadagi platalarda u bir xil va bunday ikkinchi
+            # mashinani qo'shib bo'lmasdi. `unique_computer_mac` bilan
+            # birga u ortiqcha ko'rinadi, lekin juftlik qoidasini BAZADA
+            # aniq yozadi - MAC cheklovi o'zgarsa ham juftlik himoyada
+            # qoladi. Hisobdan chiqarilgan mashina juftlikni band qilmaydi.
             models.UniqueConstraint(
-                fields=["machine_uuid"],
-                condition=models.Q(deleted_at__isnull=True, machine_uuid__isnull=False),
-                name="unique_computer_machine_uuid",
+                fields=["machine_uuid", "mac_address"],
+                condition=(
+                    models.Q(deleted_at__isnull=True, machine_uuid__isnull=False)
+                    & ~models.Q(mac_address="")
+                ),
+                name="unique_computer_uuid_mac",
             ),
-            # MAC endi ixtiyoriy: bo'sh qiymatlar bir-biriga "to'qnashmaydi".
+            # MAC tizim bo'ylab unikal (zavod manzili). Bo'sh qiymat -
+            # faqat MAC'siz eski yozuvlar - bir-biriga "to'qnashmaydi".
             models.UniqueConstraint(
                 fields=["mac_address"],
                 condition=models.Q(deleted_at__isnull=True) & ~models.Q(mac_address=""),
@@ -341,10 +355,12 @@ class DeviceToken(TimeStampedModel):
     reported_machine_uuid = models.CharField(max_length=36, blank=True, default="")
     #: Client aytgan MAC (marshrut tanlagan adapter) - oxirgi handshake'dagi.
     #
-    # `REQUIRE_MACHINE_MAC` ni yoqishdan OLDIN kerak: administrator
-    # qaysi mashinalar to'silishini shu qiymat va `Computer.mac_address`
-    # farqidan ko'radi (`audit_machine_macs`, panel). ISHONCHSIZ - qaror
-    # handshake'dagi qiymat bilan qilinadi, bu faqat diagnostika.
+    # Juftlik tekshiruvi (`find_computer_by_identity`) MAC'ga tayanadi:
+    # administrator qaysi mashinalar `not_found` olayotganini shu qiymat
+    # va `Computer.mac_address` farqidan ko'radi (`audit_machine_identity`,
+    # panel). ISHONCHSIZ - qaror handshake'dagi qiymat bilan qilinadi,
+    # bu faqat diagnostika. Client `Computer.mac_address` ga HECH QACHON
+    # yozmaydi.
     reported_mac = models.CharField(max_length=17, blank=True, default="")
     revoked_at = models.DateTimeField(null=True, blank=True)
     revoke_reason = models.CharField(max_length=255, blank=True, default="")

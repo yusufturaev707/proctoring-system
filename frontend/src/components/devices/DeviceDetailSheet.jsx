@@ -134,10 +134,11 @@ export default function DeviceDetailSheet({
                   device.reported_machine_uuid !== device.computer_machine_uuid,
                 )}
               />
-              {/* MAC - `REQUIRE_MACHINE_MAC` yoqilsa farq to'siq bo'ladi; administrator
-                  uni yoqishdan OLDIN shu yerda (va `audit_machine_macs` da) ko'radi. */}
+              {/* MAC - juftlikning ikkinchi yarmi: farq bo'lsa handshake `not_found`
+                  beradi. Administrator sababni shu yerda (va `audit_machine_identity`
+                  da) ko'radi. */}
               <Field
-                label="MAC (client aytgan)"
+                label="Mashina aytgan MAC"
                 value={device.reported_mac}
                 hint="Client hali yubormagan"
                 mono
@@ -146,7 +147,7 @@ export default function DeviceDetailSheet({
               <Field
                 label="Kompyuter yozuvidagi MAC"
                 value={device.computer_mac_address}
-                hint="Yozilmagan — faqat UUID tekshiriladi"
+                hint="Yozilmagan — administrator MAC kiritishi kerak"
                 mono
                 onCopy={copy}
                 warn={Boolean(

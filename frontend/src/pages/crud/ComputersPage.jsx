@@ -213,9 +213,10 @@ export default function ComputersPage() {
           helperText: 'Faqat harf, raqam, `-` va `_`. Tizim bo‘ylab unikal.',
         },
         {
-          // ASOSIY IDENTIFIKATOR - ona platadagi SMBIOS UUID. Yangi
-          // kompyuterda majburiy; UUID'dan oldingi yozuvni tahrirlashda
-          // bo'sh qolishi mumkin (client uni MAC orqali o'zi bog'laydi).
+          // IDENTIFIKATOR - (UUID, MAC) JUFTLIGI. UUID ona platadagi SMBIOS
+          // UUID; yangi kompyuterda majburiy, UUID'dan oldingi yozuvni
+          // tahrirlashda bo'sh qolishi mumkin (client uni MAC orqali o'zi
+          // bog'laydi). O'zi unikal EMAS - bir partiyadagi platalarda bir xil.
           name: 'machine_uuid', label: 'Machine UUID',
           pattern: 'uuid', colSpan: 12, maxLength: 38,
           transform: normalizeMachineUuid,
@@ -224,7 +225,8 @@ export default function ComputersPage() {
           ),
           helperText:
             'Mashinada: wmic csproduct get uuid yoki PowerShell ' +
-            '(Get-CimInstance Win32_ComputerSystemProduct).UUID. Tizim bo‘ylab unikal.',
+            '(Get-CimInstance Win32_ComputerSystemProduct).UUID. Bir partiyadagi platalarda ' +
+            'takrorlanishi mumkin — mashinani UUID va MAC birga belgilaydi.',
         },
         {
           name: 'ip_address', label: 'IP manzil',
@@ -232,9 +234,11 @@ export default function ComputersPage() {
           helperText: 'Ixtiyoriy (DHCP tarmog‘ida o‘zgaradi). Berilsa — bino ichida unikal',
         },
         {
-          name: 'mac_address', label: 'MAC manzil',
+          // MAJBURIY (tahrirlashda ham): UUID takrorlanadi va MAC'siz
+          // yozuvni bir partiyadagi boshqa mashinalardan ajratib bo'lmaydi.
+          name: 'mac_address', label: 'MAC manzil', required: true,
           pattern: 'mac', colSpan: 6,
-          helperText: 'Ixtiyoriy — tarmoq kartasi almashsa o‘zgaradi, mashinani UUID belgilaydi',
+          helperText: 'Imtihon mashinasidagi yagona faol adapter (Wi-Fi o‘chiq). Tarmoq kartasi almashsa — shu yerda yangilang',
           // MAC serverda ham normalizatsiya qilinadi, lekin bu yerda
           // kiritishni yagona shaklga keltirish dublikat xatolarini kamaytiradi.
           transform: (value) => String(value || '').replace(/-/g, ':').toUpperCase(),

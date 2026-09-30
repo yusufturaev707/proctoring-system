@@ -114,12 +114,6 @@ def lookup_candidate(
     # qaysi kompyuterga borish kerakligi TUZILGAN holda keladi
     # (`WrongComputer.extra`), client uni matndan ajratmaydi.
     #
-    # MAC (qat'iy rejim) bron'dan OLDIN: "qaysi stol" javobi mashinaning
-    # kimligiga tayanadi - kimligi shubhali mashinaga "boshqa stolga
-    # boring" deyish operatorni noto'g'ri yo'lga solardi.
-    bookings.ensure_machine_mac(
-        device=device, zone=zone, machine_uuid=machine_uuid, mac_address=mac_address,
-    )
     seat = bookings.resolve_candidate_seat(
         schedule=schedule, pinfl=pinfl, device=device,
         machine_uuid=machine_uuid, mac_address=mac_address,

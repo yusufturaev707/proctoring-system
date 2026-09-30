@@ -18,10 +18,6 @@ from apps.devices.models import Camera, Computer, DeviceToken
 _alive_camera_mac = UniqueValidator(
     queryset=Camera.objects.alive(), message="Bunday MAC manzilli kamera allaqachon mavjud"
 )
-_alive_computer_uuid = UniqueValidator(
-    queryset=Computer.objects.alive(),
-    message="Bunday Machine UUID li kompyuter allaqachon mavjud",
-)
 _alive_computer_code = UniqueValidator(
     queryset=Computer.objects.alive(), message="Bunday inventar kodi allaqachon ishlatilgan"
 )
@@ -99,16 +95,21 @@ class ComputerSerializer(serializers.ModelSerializer):
     cameras_detail = serializers.SerializerMethodField()
     active_session_id = serializers.IntegerField(read_only=True, required=False)
     inventory_code = serializers.CharField(max_length=50, validators=[_alive_computer_code])
-    #: ASOSIY identifikator (SMBIOS UUID). Yangi kompyuterda MAJBURIY
-    #: (`validate`); UUID'dan oldingi yozuvni tahrirlashda bo'sh qolishi
-    #: mumkin - u birinchi handshake'da MAC orqali bog'lanadi.
+    #: Identifikatorning birinchi yarmi (SMBIOS UUID). Yangi kompyuterda
+    #: MAJBURIY (`validate`); UUID'dan oldingi yozuvni tahrirlashda bo'sh
+    #: qolishi mumkin - u birinchi handshake'da MAC orqali bog'lanadi.
+    #: O'zi unikal EMAS (bir partiyadagi platalarda takrorlanadi) -
+    #: unikal (UUID, MAC) juftligi.
     machine_uuid = serializers.CharField(
         max_length=64, required=False, allow_blank=True, allow_null=True,
         validators=[machine_uuid_validator],
     )
-    #: Ikkilamchi, ixtiyoriy. Unikallik `validate_mac_address` da: bo'sh
-    #: qiymatlar bir-biriga to'qnashmasligi kerak, `UniqueValidator` esa
-    #: bo'sh satrni ham solishtirardi.
+    #: Identifikatorning ikkinchi yarmi - yangi va tahrirlanayotgan
+    #: yozuvda MAJBURIY (`validate`): UUID takrorlanadigan dunyoda MAC'siz
+    #: yozuvni bir partiyadagi boshqa mashinalardan ajratib bo'lmaydi.
+    #: `required=False` faqat PATCH uchun (qiymat yozuvda bo'lishi yetadi).
+    #: Unikallik `validate_mac_address` da: `UniqueValidator` bo'sh
+    #: satrni ham solishtirardi.
     mac_address = serializers.CharField(
         max_length=17, required=False, allow_blank=True, validators=[mac_address_validator]
     )
@@ -151,6 +152,20 @@ class ComputerSerializer(serializers.ModelSerializer):
             self._alive_cameras(obj), many=True, context=self.context
         ).data
 
+    def get_validators(self):
+        """
+        DRF `unique_computer_uuid_mac` dan o'zi yasaydigan validatorsiz.
+
+        U MAC yuborilmagan har so'rovni inglizcha "This field is required."
+        bilan rad etardi va juftlikni o'zicha tekshirardi. Juftlik va MAC
+        majburiyligi `_validate_identity` da - qoida handshake bilan BITTA
+        (`find_computer_by_identity`) va xabar maydonga o'zbekcha bog'lanadi.
+        """
+        return [
+            validator for validator in super().get_validators()
+            if tuple(getattr(validator, "fields", ())) != ("machine_uuid", "mac_address")
+        ]
+
     def _alive_others(self):
         queryset = Computer.objects.alive()
         if self.instance is not None:
@@ -159,24 +174,48 @@ class ComputerSerializer(serializers.ModelSerializer):
 
     def validate_machine_uuid(self, value):
         """
-        Kanonik shakl (katta harf) va tirik yozuvlar orasida unikallik.
+        Kanonik shakl (katta harf). Unikallik bu yerda EMAS - juftlikda
+        (`validate`): UUID bir partiyadagi platalarda takrorlanadi.
 
         Kanonik shaklga keltirish SHART: client katta harf yuboradi,
         administrator esa kichik harf bilan ko'chirib qo'yishi mumkin -
         bazada ikki xil yozuv mashinani "ro'yxatda yo'q" qilardi.
         """
         value = normalize_machine_uuid(value)
-        if not value:
-            return None
-        if self._alive_others().filter(machine_uuid=value).exists():
-            raise serializers.ValidationError("Bunday Machine UUID li kompyuter allaqachon mavjud")
-        return value
+        return value or None
 
     def validate_mac_address(self, value):
         value = normalize_mac(value) or ""
         if value and self._alive_others().filter(mac_address=value).exists():
             raise serializers.ValidationError("Bunday MAC manzilli kompyuter allaqachon mavjud")
         return value
+
+    def _validate_identity(self, attrs) -> None:
+        """
+        MAC majburiy va (UUID, MAC) juftligi tirik yozuvlar orasida yagona.
+
+        MAC tahrirlanayotgan ESKI yozuvda ham so'raladi: ular faqat o'tish
+        davrida UUID bilan tanladi va shu UUID'li ikkinchi mashina
+        qo'shilishi bilan tanilmay qoladi. Juftlik tekshiruvi
+        `find_computer_by_identity` orqali - qoida handshake bilan bitta.
+        """
+        mac = attrs.get("mac_address", getattr(self.instance, "mac_address", "") or "")
+        if not mac:
+            raise serializers.ValidationError(
+                {"mac_address": "MAC manzil kiritilishi shart (AA:BB:CC:DD:EE:FF)"}
+            )
+        machine_uuid = attrs.get("machine_uuid", getattr(self.instance, "machine_uuid", None))
+        if not machine_uuid:
+            return
+        same = services.find_computer_by_identity(None, machine_uuid, mac)
+        if (
+            same is not None
+            and same.mac_address
+            and (self.instance is None or same.pk != self.instance.pk)
+        ):
+            raise serializers.ValidationError(
+                {"mac_address": "Bu Machine UUID va MAC juftligi «{}» kompyuterida band".format(same.label)}
+            )
 
     def to_representation(self, instance):
         # `cameras` ham, `cameras_detail` ham bir xil ro'yxatni ko'rsatishi
@@ -219,6 +258,7 @@ class ComputerSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"machine_uuid": "Machine UUID ni o'chirib bo'lmaydi — to'g'ri qiymatga almashtiring"}
             )
+        self._validate_identity(attrs)
         zone = attrs.get("zone") or getattr(self.instance, "zone", None)
         cameras = attrs.get("cameras")
 
@@ -272,8 +312,8 @@ class DeviceTokenSerializer(serializers.ModelSerializer):
     computer_machine_uuid = serializers.CharField(
         source="computer.machine_uuid", read_only=True, default=""
     )
-    #: Yozuvdagi MAC - `reported_mac` bilan yonma-yon: `REQUIRE_MACHINE_MAC`
-    #: yoqilsa qaysi mashina to'silishi shu farqdan ko'rinadi.
+    #: Yozuvdagi MAC - `reported_mac` bilan yonma-yon: handshake juftlik
+    #: bo'yicha tekshiradi va farq bo'lsa mashina `not_found` oladi.
     computer_mac_address = serializers.CharField(
         source="computer.mac_address", read_only=True, default=""
     )

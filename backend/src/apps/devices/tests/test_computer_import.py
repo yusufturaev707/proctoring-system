@@ -1,8 +1,9 @@
 """
 Kompyuterlarni Excel'dan ommaviy qo'shish (`devices/computer_import.py`).
 
-Asosiy identifikator - `machine_uuid` (majburiy ustun); MAC ixtiyoriy va
-UUID'siz eski yozuvga UUID yozish uchun ishlatiladi.
+Mashina - (machine_uuid, mac_address) JUFTLIGI, ikkala ustun majburiy.
+UUID bir partiyada takrorlanadi: UUID bir xil, MAC boshqa qator - yangi
+kompyuter. MAC UUID'siz eski yozuvga UUID yozish uchun ham ishlatiladi.
 """
 
 import io
@@ -25,6 +26,9 @@ HEADER = [
 U1 = "4C4C4544-0038-4A10-805A-C7C04F4B3A01"
 U2 = "4C4C4544-0038-4A10-805A-C7C04F4B3A02"
 U3 = "4C4C4544-0038-4A10-805A-C7C04F4B3A03"
+M1 = "00:1A:2B:3C:4D:01"
+M2 = "00:1A:2B:3C:4D:02"
+M3 = "00:1A:2B:3C:4D:03"
 
 
 def xlsx(rows, header=HEADER) -> SimpleUploadedFile:
@@ -57,7 +61,7 @@ class ComputerImportTests(TestCase):
         dtm = self.region.dtm_id
         response = self.post([
             [dtm, 3, U1.lower(), "00-1a-2b-3c-4d-5e", 12, "INV-0012"],
-            [f"{dtm} (Viloyat)", "3 (Bino)", "{" + U2 + "}", None, 13, None],
+            [f"{dtm} (Viloyat)", "3 (Bino)", "{" + U2 + "}", M2.lower(), 13, None],
         ])
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(response.json()["data"]["created"], 2)
@@ -70,39 +74,70 @@ class ComputerImportTests(TestCase):
         self.assertIsNone(first.ip_address)
         second = Computer.objects.get(number=13)
         self.assertEqual(second.machine_uuid, U2)
-        # MAC ixtiyoriy; inventar kodi UUID dan hosil qilinadi.
-        self.assertEqual(second.mac_address, "")
-        self.assertEqual(second.inventory_code, "AUTO-" + U2.replace("-", ""))
+        self.assertEqual(second.mac_address, M2)
+        # Inventar kodi UUID va MAC dan: faqat UUID'dan olingan kod bir
+        # partiyadagi ikkinchi mashinada to'qnashardi.
+        self.assertEqual(second.inventory_code, "AUTO-" + U2.replace("-", "") + "-" + M2.replace(":", ""))
         self.assertTrue(AuditLog.objects.filter(action="import").exists())
 
     def test_dry_run_writes_nothing(self):
-        response = self.post([[self.region.dtm_id, 3, U1, "", 1, ""]], dry_run=True)
+        response = self.post([[self.region.dtm_id, 3, U1, M1, 1, ""]], dry_run=True)
         self.assertEqual(response.json()["data"]["to_create"], 1)
         self.assertFalse(Computer.objects.exists())
 
     def test_any_error_blocks_whole_file(self):
         response = self.post([
-            [self.region.dtm_id, 3, U1, "", 1, ""],
-            [self.region.dtm_id, 99, U2, "", 2, ""],                              # bino yo'q
-            [self.region.dtm_id, 3, "yaroqsiz", "", 3, ""],                       # UUID
-            [self.region.dtm_id, 3, U1, "", 4, ""],                               # takror UUID
-            [self.region.dtm_id, 3, "00000000-0000-0000-0000-000000000000", "", 5, ""],  # to'ldirilmagan
+            [self.region.dtm_id, 3, U1, M1, 1, ""],
+            [self.region.dtm_id, 99, U2, M2, 2, ""],                              # bino yo'q
+            [self.region.dtm_id, 3, "yaroqsiz", M3, 3, ""],                       # UUID
+            [self.region.dtm_id, 3, U2, M1, 4, ""],                               # takror MAC
+            [self.region.dtm_id, 3, "00000000-0000-0000-0000-000000000000", "00:1A:2B:3C:4D:05", 5, ""],
             [self.region.dtm_id, 3, U3, "not-a-mac", 6, ""],                      # MAC formati
+            [self.region.dtm_id, 3, U3, "", 7, ""],                               # MAC yo'q
         ])
         errors = response.json()["data"]["errors"]
         self.assertEqual({(e["row"], e["column"]) for e in errors}, {
-            (3, "zone_number"), (4, "machine_uuid"), (5, "machine_uuid"),
-            (6, "machine_uuid"), (7, "mac_address"),
+            (3, "zone_number"), (4, "machine_uuid"), (5, "mac_address"),
+            (6, "machine_uuid"), (7, "mac_address"), (8, "mac_address"),
         })
         self.assertFalse(Computer.objects.exists())
 
-    def test_existing_uuid_is_skipped_not_error(self):
-        factories.make_computer(zone=self.zone, machine_uuid=U1, number=1)
+    def test_existing_pair_is_skipped_not_error(self):
+        factories.make_computer(zone=self.zone, machine_uuid=U1, mac_address=M1, number=1)
         data = self.post([
-            [self.region.dtm_id, 3, U1, "", 1, ""],
-            [self.region.dtm_id, 3, U2, "", 2, ""],
+            [self.region.dtm_id, 3, U1, M1.lower(), 1, ""],
+            [self.region.dtm_id, 3, U2, M2, 2, ""],
         ]).json()["data"]
         self.assertEqual((data["created"], len(data["skipped"]), data["errors"]), (1, 1, []))
+
+    def test_same_uuid_with_other_mac_is_a_new_computer(self):
+        """Bir partiyadagi platalar - o'tkazib yuborilmaydi, yangi yozuv."""
+        factories.make_computer(zone=self.zone, machine_uuid=U1, mac_address=M1, number=1)
+        data = self.post([
+            [self.region.dtm_id, 3, U1, M2, 2, ""],
+            [self.region.dtm_id, 3, U1, M3, 3, ""],
+        ]).json()["data"]
+        self.assertEqual((data["created"], data["skipped"], data["errors"]), (2, [], []))
+        self.assertEqual(
+            set(Computer.objects.filter(machine_uuid=U1).values_list("mac_address", flat=True)),
+            {M1, M2, M3},
+        )
+
+    def test_empty_mac_is_error(self):
+        errors = self.post([[self.region.dtm_id, 3, U1, "", 1, ""]]).json()["data"]["errors"]
+        self.assertEqual([(e["row"], e["column"]) for e in errors], [(2, "mac_address")])
+        self.assertFalse(Computer.objects.exists())
+
+    def test_legacy_record_without_mac_with_same_uuid_is_error(self):
+        """
+        MAC'siz eski yozuv - xato: u shu mashina bo'lishi mumkin, yangi
+        yozuv esa uni UUID bo'yicha tanilmaydigan qilib qo'yardi.
+        """
+        legacy = factories.make_computer(zone=self.zone, machine_uuid=U1, mac_address="", number=1)
+        errors = self.post([[self.region.dtm_id, 3, U1, M1, 2, ""]]).json()["data"]["errors"]
+        self.assertEqual(errors[0]["column"], "mac_address")
+        self.assertIn(legacy.label, errors[0]["message"])
+        self.assertEqual(Computer.objects.count(), 1)
 
     def test_fills_uuid_of_legacy_computer_found_by_mac(self):
         """
@@ -138,7 +173,7 @@ class ComputerImportTests(TestCase):
 
     def test_taken_number_in_zone_is_error(self):
         factories.make_computer(zone=self.zone, number=7)
-        errors = self.post([[self.region.dtm_id, 3, U1, "", 7, ""]]).json()["data"]["errors"]
+        errors = self.post([[self.region.dtm_id, 3, U1, M1, 7, ""]]).json()["data"]["errors"]
         self.assertEqual(errors[0]["column"], "number")
 
     def test_missing_required_column(self):
@@ -156,7 +191,7 @@ class ComputerImportTests(TestCase):
         factories.make_zone(region=other, number=1)
         user = factories.make_user(permissions=["devices.view", "devices.manage"], region=self.region)
         self.client.credentials(HTTP_AUTHORIZATION=bearer(user))
-        errors = self.post([[other.dtm_id, 1, U1, "", 1, ""]]).json()["data"]["errors"]
+        errors = self.post([[other.dtm_id, 1, U1, M1, 1, ""]]).json()["data"]["errors"]
         self.assertEqual(errors[0]["column"], "dtm_id")
 
     def test_template_download(self):

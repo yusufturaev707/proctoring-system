@@ -143,7 +143,7 @@ class ComputerNumberApiTests(TestCase):
 
 
 class ComputerMachineUuidApiTests(TestCase):
-    """Panel formasi: UUID asosiy, kanonik shaklda, unikal; MAC ixtiyoriy."""
+    """Panel formasi: (UUID, MAC) juftligi - ikkalasi majburiy, kanonik, juftlik unikal."""
 
     def setUp(self):
         self.client = APIClient()
@@ -162,36 +162,56 @@ class ComputerMachineUuidApiTests(TestCase):
             HTTP_AUTHORIZATION=self.auth,
         )
 
-    def test_uuid_required_and_canonical_mac_optional(self):
-        self.assertEqual(self.create().status_code, 400)
-        response = self.create(machine_uuid="{4c4c4544-0038-4a10-805a-c7c04f4b3a11}")
+    def test_uuid_and_mac_required_and_canonical(self):
+        self.assertEqual(self.create(mac_address="2C:F0:5D:77:BB:01").status_code, 400)
+        no_mac = self.create(machine_uuid="4C4C4544-0038-4A10-805A-C7C04F4B3A11")
+        self.assertEqual(no_mac.status_code, 400)
+        self.assertIn("MAC", no_mac.json()["error"]["details"]["mac_address"][0])
+        response = self.create(
+            machine_uuid="{4c4c4544-0038-4a10-805a-c7c04f4b3a11}", mac_address="2c-f0-5d-77-bb-01"
+        )
         self.assertEqual(response.status_code, 201, response.content)
         self.assertEqual(response.json()["data"]["machine_uuid"], "4C4C4544-0038-4A10-805A-C7C04F4B3A11")
-        self.assertEqual(response.json()["data"]["mac_address"], "")
+        self.assertEqual(response.json()["data"]["mac_address"], "2C:F0:5D:77:BB:01")
 
-    def test_duplicate_and_placeholder_rejected(self):
-        factories.make_computer(zone=self.zone, machine_uuid="4C4C4544-0038-4A10-805A-C7C04F4B3A12")
-        duplicate = self.create(machine_uuid="4c4c4544-0038-4a10-805a-c7c04f4b3a12")
+    def test_same_uuid_with_other_mac_is_a_second_computer(self):
+        """Bir partiyadagi platalar: UUID bir xil, MAC boshqa - ikki kompyuter."""
+        uuid = "4C4C4544-0038-4A10-805A-C7C04F4B3A12"
+        factories.make_computer(zone=self.zone, machine_uuid=uuid, mac_address="2C:F0:5D:77:BB:02")
+        second = self.create(machine_uuid=uuid.lower(), mac_address="2C:F0:5D:77:BB:03")
+        self.assertEqual(second.status_code, 201, second.content)
+        self.assertEqual(Computer.objects.filter(machine_uuid=uuid).count(), 2)
+
+    def test_duplicate_pair_and_placeholder_rejected(self):
+        uuid = "4C4C4544-0038-4A10-805A-C7C04F4B3A13"
+        factories.make_computer(zone=self.zone, machine_uuid=uuid, mac_address="2C:F0:5D:77:BB:04")
+        duplicate = self.create(machine_uuid=uuid, mac_address="2c-f0-5d-77-bb-04")
         self.assertEqual(duplicate.status_code, 400)
-        self.assertIn("machine_uuid", duplicate.json()["error"]["details"])
-        placeholder = self.create(machine_uuid="03000200-0400-0500-0006-000700080009")
+        self.assertIn("mac_address", duplicate.json()["error"]["details"])
+        placeholder = self.create(
+            machine_uuid="03000200-0400-0500-0006-000700080009", mac_address="2C:F0:5D:77:BB:05"
+        )
         self.assertEqual(placeholder.status_code, 400)
 
-    def test_two_computers_without_mac_do_not_collide(self):
-        self.assertEqual(self.create(machine_uuid="4C4C4544-0038-4A10-805A-C7C04F4B3A13").status_code, 201)
-        second = self.client.post(
-            reverse("computer-list"),
-            {"zone": self.zone.pk, "number": 150, "inventory_code": "PC-UUID-B",
-             "machine_uuid": "4C4C4544-0038-4A10-805A-C7C04F4B3A14", "mac_address": ""},
-            format="json",
-            HTTP_AUTHORIZATION=self.auth,
-        )
-        self.assertEqual(second.status_code, 201, second.content)
-
-    def test_legacy_computer_can_be_edited_without_uuid(self):
+    def test_legacy_computer_without_uuid_needs_mac_when_edited(self):
         legacy = factories.make_computer(zone=self.zone, machine_uuid=None)
         response = self.client.patch(
             reverse("computer-detail", args=[legacy.pk]), {"number": 55},
             format="json", HTTP_AUTHORIZATION=self.auth,
         )
         self.assertEqual(response.status_code, 200, response.content)
+
+    def test_legacy_computer_without_mac_must_get_one_when_edited(self):
+        """Tahrirlanayotgan eski yozuvda ham MAC so'raladi (o'tish davri tugaydi)."""
+        legacy = factories.make_computer(zone=self.zone, mac_address="")
+        url = reverse("computer-detail", args=[legacy.pk])
+        response = self.client.patch(url, {"number": 56}, format="json", HTTP_AUTHORIZATION=self.auth)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("mac_address", response.json()["error"]["details"])
+        response = self.client.patch(
+            url, {"number": 56, "mac_address": "2c:f0:5d:77:bb:06"},
+            format="json", HTTP_AUTHORIZATION=self.auth,
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        legacy.refresh_from_db()
+        self.assertEqual(legacy.mac_address, "2C:F0:5D:77:BB:06")

@@ -453,6 +453,19 @@ talqin qilinadi.
 | Kim ishlatadi | operator, talabgor | buxgalteriya, administrator |
 | Unikal | **bino ichida** | tizim bo'ylab |
 
+Kompyuter jadvalidagi unikallik (hammasi shartli — tirik yozuvlar orasida):
+
+| Cheklov | Maydonlar | Ko'lam |
+|---|---|---|
+| `unique_computer_zone_number` | `zone`, `number` | bino ichida, `number IS NOT NULL` |
+| `unique_computer_zone_ip` | `zone`, `ip_address` | bino ichida |
+| `unique_computer_inventory_code` | `inventory_code` | tizim bo'ylab |
+| `unique_computer_uuid_mac` | `machine_uuid`, `mac_address` | tizim bo'ylab, ikkalasi bo'sh emas |
+| `unique_computer_mac` | `mac_address` | tizim bo'ylab, bo'sh emas |
+
+`machine_uuid` O'ZI unikal EMAS (bir partiyadagi platalarda bir xil) —
+`devices.0013` `unique_computer_machine_uuid` ni olib tashladi.
+
 * Raqam ro'yxatlarda birinchi, saralash `["zone", "number", "inventory_code"]`.
 * **Raqam ixtiyoriy**, `0` qabul qilinmaydi.
 * `unique_computer_zone_number` shartli (`deleted_at IS NULL AND number IS
@@ -476,9 +489,13 @@ talqin qilinadi.
 
 **Excel import** (`devices/computer_import.py`, `computers/import/` +
 `import-template/`, panel `ComputerImportDialog`). Ustunlar: `dtm_id`,
-`zone_number` (tashqi raqamlar), `machine_uuid` (MAJBURIY), `mac_address`,
-`number`, `inventory_code` (bo'sh — `AUTO-<UUID hex>`). HAMMASI YOKI HECH
-NARSA (panel avval `dry_run`). Ro'yxatdagi UUID o'tkazib yuboriladi.
+`zone_number` (tashqi raqamlar), `machine_uuid` va `mac_address` (ikkalasi
+MAJBURIY — bo'sh MAC qatori xato), `number`, `inventory_code` (bo'sh —
+`AUTO-<UUID hex>-<MAC hex>`). HAMMASI YOKI HECH NARSA (panel avval
+`dry_run`). "Allaqachon ro'yxatda" — JUFTLIK bo'yicha (`services.
+match_identity`, handshake bilan bitta qoida): ro'yxatdagi juftlik
+o'tkazib yuboriladi, UUID bir xil + MAC boshqa qator — YANGI kompyuter.
+Shu UUID'li MAC'siz eski yozuv bor bo'lsa — xato (avval unga MAC kiritiladi).
 Yagona tahrir: UUID'siz eski yozuv MAC + o'sha bino bo'yicha topilsa unga
 faqat `machine_uuid` yoziladi (`to_bind`/`bound`). Viloyat admini faqat o'z
 viloyatiga. `Computer.ip_address` ixtiyoriy (`devices.0010`, NULL
@@ -544,11 +561,14 @@ biriktirish bo'lsa); `REQUIRE_COMPUTER_BOOKING=true` majburiy qiladi.
 | `seat_not_booked` (403) | joy yo'q |
 | `seat_out_of_service` (409) | joyi buzilgan |
 | `wrong_computer` (409) | boshqa stolda; `details.seat`, `details.current` |
-| `device_binding_mismatch` (409) | stol to'g'ri (UUID mos), qurilma boshqa kompyuterga biriktirilgan |
+| `device_binding_mismatch` (409) | stol to'g'ri (juftlik mos), qurilma boshqa kompyuterga biriktirilgan |
 
-"Shu mashina" — client yuborgan `machine_uuid` (`bookings._physical_computer`);
-eski clientda MAC, ikkalasi yo'q bo'lsa qurilma biriktiruvi. UUID topilmasa
-MAC faqat UUID'siz yozuvlarda qidiriladi. Faqat bino ichida.
+"Shu mashina" — client yuborgan (`machine_uuid`, `mac_address`) juftligi
+(`bookings._physical_computer` → `find_computer_by_identity`); eski clientda
+MAC, ikkalasi yo'q bo'lsa qurilma biriktiruvi. UUID yuborilgan, lekin juftlik
+tanilmagan (UUID mos, MAC boshqa) — "shu stol" EMAS, qurilma biriktiruvi
+ham uni shu stol qilmaydi (`wrong_computer`, `details.current = null`).
+Faqat bino ichida.
 
 **Challenge qurilmaga bog'langan** (`session._require_pending_device`):
 `face/verify/`/`face/attempt/` boshqa qurilmadan kelsa `SessionNotFound`,
@@ -589,66 +609,84 @@ Tashqi FaceID tizimi (FastAPI) Face ID'dan o'tgan nomzodni shu yerda bron qiladi
   (ichki ID'lar mos kelmaydi).
 * `seat_in_use`/`seat_unavailable` (409) — qaror, qayta urilmaydi.
 
-### Mashina tekshiruvi (Machine UUID) — ikkinchi darvoza
+### Mashina tekshiruvi (Machine UUID + MAC) — ikkinchi darvoza
 
 `X-Device-ID` mashinani EMAS, client nusxasini belgilaydi (obraz bilan
-ko'chadi). Handshake "qaysi apparat?" ni **`Computer.machine_uuid`**
-(SMBIOS) bilan tekshiradi; MAC ikkilamchi va ixtiyoriy.
+ko'chadi). **Kompyuter identifikatori — (`machine_uuid`, `mac_address`)
+JUFTLIGI.** Faqat UUID yetmaydi: arzon platalarda SMBIOS UUID bir partiyada
+bir xil — UUID bir xil, MAC boshqa ikki mashina IKKI BOSHQA kompyuter. Faqat
+MAC ham yetmaydi (tarmoq kartasi bilan almashadi).
+
+**Qidiruv qoidasi BITTA joyda** — `devices/services.py:find_computer_by_identity`
+(sof qismi `match_identity`); handshake (`verify_machine`), ro'yxatdan
+o'tish (`resolve_computer`), JSHSHIR tekshiruvidagi stol
+(`bookings._physical_computer`), Excel import va panel serializer'i FAQAT
+shuni chaqiradi. Tartib: (a) (UUID, MAC) aniq mos yozuv; (b) topilmasa va
+shu UUID bilan faqat BITTA yozuv bor, unda MAC yo'q — o'sha eski yozuv
+(o'tish davri); (c) aks holda — topilmadi. UUID bo'yicha "eng yaqini"
+TANLANMAYDI. Faqat UUID yoki faqat MAC bo'yicha taxminiy moslik QO'SHMANG.
 
 | Qatlam | Qoida |
 |---|---|
-| model | `machine_uuid` NULL mumkin, `unique_computer_machine_uuid` (tirik + NOT NULL) |
-| shakl | `common.utils.validators.normalize_machine_uuid` — client bilan AYNAN bir xil; serializer'lar kanonik shaklga keltiradi |
-| panel | yangi kompyuterda MAJBURIY; bor UUID'ni o'chirib bo'lmaydi |
-| client | handshake, `candidate/lookup/`, `devices/register/`, `access-attempt/` da HAR DOIM; sarlavhada ko'rsatilmaydi |
+| model | `unique_computer_uuid_mac` (juftlik), `unique_computer_mac` (MAC tizim bo'ylab); `machine_uuid` NULL mumkin va o'zi unikal EMAS |
+| shakl | `normalize_machine_uuid` va `normalize_mac` (katta harf, ikki nuqta) — client bilan AYNAN bir xil; panel, import, Django admin (`ComputerAdminForm`) kanonik shaklda yozadi; `devices.0013` mavjud MAC'larni keltirdi |
+| panel | UUID yangi kompyuterda MAJBURIY (bor UUID'ni o'chirib bo'lmaydi); MAC yangi VA tahrirlanayotgan yozuvda MAJBURIY |
+| client | UUID va MAC handshake, `candidate/lookup/`, `devices/register/`, `access-attempt/` da; sarlavhada UUID ko'rsatilmaydi |
 | sessiya | `ExamSession.machine_uuid` — kompyuter yozuvidan |
-| qurilma | `DeviceToken.reported_machine_uuid` / `reported_mac` — client o'lchagani (ishonchsiz) |
+| qurilma | `DeviceToken.reported_machine_uuid` / `reported_mac` — client o'lchagani (`record_handshake`, ishonchsiz, faqat diagnostika) |
 
 * Client WinAPI orqali o'lchaydi (`system_info.machine_identity`,
   `winapi_net.py`); server baholaydi (`devices/services.py:verify_machine`),
   ko'lam — qurilmaning BINOSI.
-* **Yagona yozuv — UUID'ni bir marta bog'lash** (`bind_machine_uuid`):
-  yozuvda UUID yo'q va MAC aynan mos bo'lsa (`machine_uuid IS NULL` sharti
-  `UPDATE` ichida), audit `meta.machine_uuid_bound`. UUID BOR yozuvga
-  client hech qachon tegmaydi.
-* UUID yubormaydigan eski client — `_verify_by_mac` (`basis="mac"`).
+* **Client `Computer.mac_address` / `machine_uuid` ga HECH QACHON yozmaydi.**
+  Yagona istisno — UUID'ni bir marta bog'lash (`bind_machine_uuid`): yozuvda
+  UUID yo'q, MAC aynan mos va shu (UUID, MAC) juftligi boshqa yozuvda yo'q
+  (`machine_uuid IS NULL` sharti `UPDATE` ichida), audit
+  `meta.machine_uuid_bound`. Shu UUID boshqa yozuvda (boshqa MAC bilan)
+  bo'lishi bog'lashni to'smaydi.
+* UUID yubormaydigan eski client — `_verify_by_mac` (`basis="mac"`, o'zgarmagan).
 
 | `status` | Ma'nosi | Kim tuzatadi |
 |---|---|---|
-| `ok` | UUID mos (yoki `bound`) | — |
+| `ok` | juftlik qurilma biriktirilgan kompyuterniki (yoki `bound`; MAC'siz eski yozuv — `legacy_no_mac: true` + WARNING) | — |
+| `mismatch` | juftlik binodagi BOSHQA kompyuterniki (xabarda ikkala nom) | administrator qurilmani qayta biriktiradi |
+| `not_found` | UUID mos, MAC boshqa va bunday juftlik binoda yo'q (xabarda yozuvdagi va mashina aytgan MAC) | administrator MAC'ni yangilaydi yoki ortiqcha adapter o'chiriladi |
+| `not_found` | client MAC yubormadi ("MAC aniqlanmadi") — maydonni bo'sh yuborish tekshiruvni chetlab o'tmaydi | adapter/dastur |
 | `not_found` | UUID binoda yo'q | administrator yozuvni to'g'rilaydi |
-| `mismatch` | UUID boshqa kompyuterniki | administrator qurilmani qayta biriktiradi |
+| `inactive` | hisobdan chiqarilgan (UUID mos bo'lsa MAC farqidan ham USTUN) | — |
 | `unknown` | identifikator yo'q | dasturni yangilash |
-| `mac_mismatch` | UUID mos, MAC yozuvdagidan boshqa yoki bo'sh (faqat `REQUIRE_MACHINE_MAC=true`) | administrator MAC'ni yangilaydi yoki ortiqcha adapter o'chiriladi |
 
 `ok` dan boshqasi `allowed=False`. Yumshatish — `REQUIRE_MACHINE_MATCH=false`
 (eski nomi `REQUIRE_MAC_MATCH` ham o'qiladi). **Bu kredensial emas,
 inventarizatsiya intizomi.** Rad etilgan tekshiruv audit yozmaydi.
 
-**`REQUIRE_MACHINE_MAC`** (standart `false`) — UUID mos kelgan mashinada MAC
-ham yozuvdagiga mos bo'lishi shart. Qoida BITTA joyda
-(`devices/services.py:mac_matches`, `mac_mismatch_message`): yozuvda MAC
-yo'q — faqat UUID (MAC'ni client HECH QACHON yozmaydi); client MAC
-yubormadi — mos EMAS (`unknown` bilan bir xil sabab). `inactive` MAC'dan
-ustun; `bound` va eski client (`_verify_by_mac`) yo'llari o'zgarmaydi.
-Ikkinchi qatlam — `candidate/lookup/` (`bookings.ensure_machine_mac`, bron
-va platformadan OLDIN, bron yuritilmasa ham): 409 `machine_mac_mismatch`,
-`details`: `expected_mac`, `reported_mac`, `computer`. Client uni umumiy
-xato sifatida server matni bilan ko'rsatadi.
+**MAC'siz eski yozuvlar (o'tish davri)** — o'chirilmaydi va to'xtatilmaydi:
+(b) qoida bo'yicha faqat UUID bilan tanilanadi (`legacy_no_mac`). Shu UUID'li
+ikkinchi yozuv (MAC bilan) qo'shilishi bilan moslik TO'XTAYDI — endi UUID
+mashinani ajratmaydi va administrator eski yozuvga MAC kiritishi kerak.
 
-* **Joriy qilish tartibi**: `python manage.py audit_machine_macs [--zone ID]`
-  (faqat o'qiydi; manba — `DeviceToken.reported_mac`, oxirgi handshake) →
-  yozuvlarni tuzatish (panel `/device-tokens` yon varag'ida ikkala MAC
-  yonma-yon) → yoqish. "Hali MAC aytmagan" mashinalar ham to'siladi —
-  avval ulab ko'ring.
-* **Amaliy shartlar**: imtihon mashinasida bitta faol adapter (Wi-Fi
-  o'chiq — aks holda marshrut unga o'tib MAC o'zgaradi); tarmoq kartasi
-  almashtirilsa MAC'ni panelda administrator yangilaydi.
+* **Tekshiruv**: `python manage.py audit_machine_identity [--zone ID]` (faqat
+  o'qiydi): MAC'siz kompyuterlar, bir xil UUID'li guruhlar, oxirgi
+  `reported_mac` yozuvdagidan farq qiladiganlar (ular hozir `not_found`).
+  Panel `/device-tokens` yon varag'ida ikkala MAC yonma-yon, farq —
+  ogohlantirish rangida.
+* **Amaliy shartlar**: imtihon mashinasida bitta faol tarmoq adapteri
+  (Wi-Fi o'chiq — aks holda marshrut unga o'tganda MAC "o'zgaradi" va
+  mashina `not_found` oladi); tarmoq kartasi almashtirilsa MAC'ni panelda
+  administrator yangilaydi.
 
-**Apparat izi `muid:<UUID>`** (`system_info.hardware_fingerprint`; prefiks —
-ikki tomonli shartnoma). Eski izdagi MAC client MAC'i bilan mos bo'lsa
-etalon jimgina yangilanadi (`is_fingerprint_upgrade`); `devices/register/`
-ham shu qoida (`fingerprint_matches`).
+**Apparat izi `muid:<UUID>|mac:<MAC>`** (`system_info.hardware_fingerprint`,
+server `services.fingerprint_for`; MAC kanonik; `muid:` prefiksi — ikki
+tomonli SHARTNOMA). Iz so'rovdagi `mac_address` bilan BITTA adapterdan.
+O'tishlar (`is_fingerprint_upgrade`, etalon JIMGINA yangilanadi):
+`MAC|host|OS|arch` → yangi — eski izdagi MAC client MAC'i bilan mos;
+`muid:<UUID>` → `muid:<UUID>|mac:<MAC>` — UUID mos VA izdagi MAC KOMPYUTER
+YOZUVIDAGI MAC bilan mos (yozuvda MAC yo'q — anomaliya). Aks holda
+`fingerprint_changed`. **`devices/register/` da "o'sha mashinami" (eski
+`device_id` ni qaytarish) — JUFTLIK bo'yicha** (`views._is_same_machine`):
+so'rovdagi (UUID, MAC) == kompyuter yozuvidagi; iz faqat juftlikni
+solishtirib bo'lmaydigan eski holatlarda. Aks holda bir xil UUID'li ikkinchi
+mashina birinchisining `device_id` sini olardi.
 
 **`mismatch` tuzatishi — panelda qayta biriktirish** (`/device-tokens` →
 «Boshqa kompyuterga biriktirish»). `PATCH device-tokens/{id}/` FAQAT

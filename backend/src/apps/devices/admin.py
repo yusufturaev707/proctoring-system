@@ -1,10 +1,46 @@
+from django import forms
 from django.contrib import admin
 
+from apps.common.utils.validators import normalize_mac, normalize_machine_uuid
 from apps.devices.models import Camera, Computer, DeviceToken
+
+
+class ComputerAdminForm(forms.ModelForm):
+    """
+    Panel serializer'idagi qoidalar Django admin'da ham.
+
+    Admin - uchinchi kirish yo'li: usiz `2c-f0-...` shaklidagi yoki
+    MAC'siz yozuv shu yerdan kirib, juftlik bo'yicha qidiruvni
+    (`find_computer_by_identity`) jimgina buzardi. (UUID, MAC) juftligi
+    va MAC unikalligini modeldagi shartli cheklovlar
+    (`validate_constraints`) tekshiradi.
+    """
+
+    class Meta:
+        model = Computer
+        fields = "__all__"
+
+    def clean_machine_uuid(self):
+        value = self.cleaned_data.get("machine_uuid")
+        if not value:
+            return None
+        normalized = normalize_machine_uuid(value)
+        if not normalized:
+            raise forms.ValidationError("Machine UUID noto'g'ri yoki to'ldirilmagan")
+        return normalized
+
+    def clean_mac_address(self):
+        value = normalize_mac(self.cleaned_data.get("mac_address"))
+        if not value:
+            # UUID takrorlanadi - MAC'siz yozuvni bir partiyadagi boshqa
+            # mashinalardan ajratib bo'lmaydi.
+            raise forms.ValidationError("MAC manzil kiritilishi shart (AA:BB:CC:DD:EE:FF)")
+        return value
 
 
 @admin.register(Computer)
 class ComputerAdmin(admin.ModelAdmin):
+    form = ComputerAdminForm
     list_display = ("number", "inventory_code", "zone", "machine_uuid", "ip_address", "mac_address", "status", "last_seen_at")
     list_filter = ("status", "zone__region", "is_active")
     search_fields = ("number", "inventory_code", "machine_uuid", "ip_address", "mac_address")

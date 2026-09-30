@@ -31,7 +31,6 @@ from django.utils import timezone
 
 from apps.common.exceptions import (
     DomainError,
-    MachineMacMismatch,
     SeatInUse,
     SeatNotBooked,
     SeatOutOfService,
@@ -449,58 +448,26 @@ def _physical_computer(zone_id, *, machine_uuid: str = "", mac_address: str = ""
     """
     Client ishlab turgan JISMONIY mashina - bino ichida.
 
-    Asos - Machine UUID (ona plata). MAC - faqat UUID yubormaydigan eski
-    client uchun VA UUID'si hali yozilmagan yozuvlar uchun: UUID berilgan,
-    lekin bazada topilmagan bo'lsa MAC'ga tushiladi faqat o'sha yozuvda
-    UUID yo'q bo'lsa - aks holda UUID'si BOSHQA mashina MAC'i bo'yicha
-    "shu stol" bo'lib qolardi.
-    """
-    queryset = Computer.objects.alive().select_related("zone__region").filter(zone_id=zone_id)
-    uuid_value = normalize_machine_uuid(machine_uuid)
-    if uuid_value:
-        computer = queryset.filter(machine_uuid=uuid_value).first()
-        if computer is not None:
-            return computer
-    mac = normalize_mac(mac_address)
-    if not mac:
-        return None
-    queryset = queryset.filter(
-        Q(mac_address__iexact=mac) | Q(mac_address__iexact=mac.replace(":", "-"))
-    )
-    if uuid_value:
-        queryset = queryset.filter(machine_uuid__isnull=True)
-    return queryset.first()
+    UUID bor client - (UUID, MAC) juftligi, qoida `devices.services.
+    find_computer_by_identity` da (handshake bilan BITTA). UUID mos, MAC
+    boshqa mashina "shu stol" EMAS: UUID bir partiyadagi platalarda
+    takrorlanadi va u qo'shni stolning mashinasi bo'lishi mumkin.
 
-
-def ensure_machine_mac(*, device=None, zone=None, machine_uuid: str = "", mac_address: str = "") -> None:
-    """
-    Qat'iy rejimda (`REQUIRE_MACHINE_MAC`) UUID bo'yicha tanilgan
-    mashinaning MAC'i yozuvdagiga mos bo'lishi shart.
-
-    Bron qoidasidan MUSTAQIL: savol "talabgor qaysi stolda" emas, "bu
-    mashina o'zi aytgan mashinami". Faqat UUID bo'yicha topilgan yozuv
-    tekshiriladi - UUID'siz (eski) yozuv MAC bilan TOPILADI, ya'ni u
-    yerda MAC ta'rifga ko'ra mos. Qoidaning o'zi `devices.services`
-    da (`mac_matches`) - handshake bilan bir xil.
+    UUID yubormaydigan ESKI client - avvalgidek MAC bo'yicha.
     """
     from apps.devices import services as device_services
 
-    if not device_services.mac_check_required():
-        return
-    bound = device.computer if device is not None else None
-    zone_id = bound.zone_id if bound is not None else getattr(zone, "pk", None)
-    if zone_id is None or not normalize_machine_uuid(machine_uuid):
-        return
-    physical = _physical_computer(zone_id, machine_uuid=machine_uuid)
-    if physical is None or device_services.mac_matches(physical, mac_address):
-        return
-    raise MachineMacMismatch(
-        device_services.mac_mismatch_message(physical, mac_address),
-        extra={
-            "expected_mac": physical.mac_address,
-            "reported_mac": normalize_mac(mac_address) or "",
-            "computer": computer_payload(physical),
-        },
+    if normalize_machine_uuid(machine_uuid):
+        return device_services.find_computer_by_identity(zone_id, machine_uuid, mac_address)
+    mac = normalize_mac(mac_address)
+    if not mac:
+        return None
+    return (
+        Computer.objects.alive()
+        .select_related("zone__region")
+        .filter(zone_id=zone_id)
+        .filter(Q(mac_address__iexact=mac) | Q(mac_address__iexact=mac.replace(":", "-")))
+        .first()
     )
 
 
@@ -511,9 +478,9 @@ def resolve_candidate_seat(
     """
     Talabgor to'g'ri kompyuterdami. `None` — bron bu sessiyada yuritilmaydi.
 
-    "BU MASHINA" QANDAY ANIQLANADI. Client yuborgan Machine UUID —
-    jismoniy mashina (talabgor aynan qaysi stolda o'tiribdi; eski
-    client'da MAC); qurilmaning `Computer` biriktiruvi esa sessiya
+    "BU MASHINA" QANDAY ANIQLANADI. Client yuborgan (Machine UUID, MAC)
+    juftligi — jismoniy mashina (talabgor aynan qaysi stolda o'tiribdi;
+    eski client'da MAC); qurilmaning `Computer` biriktiruvi esa sessiya
     QAYSI kompyuterga yoziladi. Odatda ikkalasi bir xil
     (handshake'dagi `verify_machine` shuni tekshiradi). Farq qilsa ikki
     holat bor va ular BOSHQA-BOSHQA:
@@ -561,12 +528,20 @@ def resolve_candidate_seat(
         )
         if physical is not None:
             here = physical
+        elif normalize_machine_uuid(machine_uuid):
+            # UUID yuborgan mashina juftlik bo'yicha tanilmadi (masalan
+            # UUID mos, MAC boshqa) - u biriktiruv orqali ham "shu stol"
+            # bo'lib QOLMAYDI: aks holda qo'shni stolning bir xil UUID'li
+            # mashinasi talabgorni o'tkazib yuborardi.
+            here = None
 
     if here is None or here.pk != booking.computer_id:
         current = computer_payload(here)
         message = "Talabgor {} kompyuteriga biriktirilgan".format(_where(seat))
         if current is not None:
             message += ". Bu mashina — «{}»".format(current["label"])
+        else:
+            message += ". Bu mashina (Machine UUID va MAC) binoda ro'yxatda yo'q"
         raise WrongComputer(message, extra={"seat": seat, "current": current})
 
     if bound is not None and bound.pk != booking.computer_id:

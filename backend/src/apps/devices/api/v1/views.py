@@ -19,6 +19,7 @@ from apps.common.mixins import (
 from apps.common.permissions import HasRolePermission
 from apps.common.throttling import DeviceRegisterThrottle, client_ip
 from apps.common.utils.network import is_private_ip
+from apps.common.utils.validators import normalize_mac, normalize_machine_uuid
 from apps.devices import selectors, services
 from apps.devices.api.v1.serializers import (
     CameraSerializer,
@@ -527,6 +528,34 @@ class DeviceTokenViewSet(
         })
 
 
+def _is_same_machine(computer: Computer, existing: DeviceToken, data: dict) -> bool:
+    """
+    Ro'yxatdan o'tayotgan mashina - kompyuterning mavjud tokeni egasimi.
+
+    Qaror (UUID, MAC) JUFTLIGI bo'yicha: so'rovdagi juftlik kompyuter
+    yozuvidagiga aynan teng. Faqat apparat iziga TAYANILMAYDI: `muid:<UUID>`
+    izi bir partiyadagi (UUID'i bir xil) platalarda bir xil edi va ikkinchi
+    mashina birinchisining `device_id` sini olib qo'yardi.
+
+    Juftlikni solishtirib bo'lmaydigan ESKI holatlar - yozuvda UUID yoki
+    MAC yo'q, yoki client UUID yubormaydi - avvalgidek iz bo'yicha (format
+    o'tishlari bilan, `fingerprint_matches`).
+    """
+    machine_uuid = normalize_machine_uuid(data.get("machine_uuid"))
+    mac = normalize_mac(data.get("mac_address")) or ""
+    record_mac = normalize_mac(computer.mac_address) or ""
+    if machine_uuid and computer.machine_uuid and record_mac:
+        return machine_uuid == computer.machine_uuid and mac == record_mac
+    if machine_uuid and computer.machine_uuid and machine_uuid != computer.machine_uuid:
+        return False
+    return services.fingerprint_matches(
+        existing.hardware_fingerprint,
+        (data.get("hardware_fingerprint") or "")[:128],
+        mac,
+        computer.mac_address,
+    )
+
+
 class DeviceRegisterView(APIView):
     """
     Client o'zini ro'yxatga qo'yadi.
@@ -652,24 +681,18 @@ class DeviceRegisterView(APIView):
             # o'zi hech qachon tiklanolmaydi: yangi token berilmaydi,
             # eskisi esa unga noma'lum.
             #
-            # Shuning uchun mavjud identifikator FAQAT apparat izi mos
-            # kelganda qaytariladi - ya'ni so'rov o'sha mashinadan
-            # kelayotgani isbotlanganda. Iz boshqa bo'lsa (masalan bir
-            # kompyuterni ikki mashina o'ziniki deb da'vo qilyapti), ID
+            # Shuning uchun mavjud identifikator FAQAT so'rov o'sha
+            # mashinadan kelayotgani isbotlanganda qaytariladi. Aks holda
+            # (bir kompyuterni ikki mashina o'ziniki deb da'vo qilyapti) ID
             # berilmaydi va masalani administrator hal qiladi.
-            fingerprint = (data.get("hardware_fingerprint") or "")[:128]
-            # Iz formati MAC -> UUID o'tishi hisobga olinadi: yangilangan
-            # client o'z ID'sini yo'qotsa ham qaytarib ololadi.
-            same_machine = services.fingerprint_matches(
-                existing.hardware_fingerprint, fingerprint, data.get("mac_address", "")
-            )
+            same_machine = _is_same_machine(computer, existing, data)
             if not same_machine:
                 logger.warning(
-                    "Qurilma qayta ro'yxatdan o'tmoqchi, lekin apparat izi boshqa: "
-                    "pc=%s mavjud=%s kelgan=%s",
+                    "Qurilma qayta ro'yxatdan o'tmoqchi, lekin mashina boshqa: "
+                    "pc=%s mavjud_iz=%s kelgan_iz=%s",
                     computer.inventory_code,
                     existing.hardware_fingerprint[:16] or "-",
-                    fingerprint[:16] or "-",
+                    (data.get("hardware_fingerprint") or "")[:16] or "-",
                 )
 
             # Javob konvertga ATAYLAB qo'lda o'raladi: `ApiJSONRenderer`

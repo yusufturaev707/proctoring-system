@@ -119,7 +119,7 @@ export default function ComputerImportDialog({ open, onClose }) {
       <DialogTitle sx={{ pr: 6 }}>
         Excel'dan kompyuter qo‘shish
         <Typography variant="body2" color="text.secondary">
-          Ustunlar: dtm_id, zone_number, machine_uuid, number; mac_address va inventory_code — ixtiyoriy
+          Ustunlar: dtm_id, zone_number, machine_uuid, mac_address, number; inventory_code — ixtiyoriy
         </Typography>
         <IconButton onClick={handleClose} disabled={busy} sx={{ position: 'absolute', right: 12, top: 12 }}>
           <CloseIcon />
@@ -130,8 +130,9 @@ export default function ComputerImportDialog({ open, onClose }) {
         <Stack spacing={2.5}>
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ sm: 'center' }}>
             <Typography variant="body2" color="text.secondary" sx={{ flex: 1 }}>
-              Shablonni yuklab oling, to‘ldiring va shu yerga tashlang. Mashinani Machine UUID
-              belgilaydi; UUID’siz eski yozuvga shu MAC bo‘yicha faqat UUID yoziladi. Bitta xato
+              Shablonni yuklab oling, to‘ldiring va shu yerga tashlang. Mashinani Machine UUID va
+              MAC JUFTLIGI belgilaydi (UUID bir partiyada takrorlanishi mumkin); UUID’siz eski yozuvga
+              shu MAC bo‘yicha faqat UUID yoziladi. Bitta xato
               bo‘lsa hech narsa yozilmaydi.
             </Typography>
             <Button
@@ -271,7 +272,7 @@ export default function ComputerImportDialog({ open, onClose }) {
                     onClick={() => setShowSkipped((value) => !value)}
                     endIcon={<ExpandMoreIcon sx={{ transform: showSkipped ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }} />}
                   >
-                    O‘tkazib yuboriladi: {skipped.length} ta (UUID ro‘yxatda bor)
+                    O‘tkazib yuboriladi: {skipped.length} ta (UUID va MAC juftligi ro‘yxatda bor)
                   </Button>
                   <Collapse in={showSkipped}>
                     <Stack spacing={0.5} sx={{ mt: 1, maxHeight: 180, overflowY: 'auto' }}>

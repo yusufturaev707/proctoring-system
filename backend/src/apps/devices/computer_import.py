@@ -6,8 +6,8 @@ Ustunlar (nomdagi qavs ichi e'tiborsiz qoldiriladi -
 
     dtm_id          viloyat (`Region.dtm_id`)          majburiy
     zone_number     bino (`Zone.number`, o'sha viloyatda) majburiy
-    machine_uuid    mashina (SMBIOS UUID) - ASOSIY      majburiy
-    mac_address     tarmoq kartasi                     ixtiyoriy
+    machine_uuid    ona plata (SMBIOS UUID)            majburiy
+    mac_address     tarmoq kartasi                     majburiy
     number          xonadagi tartib raqami             majburiy
     inventory_code  buxgalteriya kodi                  ixtiyoriy
 
@@ -22,10 +22,20 @@ qayta yuklash endi yarmi "allaqachon bor" bo'lib chiqardi. Shu sababli
 funksiya, ya'ni tekshiruvda "o'tdi" degan fayl yozishda yiqilmaydi
 (poyga holatidan tashqari, uni bazadagi cheklovlar ushlaydi).
 
-UUID ALLAQACHON RO'YXATDA - XATO EMAS, O'TKAZIB YUBORILADI. Tuzatilgan
+MASHINA - (machine_uuid, mac_address) JUFTLIGI, ikkalasi ham majburiy.
+UUID arzon platalarda bir partiyada bir xil bo'ladi: UUID bir xil, MAC
+boshqa qator - YANGI kompyuter. MAC'siz qatorni esa shunday mashinalardan
+ajratib bo'lmaydi - xato.
+
+JUFTLIK ALLAQACHON RO'YXATDA - XATO EMAS, O'TKAZIB YUBORILADI. Tuzatilgan
 yoki to'ldirilgan faylni qayta yuklash odatiy ish va u oldingi safar
 qo'shilgan mashinalar tufayli yiqilmasligi kerak. Mavjud yozuv
-O'ZGARTIRILMAYDI: import - qo'shish vositasi, tahrirlash emas.
+O'ZGARTIRILMAYDI: import - qo'shish vositasi, tahrirlash emas. "Ro'yxatda"
+qoidasi handshake bilan bitta (`services.match_identity`).
+
+Shu UUID'li MAC'siz ESKI yozuv bor bo'lsa - xato: u shu mashina bo'lishi
+ham mumkin, va yangi yozuv qo'shilishi bilan eskisi UUID bo'yicha
+tanilmay qoladi. Administrator avval eski yozuvga MAC kiritadi.
 
 YAGONA ISTISNO - UUID'NI TO'LDIRISH. UUID'dan oldingi (MAC bilan
 qo'shilgan) kompyuter qatordagi MAC bo'yicha topilsa va uning UUID'i
@@ -47,7 +57,7 @@ from apps.common.utils.validators import normalize_mac, normalize_machine_uuid
 from apps.regions.models import Region, Zone
 
 from .models import Computer
-from .services import auto_inventory_code
+from .services import auto_inventory_code, match_identity
 
 MAX_ROWS = 5000
 MAX_FILE_BYTES = 5 * 1024 * 1024
@@ -57,7 +67,7 @@ COLUMNS = (
     ("dtm_id", "dtm_id", True),
     ("zone_number", "zone_number", True),
     ("machine_uuid", "machine_uuid", True),
-    ("mac_address", "mac_address", False),
+    ("mac_address", "mac_address", True),
     ("number", "number", True),
     ("inventory_code", "inventory_code", False),
 )
@@ -133,20 +143,23 @@ def build_template() -> bytes:
         ("Ustun", "Qiymat"),
         ("dtm_id", "Viloyatning DTM ID raqami (Viloyatlar sahifasidagi «DTM ID»). Majburiy."),
         ("zone_number", "Binoning raqami - o'sha viloyat ichida (Binolar sahifasi). Majburiy."),
-        ("machine_uuid", "Mashinaning ASOSIY identifikatori - ona platadagi SMBIOS UUID "
-                         "(XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX). Majburiy, tizim bo'ylab unikal. "
+        ("machine_uuid", "Ona platadagi SMBIOS UUID (XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX). "
+                         "Majburiy. Bir partiyadagi platalarda takrorlanishi mumkin - mashinani "
+                         "UUID va MAC JUFTLIGI belgilaydi. "
                          "Mashinada: `wmic csproduct get uuid` yoki PowerShell "
                          "`(Get-CimInstance Win32_ComputerSystemProduct).UUID`. Client o'rnatilgan "
                          "bo'lsa - panel «Qurilmalar» sahifasida (mashina UUID'i)."),
-        ("mac_address", "Ixtiyoriy. AA:BB:CC:DD:EE:FF yoki AA-BB-CC-DD-EE-FF. Berilsa tizim bo'ylab "
-                        "unikal. MAC o'zgarishi mumkin (tarmoq kartasi), shuning uchun u identifikator emas."),
+        ("mac_address", "Majburiy. AA:BB:CC:DD:EE:FF yoki AA-BB-CC-DD-EE-FF, tizim bo'ylab unikal. "
+                        "Imtihon mashinasida bitta faol tarmoq adapteri bo'lsin (Wi-Fi o'chiq): "
+                        "mashina aynan shu adapter MAC'ini aytadi."),
         ("number", "Xonadagi tartib raqami (stoldagi raqam), 1..32767. Majburiy, bino ichida unikal."),
         ("inventory_code", "Ixtiyoriy. 3-50 belgi: lotin harfi, raqam, '-', '_'. "
-                           "Bo'sh bo'lsa AUTO-<UUID> ko'rinishida yaratiladi."),
+                           "Bo'sh bo'lsa AUTO-<UUID>-<MAC> ko'rinishida yaratiladi."),
         ("", ""),
         ("Qoidalar", "Sarlavhadagi qavs ichi e'tiborsiz qoldiriladi. Bitta qatorda xato bo'lsa "
-                     "hech narsa yozilmaydi. UUID allaqachon ro'yxatda bo'lsa qator o'tkazib "
-                     "yuboriladi (mavjud yozuv o'zgarmaydi). Ko'pi bilan {} qator.".format(MAX_ROWS)),
+                     "hech narsa yozilmaydi. UUID va MAC juftligi allaqachon ro'yxatda bo'lsa qator "
+                     "o'tkazib yuboriladi (mavjud yozuv o'zgarmaydi); UUID bir xil, MAC boshqa - "
+                     "yangi kompyuter. Ko'pi bilan {} qator.".format(MAX_ROWS)),
         ("UUID'siz eski yozuvlar", "Kompyuter ilgari MAC bilan qo'shilgan va UUID'i bo'sh bo'lsa, "
                                    "shu MAC va o'sha bino ko'rsatilgan qator unga FAQAT UUID yozadi "
                                    "(raqam va kod o'zgarmaydi)."),
@@ -263,11 +276,12 @@ def import_computers(rows: list[dict], *, user, dry_run: bool) -> dict:
             fail(row, "machine_uuid", "Machine UUID noto'g'ri yoki to'ldirilmagan "
                                       "(XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX).")
 
-        mac = None
-        if row.get("mac_address"):
-            mac = normalize_mac(row.get("mac_address"))
-            if mac is None:
-                fail(row, "mac_address", "MAC formati noto'g'ri (AA:BB:CC:DD:EE:FF).")
+        mac = normalize_mac(row.get("mac_address"))
+        if not row.get("mac_address"):
+            fail(row, "mac_address", "MAC manzil kiritilmagan (UUID takrorlanadi - "
+                                     "mashinani MAC bilan birga ajratamiz).")
+        elif mac is None:
+            fail(row, "mac_address", "MAC formati noto'g'ri (AA:BB:CC:DD:EE:FF).")
 
         number = _int(row.get("number"))
         if number is None or not 1 <= number <= 32767:
@@ -277,8 +291,8 @@ def import_computers(rows: list[dict], *, user, dry_run: bool) -> dict:
         auto = not code
         if code and not _INVENTORY_RE.match(code):
             fail(row, "inventory_code", "Inventar kodi: 3-50 belgi, lotin harfi, raqam, '-' yoki '_'.")
-        if not code and machine_uuid:
-            code = auto_inventory_code(machine_uuid=machine_uuid)
+        if not code and machine_uuid and mac:
+            code = auto_inventory_code(machine_uuid=machine_uuid, mac_address=mac)
 
         if len(errors) == before:
             parsed.append({"row": row["row"], "zone": zone, "uuid": machine_uuid, "mac": mac,
@@ -297,9 +311,10 @@ def import_computers(rows: list[dict], *, user, dry_run: bool) -> dict:
             else:
                 seen[value] = item["row"]
 
-    duplicates(lambda i: i["uuid"], "machine_uuid", "Bu Machine UUID faylda takrorlangan ({}-qator).")
+    # UUID takrori XATO EMAS (bir partiyadagi platalar). MAC takrori -
+    # xato: MAC tizim bo'ylab unikal, va u juftlik takrorini ham qamraydi.
     duplicates(lambda i: i["mac"], "mac_address", "Bu MAC faylda takrorlangan ({}-qator).")
-    # UUID dan hosil qilingan kod tekshirilmaydi: uning takrori - UUID
+    # UUID+MAC dan hosil qilingan kod tekshirilmaydi: uning takrori - MAC
     # takrori va u yuqorida allaqachon xato bo'ldi (bitta sabab uchun
     # ikkita xato jadvalni chalkashtirardi).
     duplicates(lambda i: None if i["auto"] else i["code"].upper(), "inventory_code", "Bu inventar kodi faylda takrorlangan ({}-qator).")
@@ -307,20 +322,27 @@ def import_computers(rows: list[dict], *, user, dry_run: bool) -> dict:
 
     # --- bazadagi mavjud yozuvlar -----------------------------------------
     alive = Computer.objects.filter(deleted_at__isnull=True)
-    existing_uuid = {
-        c.machine_uuid: c
-        for c in alive.filter(machine_uuid__in={i["uuid"] for i in parsed}).select_related("zone")
-    }
+    # Bir UUID - bir nechta yozuv (bir partiyadagi platalar). Hammasi BIR
+    # so'rovda, qoida esa `match_identity` da - handshake bilan bitta.
+    existing_uuid: dict[str, list] = {}
+    for c in alive.filter(machine_uuid__in={i["uuid"] for i in parsed}).select_related("zone"):
+        existing_uuid.setdefault(c.machine_uuid, []).append(c)
     existing_mac = {
         c.mac_address: c
         for c in alive.filter(mac_address__in={i["mac"] for i in parsed if i["mac"]}).select_related("zone")
     }
     to_create, to_bind = [], []
     for item in parsed:
-        known = existing_uuid.get(item["uuid"])
-        if known is not None:
+        known = match_identity(existing_uuid.get(item["uuid"], []), item["mac"])
+        if known is not None and known.mac_address:
             skipped.append({"row": item["row"], "machine_uuid": item["uuid"],
                             "message": "Allaqachon ro'yxatda: {} ({}).".format(known.label, known.zone.name)})
+            continue
+        if known is not None:
+            errors.append({"row": item["row"], "column": "mac_address",
+                           "message": "Shu Machine UUID'li MAC'siz eski yozuv bor: {} ({}). Avval "
+                                      "panelda unga MAC kiriting - aks holda u UUID bo'yicha tanilmay "
+                                      "qoladi.".format(known.label, known.zone.name)})
             continue
         by_mac = existing_mac.get(item["mac"]) if item["mac"] else None
         if by_mac is None:

@@ -249,7 +249,8 @@ class ProctoringRepository:
         body = {
             "app_version": app_version,
             "app_hash": app_hash,
-            "hardware_fingerprint": system_info.hardware_fingerprint(),
+            # Iz so'rovdagi MAC bilan BITTA adapterdan (`machine["mac"]`).
+            "hardware_fingerprint": system_info.hardware_fingerprint(machine.get("mac") or None),
             # Har handshake'da yangilanadi: bino rezerv kanalga
             # o'tsa, panelda eski manzil qolib ketmasligi kerak.
             "public_ip": system_info.public_ip(),

@@ -247,22 +247,6 @@ class WrongComputer(DomainError):
     default_code = "wrong_computer"
 
 
-class MachineMacMismatch(DomainError):
-    """
-    UUID bo'yicha mashina tanildi, lekin MAC yozuvdagiga mos emas
-    (`REQUIRE_MACHINE_MAC=true`).
-
-    Handshake bir marta o'tadi, MAC esa undan keyin o'zgarishi mumkin
-    (Wi-Fi yoqildi, USB adapter ulandi) - shuning uchun JSHSHIR
-    tekshiruvida qayta so'raladi. `extra`: `expected_mac`,
-    `reported_mac`, `computer`.
-    """
-
-    status_code = status.HTTP_409_CONFLICT
-    default_detail = "Kompyuterning MAC manzili yozuvdagiga mos kelmadi"
-    default_code = "machine_mac_mismatch"
-
-
 class SeatOutOfService(DomainError):
     """Talabgorning kompyuteri shu sessiyada BUZILGAN deb belgilangan."""
 
