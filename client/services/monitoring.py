@@ -10,6 +10,7 @@ marta bitta so'rovda jo'natadi. 500 mashina x sekundiga 1 so'rov o'rniga
 from __future__ import annotations
 
 import logging
+import random
 import uuid
 from collections import deque
 from datetime import datetime, timezone
@@ -19,11 +20,38 @@ from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 from config import EVENT_BATCH_MAX
 from core.errors import ClientError
-from services import runtime_settings
+from services import net_policy, runtime_settings
+from services.network_status import on_power_resumed
 from services.repositories import ProctoringRepository
 from services.workers import ApiWorker, WorkerHolder
 
 log = logging.getLogger(__name__)
+
+#: Hodisa buferi xatodan keyin qancha kutadi (soniya): 5 -> 10 -> 20 ...
+#: chegara 120, jitter bilan (`net_policy.Backoff`). Ilgari bufer har
+#: 5 s da urinardi — server tushganda 5000 mashina × 0.2 so'rov/s, u
+#: turganda esa hamma to'plangan navbatini BIR LAHZADA yuborardi.
+_FLUSH_BACKOFF_BASE_S = 5.0
+_FLUSH_BACKOFF_CAP_S = 120.0
+
+#: Heartbeat o'tgach (aloqa bor) kutib qolgan buferni shu oraliqda,
+#: tasodifiy paytda yuborish (soniya).
+_RECOVERY_SPREAD_S = 5.0
+
+#: Uyg'ongandan keyingi birinchi heartbeat shu oraliqda, tasodifiy
+#: paytda (ms) — butun zal bir vaqtda uyg'onsa ham bir lahzada urmaydi.
+_RESUME_JITTER_MS = 3_000
+
+
+def _is_offline_error(exc) -> bool:
+    """
+    "Aloqa yo'q" deb ko'rsatiladigan xato: serverga yetib bo'lmadi yoki
+    u vaqtincha javob bermayapti. 400/403 kabi javoblar — server BOR,
+    ekranda "aloqa yo'q" deyish yolg'on bo'lardi.
+    """
+    code = getattr(exc, "code", "") or ""
+    status = int(getattr(exc, "status", 0) or 0)
+    return code in ("network", "server_unavailable", "invalid_response") or status >= 500
 
 
 def now_iso() -> str:
@@ -80,6 +108,19 @@ class SessionMonitor(QObject):
         )
         self._flush_timer.timeout.connect(self._flush_events)
 
+        # Bitta uchuvchi so'rov: heartbeat oralig'i (30 s) timeout'dan
+        # (ulanish 10 + o'qish 30 s) qisqa, ya'ni uzilgan tarmoqda har
+        # tsikl yangi thread ochib, ular to'planib borardi. Bufer uchun
+        # esa bu TARTIB masalasi ham: parallel batch'lar hodisalarni
+        # aralashtirib yuborardi.
+        self._heartbeat_busy = False
+        self._flushing = False
+        self._heartbeat_backoff = net_policy.Backoff(base=5.0, cap=_FLUSH_BACKOFF_CAP_S)
+        self._flush_backoff = net_policy.Backoff(
+            base=_FLUSH_BACKOFF_BASE_S, cap=_FLUSH_BACKOFF_CAP_S
+        )
+        on_power_resumed(self._on_power_resumed)
+
     # ------------------------------------------------------------------
     @property
     def is_active(self) -> bool:
@@ -114,6 +155,10 @@ class SessionMonitor(QObject):
             # uchun dalil yo'qolmasligi kerak.
             self._queue = deque(self._queue, maxlen=size)
         self._active = True
+        self._heartbeat_busy = False
+        self._flushing = False
+        self._heartbeat_backoff.success()
+        self._flush_backoff.success()
         self._heartbeat_timer.start()
         self._flush_timer.start()
         # Birinchi heartbeat darhol: sessiya ochilgani dashboardda
@@ -132,8 +177,9 @@ class SessionMonitor(QObject):
         self._heartbeat_timer.stop()
         self._flush_timer.stop()
         # Oxirgi buferni yuborishga urinamiz - aks holda yakunlashdan
-        # oldingi 5 soniyadagi hodisalar yo'qoladi.
-        self._flush_events()
+        # oldingi 5 soniyadagi hodisalar yo'qoladi. Backoff va "bitta
+        # uchuvchi" qoidasi bu yerda CHETLAB o'tiladi: bu oxirgi imkon.
+        self._flush_events(force=True)
         self._workers.wait_all(10_000)
         log.info("Sessiya nazorati to'xtadi")
 
@@ -165,7 +211,12 @@ class SessionMonitor(QObject):
 
     # ------------------------------------------------------------------
     def _send_heartbeat(self) -> None:
-        if not self._active:
+        if not self._active or self._heartbeat_busy:
+            return
+        if not self._heartbeat_backoff.ready():
+            # Server `Retry-After` bilan "kuting" degan — tsikl o'tkazib
+            # yuboriladi. Oddiy uzilishda bu to'siq yo'q: heartbeat
+            # aloqa tiklanganini bilishning asosiy yo'li.
             return
         metrics = {
             "network_ok": self._online,
@@ -173,9 +224,10 @@ class SessionMonitor(QObject):
             "face_checks": self._face_checks,
         }
         metrics.update(self._system_metrics())
+        self._heartbeat_busy = True
         worker = ApiWorker(self._repo.heartbeat, parent=self, **metrics)
         worker.succeeded.connect(self._on_heartbeat_ok)
-        worker.failed.connect(self._on_request_failed)
+        worker.failed_error.connect(self._on_heartbeat_failed)
         self._workers.run(worker)
 
     @staticmethod
@@ -192,40 +244,101 @@ class SessionMonitor(QObject):
             return {}
 
     def _on_heartbeat_ok(self, result) -> None:
+        self._heartbeat_busy = False
+        self._heartbeat_backoff.success()
         self._set_online(True)
-        data = result or {}
+        # Aloqa bor — backoff'da kutayotgan bufer bir daqiqa kutmasin,
+        # lekin tasodifiy paytda (hamma bir lahzada emas).
+        self._flush_backoff.nudge(_RECOVERY_SPREAD_S)
+        data = result if isinstance(result, dict) else {}
         # `should_stop` - backend hisoblab bergan yagona bayroq
         # (`HeartbeatView`). Status ro'yxatini client tomonda takrorlash
         # kerak emas: terminal holatlar to'plami serverda o'zgarishi mumkin.
         if data.get("should_stop"):
             self.session_lost.emit(str(data.get("status") or "stopped"))
 
-    def _flush_events(self) -> None:
+    def _flush_events(self, force: bool = False) -> None:
         if not self._queue:
+            return
+        if not force and (self._flushing or not self._flush_backoff.ready()):
             return
         batch = []
         while self._queue and len(batch) < EVENT_BATCH_MAX:
             batch.append(self._queue.popleft())
 
+        self._flushing = True
         worker = ApiWorker(self._repo.send_events, batch, parent=self)
-        worker.succeeded.connect(lambda _: self._set_online(True))
+        worker.succeeded.connect(self._on_flush_ok)
         # Yuborilmagan batch buferga QAYTARILADI (chapdan), tartib
         # saqlanadi. Proktorlikda "dalil yo'qoldi" holati bo'lmasligi kerak.
-        worker.failed.connect(lambda message, code: self._requeue(batch, message, code))
+        worker.failed_error.connect(lambda exc: self._requeue(batch, exc))
         self._workers.run(worker)
 
-    def _requeue(self, batch: list, message: str, code: str) -> None:
-        self._set_online(False)
+    def _on_flush_ok(self, _result) -> None:
+        self._flushing = False
+        self._flush_backoff.success()
+        self._set_online(True)
+
+    def _requeue(self, batch: list, exc) -> None:
+        self._flushing = False
+        code = getattr(exc, "code", "") or ""
+        status = int(getattr(exc, "status", 0) or 0)
+        if code in ("session_not_found", "session_forbidden"):
+            # Sessiya yopilgan — qayta yuborishning ma'nosi yo'q.
+            if self._active:
+                self.session_lost.emit(code)
+            return
+        if net_policy.is_poison_payload(status):
+            # "ZAHARLI" BATCH: server uni tuzilishi uchun rad etdi (400)
+            # va har takror xuddi shu javobni oladi. Navbat boshiga
+            # qaytarilsa, orqasidagi HAMMA hodisa abadiy kutib qolardi.
+            # Yo'qotish log'da qoladi (soni va turlari, payload'siz).
+            log.error(
+                "Hodisalar batch'i server tomonidan rad etildi (%s %s) - %s ta hodisa "
+                "tashlandi: %s",
+                status, code or "-", len(batch),
+                sorted({str(item.get("type")) for item in batch}),
+            )
+            return
         for event in reversed(batch):
             self._queue.appendleft(event)
-        log.warning("Hodisalarni yuborib bo'lmadi (%s): %s", code or "-", message)
+        delay = self._flush_backoff.failure(getattr(exc, "retry_after", None))
+        if _is_offline_error(exc):
+            self._set_online(False)
+        log.warning(
+            "Hodisalarni yuborib bo'lmadi (%s): %s - %.0f s dan keyin qayta",
+            code or "-", getattr(exc, "message", exc), delay,
+        )
 
-    def _on_request_failed(self, message: str, code: str) -> None:
+    def _on_heartbeat_failed(self, exc) -> None:
+        self._heartbeat_busy = False
+        code = getattr(exc, "code", "") or ""
         if code in ("session_not_found", "session_forbidden"):
-            self.session_lost.emit(code)
+            if self._active:
+                self.session_lost.emit(code)
             return
-        self._set_online(False)
-        log.warning("Fon so'rovi muvaffaqiyatsiz (%s): %s", code or "-", message)
+        retry_after = getattr(exc, "retry_after", None)
+        if retry_after:
+            self._heartbeat_backoff.failure(retry_after)
+        if _is_offline_error(exc):
+            self._set_online(False)
+        log.warning(
+            "Heartbeat muvaffaqiyatsiz (%s): %s", code or "-", getattr(exc, "message", exc)
+        )
+
+    def _on_power_resumed(self) -> None:
+        """
+        Kompyuter uyqudan uyg'ondi: aloqani DARHOL (jitter bilan) tekshirish.
+
+        Uyqu paytida taymerlar to'xtagan, TCP ulanishlar esa o'lgan;
+        keyingi heartbeat 30 s kutmasin — proktor panelida mashina shu
+        vaqt "aloqa yo'q" bo'lib turardi.
+        """
+        if not self._active:
+            return
+        self._heartbeat_backoff.success()
+        self._flush_backoff.nudge(_RECOVERY_SPREAD_S)
+        QTimer.singleShot(random.randint(0, _RESUME_JITTER_MS), self._send_heartbeat)
 
     def _set_online(self, online: bool) -> None:
         if online != self._online:

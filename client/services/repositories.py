@@ -38,12 +38,18 @@ class AuthRepository:
     def me(self) -> dict:
         return self._api.get("/auth/me/")
 
-    def logout(self, refresh: str = "") -> None:
+    def logout(self, refresh: str = "", *, access: str = "") -> None:
         # Best-effort: server javob bermasa ham lokal holat tozalanadi.
+        # `access` — chiqish FON thread'ida ketadi va shu paytda lokal
+        # tokenlar allaqachon tozalangan bo'ladi (`AuthService.logout`).
+        # Qisqa timeout, takrorsiz: chiqishni hech kim kutmaydi.
         try:
-            self._api.post("/auth/logout/", json_body={"refresh": refresh})
+            self._api.post(
+                "/auth/logout/", json_body={"refresh": refresh},
+                auth_token=access or None, timeout=5.0, retries=0,
+            )
         except Exception as exc:
-            log.info("Serverdan chiqishda xato (e'tiborsiz): %s", exc)
+            log.info("Serverdan chiqishda xato (e'tiborsiz): %s", type(exc).__name__)
 
 
 class DeviceRepository:
@@ -109,6 +115,8 @@ class DeviceRepository:
                 "/client/preflight/",
                 json_body={"public_ip": public_ip},
                 with_auth=False,
+                # Faqat o'qiydi ("ro'yxatdami?") — takrorlash xavfsiz.
+                idempotent=True,
             )
         except ClientError as exc:
             # Server ikki xil rad javobini bitta kod bilan qaytaradi
@@ -154,6 +162,7 @@ class DeviceRepository:
                     "code": code or "",
                 },
                 with_auth=False,
+                retries=0,
             )
         except Exception as exc:
             log.info("Kirish urinishini jurnalga yozib bo'lmadi (e'tiborsiz): %s", exc)
@@ -266,7 +275,9 @@ class ProctoringRepository:
                 **system_info.info_pc(),
                 "hardware": hardware.get("detail") or {},
             }
-        return self._api.post("/client/handshake/", json_body=body)
+        # IDEMPOTENT: qurilma ma'lumotini yangilaydi, UUID'ni faqat
+        # bir marta bog'laydi — takroriy so'rov natijani o'zgartirmaydi.
+        return self._api.post("/client/handshake/", json_body=body, idempotent=True)
 
     # --- 1b. Kamera ---------------------------------------------------
     def presence(self, *, in_exam: bool = False) -> dict:
@@ -279,7 +290,11 @@ class ProctoringRepository:
         mashinani "offline" deb belgilaydi va panelda ishlab
         turgan kompyuter o'chirilgandek ko'rinadi.
         """
-        return self._api.post("/client/presence/", json_body={"in_exam": bool(in_exam)})
+        # `retries=0`: davriy signal — keyingisi baribir keladi; so'rov
+        # ichida takrorlash uzilishda serverga ortiqcha yuk bo'lardi.
+        return self._api.post(
+            "/client/presence/", json_body={"in_exam": bool(in_exam)}, retries=0
+        )
 
     def camera_config(self, *, exam_id: Optional[int] = None) -> dict:
         """
@@ -322,6 +337,8 @@ class ProctoringRepository:
         return self._api.post(
             "/client/camera/stream/",
             json_body={"camera_id": int(camera_id), "role": role},
+            # Takror audit'da dublikat bermaydi (`CAMERA_STREAM_GRANT_TTL`).
+            idempotent=True,
         )
 
     def exam_config(self, *, exam_id: int) -> dict:
@@ -348,7 +365,8 @@ class ProctoringRepository:
         payload: dict = {"cameras": cameras}
         if exam_id:
             payload["exam_id"] = int(exam_id)
-        return self._api.post("/client/camera/check/", json_body=payload)
+        # O'lchov snapshot'i ustiga yoziladi — takror xavfsiz.
+        return self._api.post("/client/camera/check/", json_body=payload, idempotent=True)
 
     def proctoring_start(self, *, ai_profile: str = "") -> dict:
         """
@@ -365,7 +383,7 @@ class ProctoringRepository:
 
     def proctoring_stop(self, *, reason: str = "") -> dict:
         return self._api.post(
-            "/client/proctoring/stop/", json_body={"reason": reason}
+            "/client/proctoring/stop/", json_body={"reason": reason}, retries=0
         )
 
     # --- 2. Talabgorni aniqlash --------------------------------------
@@ -490,14 +508,21 @@ class ProctoringRepository:
 
     # --- 5. Tashqi platformaga kirish --------------------------------
     def exam_access(self) -> dict:
-        return self._api.post("/client/exam/access/")
+        # IDEMPOTENT: havolani deshifrlab qaytaradi, holatni faqat bir
+        # marta (`ready` -> `in_progress`) o'zgartiradi.
+        return self._api.post("/client/exam/access/", idempotent=True)
 
     # --- Imtihon davomida --------------------------------------------
+    # Davriy yuboruvchilar `retries=0`: takror va kutishni
+    # `SessionMonitor` o'zi boshqaradi (backoff + jitter). So'rov ichida
+    # ham takrorlansa, uzilishdan keyin yuk ikki-uch barobar bo'lardi.
     def heartbeat(self, **metrics) -> dict:
-        return self._api.post("/client/heartbeat/", json_body=metrics)
+        return self._api.post("/client/heartbeat/", json_body=metrics, retries=0)
 
     def send_events(self, events: list[dict]) -> dict:
-        return self._api.post("/client/events/", json_body={"events": events})
+        # `client_event_id` dublikatni serverda to'sadi — batch'ni qayta
+        # yuborish xavfsiz (navbat buni ishlatadi).
+        return self._api.post("/client/events/", json_body={"events": events}, retries=0)
 
     def periodic_face(self, *, score: int, faces_detected: int = 1,
                       image: Optional[bytes] = None,
@@ -558,6 +583,8 @@ class ProctoringRepository:
         return self._api.post(
             "/client/screenshots/presign/",
             json_body={"kind": kind, "content_type": content_type, "count": int(count)},
+            # Navbatning o'z backoff'i bor (`ScreenshotService`).
+            retries=0,
         )
 
     def commit_screenshots(self, screenshots: list[dict]) -> dict:
@@ -568,7 +595,8 @@ class ProctoringRepository:
         Backend chegarasi - bir so'rovda 50 ta.
         """
         return self._api.post(
-            "/client/screenshots/commit/", json_body={"screenshots": screenshots}
+            "/client/screenshots/commit/", json_body={"screenshots": screenshots},
+            retries=0,
         )
 
     def upload_screenshot(self, *, data: bytes, captured_at: str,
@@ -592,6 +620,7 @@ class ProctoringRepository:
                 **({"question_id": question_id} if question_id else {}),
                 **({"question_number": str(question_number)} if question_number else {}),
             },
+            retries=0,
         )
 
     def upload_evidence(self, *, kind: str, data: bytes, captured_at: str,
@@ -628,6 +657,7 @@ class ProctoringRepository:
                 "duration_ms": int(duration_ms),
                 "boxes": json.dumps(boxes or []),
             },
+            retries=0,
         )
 
     def register_recording(self, *, kind: str, local_path: str, captured_at: str,
@@ -676,6 +706,8 @@ class ProctoringRepository:
                 "session_id": session_id or None,
             },
             timeout=timeout,
+            # Takroriy qayd yozuvni YANGILAYDI (yangisini yaratmaydi).
+            idempotent=True,
         )
 
     # --- Yakunlash ----------------------------------------------------

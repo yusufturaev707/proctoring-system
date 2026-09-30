@@ -60,6 +60,11 @@ class LoginPage(BrandBackdrop):
         # Indikator layout'ga kirmaydi - u burchakka "yopishtirilgan".
         pill = self._status_pill
         pill.setGeometry(24, self.height() - pill.height() - 24, 260, pill.height())
+        button = self._model_retry_btn
+        button.setGeometry(
+            24 + 260 + 8, self.height() - pill.height() - 24,
+            button.sizeHint().width(), pill.height(),
+        )
 
     # ------------------------------------------------------------------
     # UI
@@ -190,6 +195,21 @@ class LoginPage(BrandBackdrop):
         self._status_pill = StatusPill(self)
         self._status_pill.raise_()
 
+        # Model yuklanmasa — QAYTA URINISH shu yerda, login'dan oldin.
+        # Operator muammoni talabgor kelmasdan ko'radi va hal qiladi
+        # (masalan boshqa dasturlarni yopib, xotira bo'shatib).
+        # Tugmasiz yagona yo'l dasturni qayta ishga tushirish edi.
+        self._model_retry_btn = QPushButton("Qayta yuklash", self)
+        self._model_retry_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._model_retry_btn.setStyleSheet(
+            "QPushButton { color: white; background: rgba(255,255,255,0.14);"
+            " border: 1px solid rgba(255,255,255,0.35); border-radius: 17px;"
+            " padding: 0 14px; font-weight: 600; }"
+            "QPushButton:hover { background: rgba(255,255,255,0.24); }"
+        )
+        self._model_retry_btn.clicked.connect(self._on_model_retry)
+        self._model_retry_btn.hide()
+
         # Enter bilan o'tish: login -> parol -> kirish.
         self.username_input.returnPressed.connect(self.password_input.setFocus)
         self.password_input.returnPressed.connect(self._on_login)
@@ -217,11 +237,52 @@ class LoginPage(BrandBackdrop):
     # ------------------------------------------------------------------
     def set_model_status(self, text: str, *, ready: bool = False, failed: bool = False) -> None:
         if failed:
-            self._status_pill.set_state("error", "Model yuklanmadi")
+            # SABAB ko'rinadi: "fayl topilmadi", "buzilgan", "xotira
+            # yetmadi", "DLL yuklanmadi" — har biriga boshqa chora.
+            # To'liq matn tooltip'da (indikator tor).
+            title = "Model yuklanmadi"
+            try:
+                from services.face_engine import FaceEngine
+
+                problem = FaceEngine().problem
+                if problem is not None:
+                    title = problem.title
+            except Exception:
+                log.debug("Model xatosi sababi o'qilmadi", exc_info=True)
+            self._status_pill.set_state("error", title)
+            self._status_pill.setToolTip(text or title)
+            self._model_retry_btn.show()
+            self._model_retry_btn.raise_()
         elif ready:
             self._status_pill.set_state("ready", "Tizim tayyor")
+            self._status_pill.setToolTip(text or "")
+            self._model_retry_btn.hide()
         else:
             self._status_pill.set_state("loading", text or "Tizim tayyorlanmoqda...")
+            self._status_pill.setToolTip("")
+            self._model_retry_btn.hide()
+
+    def _on_model_retry(self) -> None:
+        """Modelni qayta yuklash (`face_engine.start_model_loading`)."""
+        from services.face_engine import start_model_loading
+
+        self._model_retry_btn.hide()
+        try:
+            loader = start_model_loading()
+        except Exception:
+            log.exception("Modelni qayta yuklashni boshlab bo'lmadi")
+            self._model_retry_btn.show()
+            return
+        if loader is None:
+            self.set_model_status("", ready=True)
+            return
+        self.set_model_status("Model qayta yuklanmoqda...")
+        loader.progress.connect(lambda message: self.set_model_status(message))
+        loader.finished_loading.connect(
+            lambda success, message: self.set_model_status(
+                message, ready=success, failed=not success
+            )
+        )
 
     # ------------------------------------------------------------------
     # Login oqimi

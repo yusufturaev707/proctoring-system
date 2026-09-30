@@ -53,6 +53,15 @@ log = logging.getLogger(__name__)
 #: yiqitadi.
 _BACKOFF_S = (1, 2, 4, 8, 15, 30)
 
+#: LOKAL kamera uchun qisqaroq qator.
+#:
+#: Yuqoridagi sabab (hamma bir vaqtda serverga/kameraga urilishi)
+#: USB kameraga tegishli emas: uni faqat shu mashina ochadi va
+#: urinish arzon (qurilma yo'q bo'lsa DirectShow darhol rad etadi).
+#: 30 s kutish esa imtihon paytida kabel qayta ulangandan keyin
+#: yarim daqiqa kuzatuvsiz qolish degani bo'lardi.
+_LOCAL_BACKOFF_S = (1, 2, 3, 5)
+
 #: Ketma-ket shuncha bo'sh kadrdan keyin uzilish deb hisoblanadi.
 #:
 #: Bitta o'tkazib yuborilgan kadr USB kamerada ODATIY hol va uni
@@ -110,6 +119,10 @@ class CameraStream(QThread):
         self._latest: Optional[np.ndarray] = None
         self._latest_at: float = 0.0
         self._mutex = QMutex()
+        #: Qayta ulanish so'raldi (kompyuter uyqudan uyg'ondi). Sikl
+        #: joriy ulanishni yopib, KUTMASDAN qaytadan ochadi.
+        self._reconnect_requested = False
+        _connect_power_resumed(self.request_reconnect)
 
     # ------------------------------------------------------------------
     @property
@@ -145,6 +158,28 @@ class CameraStream(QThread):
         ochilmaydi.
         """
         self._running = False
+        # Osilgan `open()`/`read()` kutishini ham darhol uzadi
+        # (`guard.GuardedSource`) — aks holda `_retire` UI thread'ida
+        # o'sha chaqiruvning vaqt chegarasigacha kutardi.
+        abort = getattr(self._source, "abort", None)
+        if abort is not None:
+            try:
+                abort()
+            except Exception:
+                log.debug("[%s] abort xatosi", self._role, exc_info=True)
+
+    def request_reconnect(self) -> None:
+        """
+        Joriy ulanishni yopib, darhol qaytadan ochish (uyqudan keyin).
+
+        Uyg'onishdan keyin DirectShow qurilmasi ko'pincha "ochiq"
+        bo'lib qoladi, lekin qora yoki qotgan kadr beradi — o'qish
+        xato qaytarmaguncha uzilish sezilmasdi. Signal asosiy
+        thread'dan keladi; bayroq oddiy `bool` (GIL ostida atomik).
+        """
+        if self._running:
+            log.info("[%s] qayta ulanish so'raldi (uyqudan uyg'onish)", self._role)
+            self._reconnect_requested = True
 
     # ------------------------------------------------------------------
     def run(self) -> None:
@@ -153,34 +188,66 @@ class CameraStream(QThread):
         if not self._running:
             return
 
+        # BUTUN SIKL HIMOYALANGAN. Thread ichidagi tutilmagan istisno
+        # oqimni jimgina o'ldirardi: holat "online" da qotib qolar,
+        # kuzatuv esa kadrsiz ishlayverardi va hech kim buni sezmasdi.
+        # Kutilmagan xato ham oddiy uzilish kabi — qayta ulanish bilan.
         attempt = 0
-        while self._running:
-            self._set_state(CameraState.OPENING if attempt == 0 else CameraState.RECONNECTING)
+        try:
+            while self._running:
+                try:
+                    attempt = self._cycle(attempt)
+                except Exception as exc:
+                    log.exception("[%s] kamera oqimida kutilmagan xato", self._role)
+                    self._health.last_error = "Kamera oqimida xato: {}".format(str(exc)[:120])
+                    if attempt == 0:
+                        # Faqat birinchi marta — takroriy xato hodisa
+                        # oqimini bir xil `camera_lost` bilan to'ldirmasin.
+                        self._set_state(CameraState.FAILED)
+                    self._safe_close()
+                    if not self._sleep_backoff(attempt):
+                        break
+                    attempt += 1
+        finally:
+            self._safe_close()
+            self._set_state(CameraState.CLOSED)
+            log.info("[%s] kamera oqimi yopildi", self._role)
 
-            if not self._source.open():
-                self._health.last_error = self._source.last_error
-                log.warning("[%s] %s", self._role, self._source.last_error)
-                if not self._sleep_backoff(attempt):
-                    break
-                attempt += 1
-                self._health.reconnects += 1
-                continue
+    def _cycle(self, attempt: int) -> int:
+        """Bitta "ochish -> o'qish -> uzilish" aylanishi. Keyingi `attempt`."""
+        self._set_state(CameraState.OPENING if attempt == 0 else CameraState.RECONNECTING)
+        self._reconnect_requested = False
 
-            attempt = 0
-            self._set_state(CameraState.ONLINE)
-            self._read_loop()
-
-            self._source.close()
-            if not self._running:
-                break
-            # Sikl uzilish sababli tugadi — qayta ulanamiz.
+        if not self._source.open():
+            self._health.last_error = self._source.last_error
+            log.warning("[%s] %s", self._role, self._source.last_error)
+            # Holat bu yerda O'ZGARTIRILMAYDI (RECONNECTING da qoladi):
+            # supervisor har `failed` ni `camera_lost` HODISASIGA
+            # aylantiradi va har urinishda holatni almashtirish uzoq
+            # uzilishda bayonnomani bir xil hodisalar bilan to'ldirardi.
+            if not self._sleep_backoff(attempt):
+                return attempt
             self._health.reconnects += 1
-            if not self._sleep_backoff(0):
-                break
+            return attempt + 1
 
-        self._source.close()
-        self._set_state(CameraState.CLOSED)
-        log.info("[%s] kamera oqimi yopildi", self._role)
+        self._set_state(CameraState.ONLINE)
+        self._read_loop()
+
+        self._safe_close()
+        if not self._running:
+            return 0
+        # Sikl uzilish sababli tugadi — qayta ulanamiz. Uyg'onishdan
+        # keyingi so'rovda kutilmaydi: qurilma allaqachon tayyor.
+        self._health.reconnects += 1
+        if not self._reconnect_requested:
+            self._sleep_backoff(0)
+        return 0
+
+    def _safe_close(self) -> None:
+        try:
+            self._source.close()
+        except Exception:
+            log.debug("[%s] kamerani yopishda xato", self._role, exc_info=True)
 
     # ------------------------------------------------------------------
     def _read_loop(self) -> None:
@@ -189,6 +256,9 @@ class CameraStream(QThread):
         last_health = 0.0
 
         while self._running:
+            if self._reconnect_requested:
+                self._health.last_error = "Uyqudan keyin qayta ulanish"
+                return
             started = time.monotonic()
             frame = self._source.read()
             elapsed = time.monotonic() - started
@@ -197,7 +267,8 @@ class CameraStream(QThread):
                 empty_streak += 1
                 self._health.frames_dropped += 1
                 if empty_streak >= _EMPTY_FRAMES_BEFORE_LOST:
-                    self._health.last_error = "Kameradan kadr kelmayapti"
+                    self._health.last_error = _explain_lost(self._source)
+                    log.warning("[%s] %s", self._role, self._health.last_error)
                     self._set_state(CameraState.FAILED)
                     return
                 # Qisqa kutish: bo'sh siklda protsessorni yemaslik uchun.
@@ -259,9 +330,13 @@ class CameraStream(QThread):
         `stop()` bayrog'i 30 soniya davomida o'qilmasdi va dastur
         yopilishida shuncha kutishga majbur bo'lardi.
         """
-        delay = _BACKOFF_S[min(attempt, len(_BACKOFF_S) - 1)]
+        schedule = _LOCAL_BACKOFF_S if self._source.info.source == "local" else _BACKOFF_S
+        delay = schedule[min(attempt, len(schedule) - 1)]
         deadline = time.monotonic() + delay
         while self._running and time.monotonic() < deadline:
+            if self._reconnect_requested:
+                # Uyg'onish — kutishning ma'nosi qolmadi.
+                break
             self.msleep(100)
         return self._running
 
@@ -270,6 +345,42 @@ class CameraStream(QThread):
             return
         self._health.state = state
         self.state_changed.emit(self._role, state.value)
+
+
+def _explain_lost(source) -> str:
+    """
+    Kadr kelmay qo'ydi — operatorga tushunarli sabab.
+
+    Lokal kamerada sabab aniqlanadi (maxfiylik / uzilgan / javob
+    bermayapti, `diagnose.py`); vaqt chegarasi (`guard.py`) o'z matnini
+    allaqachon yozgan bo'lsa, o'shanisi aniqroq va u ustun.
+    """
+    error = getattr(source, "last_error", "") or ""
+    if "javob bermayapti" in error:
+        return error
+    inner = getattr(source, "inner", source)
+    explain = getattr(inner, "explain_lost", None)
+    if explain is not None:
+        try:
+            return explain()
+        except Exception:
+            log.debug("Uzilish sababi aniqlanmadi", exc_info=True)
+    return "Kameradan kadr kelmayapti"
+
+
+def _connect_power_resumed(slot) -> None:
+    """
+    Uyqudan uyg'onish signaliga ulanadi (`core/system_events.py`).
+
+    Modul yoki signal bo'lmasa — jimgina o'tadi: qayta ulanish
+    baribir bo'sh kadrlar orqali (sekinroq) ishlaydi.
+    """
+    try:
+        from core.system_events import system_events
+
+        system_events().power_resumed.connect(slot)
+    except Exception:
+        log.debug("power_resumed signaliga ulanib bo'lmadi", exc_info=True)
 
 
 class _DiscoveryThread(QThread):
@@ -296,6 +407,10 @@ class _DiscoveryThread(QThread):
             # operator kadrni ko'rib qaror qabul qiladi.
             log.exception("Kameralarni aniqlashda xato")
             self.found.emit([])
+
+
+#: Ishlab turgan aniqlash thread'lari (`CameraManager.discover_async`).
+_DISCOVERY_LIVE: set = set()
 
 
 class CameraSlot:
@@ -404,9 +519,17 @@ class CameraManager(QObject):
         if self._discovery_thread is not None and self._discovery_thread.isRunning():
             return
 
-        thread = _DiscoveryThread(self)
+        # OTA-OBYEKTSIZ va modul registrida (`_DISCOVERY_LIVE`):
+        # aniqlash kamerani OCHADI va band/nosoz qurilmada DirectShow
+        # uni uzoq ushlab turishi mumkin. Menejer shu payt yo'q qilinsa,
+        # ota-obyekt bilan birga ishlab turgan thread ham yo'q qilinib,
+        # Qt butun dasturni qulatardi ("Destroyed while thread is still
+        # running") — `camera_worker._LIVE` dagi bilan bir xil sabab.
+        thread = _DiscoveryThread()
         thread.found.connect(self._on_discovered)
         thread.finished.connect(self._on_discovery_finished)
+        thread.finished.connect(lambda: _DISCOVERY_LIVE.discard(thread))
+        _DISCOVERY_LIVE.add(thread)
         self._discovery_thread = thread
         thread.start()
 

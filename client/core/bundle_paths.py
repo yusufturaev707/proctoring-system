@@ -51,7 +51,55 @@ def writable_root() -> Path:
     """
     base = os.environ.get("APPDATA") or str(Path.home() / ".config")
     root = Path(base) / APP_DIR_NAME
-    root.mkdir(parents=True, exist_ok=True)
+    _ensure_dir(root)
+    return root
+
+
+def _ensure_dir(path: Path) -> bool:
+    """
+    Katalogni yaratadi - XATO KO'TARMAYDI.
+
+    Bu funksiyalar modul importi paytida (`config`, `logging_setup`)
+    chaqiriladi. Ilgari `mkdir` xatosi (disk to'la, profil katalogiga
+    ruxsat yo'q, tarmoq profili uzilgan) dasturni oyna ochilmasdan,
+    hech qanday log'siz yiqitardi. Endi yo'l baribir qaytadi: faylni
+    ochuvchi o'z xatosini o'zi ushlaydi va sababini log'ga yozadi.
+    """
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        return True
+    except OSError:
+        return False
+
+
+def local_state_root() -> Path:
+    """
+    Mashinaga xos ish holati: `%LOCALAPPDATA%\\ProctoringClient`.
+
+    `state.json`, native crash log, watchdog log va self-check keshi shu
+    yerda. NIMA UCHUN `%APPDATA%` (Roaming) EMAS: bu fayllar faqat SHU
+    mashinaning holati (qaysi bosqichda yiqildi, necha marta qayta
+    ishga tushdi) - rouming profil ularni boshqa kompyuterga olib
+    o'tib, u yerda "oldingi sessiya ochiq qolgan" degan yolg'on xabar
+    berardi. Eski fayllar (`device_id.json`, asosiy log) esa JOYIDA
+    qoladi (`writable_root`): ularning manzili o'rnatuvchi hujjatida
+    va qo'llab-quvvatlash yo'riqnomalarida yozilgan.
+
+    `LOCALAPPDATA` bo'lmasa yoki yaratib bo'lmasa - `writable_root()`.
+    """
+    base = os.environ.get("LOCALAPPDATA")
+    if not base:
+        return writable_root()
+    root = Path(base) / APP_DIR_NAME
+    if not _ensure_dir(root):
+        return writable_root()
+    return root
+
+
+def logs_root() -> Path:
+    """Yangi log fayllari (native crash, watchdog): `<local_state_root>/logs`."""
+    root = local_state_root() / "logs"
+    _ensure_dir(root)
     return root
 
 

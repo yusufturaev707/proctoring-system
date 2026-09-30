@@ -27,15 +27,18 @@ ya'ni tarix va cookie diskka umuman yozilmaydi.
 from __future__ import annotations
 
 import logging
+import random
 import time
 from typing import Optional
 from urllib.parse import urlparse
 
 from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtWebEngineCore import (
+    QWebEngineLoadingInfo,
     QWebEnginePage,
     QWebEngineProfile,
     QWebEngineSettings,
+    QWebEngineUrlRequestInfo,
     QWebEngineUrlRequestInterceptor,
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -47,13 +50,14 @@ from PyQt6.QtWidgets import (
 )
 
 from config import CAMERA_FRAME_MAX_AGE_S, FACE_MATCH_THRESHOLD
-from services import local_archive, runtime_settings
+from services import local_archive, net_policy, runtime_settings
 from services.app_state import AppState
 from services.camera_worker import CameraWorker, encode_jpeg, retire_camera
 from services.face_engine import FaceEngine, similarity_score
 from services.device_watch import DeviceWatcher
 from services.lockdown import lockdown
 from services.monitoring import SessionMonitor
+from services.network_status import network_status, on_power_resumed
 from services.proctoring_supervisor import ProctoringSupervisor
 from services.realtime import ProctorChannel
 from services.repositories import ProctoringRepository
@@ -62,6 +66,15 @@ from services.screen_recorder import ScreenRecorder
 from services.workers import ApiWorker, WorkerHolder
 from ui.dialogs.finish_dialog import FinishDialog
 from ui.widgets.icons import GlyphButton, StatusDot
+from ui.pages.webview_errors import (
+    ERR_BLOCKED_BY_CLIENT,
+    LOAD_RETRY_BASE_S,
+    LOAD_RETRY_CAP_S,
+    CrashGuard,
+    WebErrorPanel,
+    describe_load_error,
+    webengine_process_problem,
+)
 from ui.widgets.indicators import BusyOverlay, Snackbar
 
 log = logging.getLogger(__name__)
@@ -123,7 +136,13 @@ class DomainAllowlistInterceptor(QWebEngineUrlRequestInterceptor):
                 return
         info.block(True)
         if self._on_blocked is not None:
-            self._on_blocked(host)
+            # IO THREAD'IDA: chaqiruvchi UI'ga tegmaydi, faqat bayroq
+            # va hodisa buferi (`_on_blocked_host`).
+            main_frame = (
+                info.resourceType()
+                == QWebEngineUrlRequestInfo.ResourceType.ResourceTypeMainFrame
+            )
+            self._on_blocked(host, main_frame)
 
 
 class LockedWebPage(QWebEnginePage):
@@ -268,12 +287,29 @@ class ExamWebViewPage(QWidget):
         self._passed_since_last = 0
         self._interceptor: Optional[DomainAllowlistInterceptor] = None
         self._profile: Optional[QWebEngineProfile] = None
+        #: WebView tiklash holati (renderer qulashi, sahifa ochilmasligi).
+        #: `test_link` faqat xotirada — qayta kirish uchun.
+        self._login_url = ""
+        self._last_good_url = QUrl()
+        #: Interceptor (IO thread) asosiy freymni to'sgan host.
+        self._blocked_main_host = ""
+        #: Profil/sahifa qurilmay qolsa — qayta urinish uchun (policy, access).
+        self._web_pending: Optional[tuple] = None
+        #: Keyingi qayta yuklashda ochiladigan manzil.
+        self._retry_url = QUrl()
+        self._crash_guard = CrashGuard()
+        self._load_retry = net_policy.Backoff(base=LOAD_RETRY_BASE_S, cap=LOAD_RETRY_CAP_S)
+        self._reload_timer = QTimer(self)
+        self._reload_timer.setSingleShot(True)
+        self._reload_timer.timeout.connect(self._reload_page)
 
         self._face_timer = QTimer(self)
         self._face_timer.setInterval(runtime_settings.fallback("face.interval"))
         self._face_timer.timeout.connect(self._run_face_check)
 
         self._setup_ui()
+        network_status().changed.connect(self._on_network_status)
+        on_power_resumed(self._retry_soon)
 
     # ------------------------------------------------------------------
     def _setup_ui(self) -> None:
@@ -301,9 +337,25 @@ class ExamWebViewPage(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        self.web_view = QWebEngineView()
-        self.web_view.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
-        root.addWidget(self.web_view, 1)
+        # BRAUZER KOMPONENTI TEKSHIRUVI — `QWebEngineView` YARATILISHIDAN
+        # OLDIN: `QtWebEngineProcess.exe` yo'q bo'lsa Qt `qFatal` bilan
+        # butun dasturni yopadi (`webview_errors.webengine_process_problem`).
+        # Bu holda sahifa brauzersiz quriladi va imtihon ochilmaydi
+        # (`start` -> `session_blocked`), dastur esa ishlashda davom etadi.
+        self._webengine_problem = webengine_process_problem()
+        if self._webengine_problem:
+            self.web_view = None
+            root.addWidget(QWidget(self), 1)
+        else:
+            self.web_view = QWebEngineView()
+            self.web_view.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
+            root.addWidget(self.web_view, 1)
+
+        # Xato ekrani brauzer USTIDA, suzuvchi panel esa undan ham
+        # yuqorida (`resizeEvent` tartibi): sayt ochilmasa ham
+        # «Yakunlash» tugmasi ko'rinib turishi kerak.
+        self._error_panel = WebErrorPanel(self)
+        self._error_panel.retry_requested.connect(self._on_error_retry)
 
         self._build_floating_bar()
         self.overlay = BusyOverlay(self)
@@ -413,6 +465,9 @@ class ExamWebViewPage(QWidget):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self.overlay.setGeometry(self.rect())
+        self._error_panel.setGeometry(self.rect())
+        if self._error_panel.isVisible():
+            self._error_panel.raise_()
         self._place_floating_bar()
         self.message.reposition()
         # Qoplama paneldan YUQORIDA qoladi: kutish ekrani butun
@@ -451,6 +506,21 @@ class ExamWebViewPage(QWidget):
         Qolgan tayyorgarlik (profil, kamera, nazorat) start
         muvaffaqiyatli bo'lgach bajariladi.
         """
+        if self.web_view is None:
+            # Brauzer komponenti yo'q — kuzatuv ham, `proctoring/start/`
+            # ham boshlanmaydi: sessiya TIRIK qoladi va mashina tuzatilgach
+            # qayta boshlanadi. Signal navbat orqali — chaqiruvchining
+            # (`MainWindow`) o'rtasida qayta kirish bo'lmasin.
+            log.error("Imtihon ochilmadi: brauzer komponenti yo'q")
+            self._pending_camera = camera
+            self._release_pending_camera()
+            QTimer.singleShot(
+                0,
+                lambda: self.session_blocked.emit(
+                    "webview_unavailable", self._webengine_problem or ""
+                ),
+            )
+            return
         self.overlay.start("Kuzatuv ishga tushirilmoqda...")
         self._pending_access = access
         self._pending_camera = camera
@@ -735,8 +805,7 @@ class ExamWebViewPage(QWidget):
         self.message.clear_message()
 
         policy = access.get("webview_policy") or {}
-        self._configure_profile(policy)
-        self._open_platform(access)
+        self._start_web(policy, access)
 
         # AI kuzatuv KAMERANI EGALLAYDI. Bitta qurilmani ikki
         # jarayon ocha olmaydi, shuning uchun eski `CameraWorker`
@@ -839,6 +908,13 @@ class ExamWebViewPage(QWidget):
         settings.setAttribute(QWebEngineSettings.WebAttribute.FullScreenSupportEnabled, False)
         settings.setAttribute(QWebEngineSettings.WebAttribute.PdfViewerEnabled, False)
 
+        # Renderer qulashi va sahifa ochilmasligi — O'Z XATO EKRANIMIZ
+        # (`_on_render_terminated`, `_on_loading_changed`). Ularsiz
+        # talabgor oq ekran yoki Chromium'ning "sad tab" sahifasi oldida
+        # qolardi: kiosk rejimida F5 ham, manzil satri ham yo'q.
+        page.renderProcessTerminated.connect(self._on_render_terminated)
+        page.loadingChanged.connect(self._on_loading_changed)
+
         # Profil Python tomonda referenssiz qolsa yig'ib yuboriladi va
         # sahifa "Render process terminated" bilan qulaydi.
         self._profile = profile
@@ -868,6 +944,13 @@ class ExamWebViewPage(QWidget):
         # serverda YAKUNLANISHI kerak (`finish_on_exit`).
         self._exam_open = True
         self._opened_at = time.monotonic()
+
+        # Havola FAQAT xotirada (renderer qulasa sessiyaga qayta kirish
+        # uchun), log'ga va diskka yozilmaydi; `stop()` tozalaydi.
+        self._login_url = login_url
+        self._last_good_url = QUrl()
+        self._crash_guard.reset()
+        self._load_retry.success()
 
         if not login_url:
             self.message.show_message("Test havolasi berilmadi", "error")
@@ -913,6 +996,7 @@ class ExamWebViewPage(QWidget):
             camera.frame_ready.connect(self._on_camera_frame)
             camera.face_result.connect(self._on_face_result)
             camera.camera_error.connect(self._on_camera_error)
+            camera.camera_restored.connect(self._on_camera_restored)
 
     def _on_camera_frame(self, frame) -> None:
         """
@@ -978,6 +1062,22 @@ class ExamWebViewPage(QWidget):
         self._monitor.push_event(
             "camera_lost", severity=3, payload={"reason": message[:300]}
         )
+        # Ishchi o'zi qayta ulanadi; talabgor esa kabelni tekshirishi
+        # mumkin - xabar suzadi, test sahifasini to'smaydi.
+        self.message.show_message(message, "warning")
+
+    def _on_camera_restored(self) -> None:
+        """
+        Uzilishdan keyin kadrlar qaytdi.
+
+        Hodisa AI kuzatuvdagi (`ProctoringSupervisor`) bilan bir xil -
+        proktor `camera_lost` qachon tugaganini ko'radi.
+        """
+        log.info("Kamera qayta ulandi")
+        self._monitor.push_event(
+            "camera_reconnected", severity=1, payload={"camera_role": "primary"}
+        )
+        self.message.show_message("Kamera qayta ulandi", "success")
 
     def _on_face_result(self, result: dict) -> None:
         """
@@ -1326,14 +1426,219 @@ class ExamWebViewPage(QWidget):
             "success",
         )
 
-    def _on_blocked_host(self, host: str) -> None:
+    def _on_blocked_host(self, host: str, main_frame: bool = False) -> None:
         # Interceptor boshqa thread'dan chaqiriladi - bu yerda faqat
-        # buferga yozamiz, UI'ga tegmaymiz.
+        # buferga yozamiz va bayroq qo'yamiz, UI'ga tegmaymiz.
+        if main_frame:
+            self._blocked_main_host = host
         self._monitor.push_event("navigation_blocked", severity=2, payload={"host": host})
 
     def _on_download_requested(self, item) -> None:
         item.cancel()
         self._monitor.push_event("client_anomaly", severity=2, payload={"kind": "download"})
+
+    # ------------------------------------------------------------------
+    # WebView tiklash
+    # ------------------------------------------------------------------
+    def _start_web(self, policy: dict, access: dict) -> None:
+        """
+        Profil + sahifa + havola. Xato DASTURNI YOPMAYDI.
+
+        Sessiya shu nuqtada serverda `in_progress` (`exam/access/`), ya'ni
+        brauzer qurilmay qolsa ham imtihon "ochiq" hisoblanadi —
+        dasturdan chiqishda u baribir yakunlanadi (`finish_on_exit`).
+        """
+        self._web_pending = (policy, access)
+        try:
+            self._configure_profile(policy)
+            self._open_platform(access)
+        except Exception:
+            log.exception("Test sahifasini ochib bo'lmadi")
+            self._exam_open = True
+            if self._opened_at is None:
+                self._opened_at = time.monotonic()
+            self._error_panel.show_error(
+                "Test sahifasi ochilmadi",
+                "Brauzerni ishga tushirib bo'lmadi. «Qayta yuklash» ni bosing; "
+                "takrorlansa administratorga murojaat qiling.",
+            )
+            self._retry_url = QUrl()
+            self._raise_chrome()
+            return
+        self._web_pending = None
+
+    def _raise_chrome(self) -> None:
+        """Z-tartib: xato ekrani < suzuvchi panel < snackbar < kutish qoplamasi."""
+        self._error_panel.setGeometry(self.rect())
+        if self._error_panel.isVisible():
+            self._error_panel.raise_()
+        self._place_floating_bar()
+        self.message.raise_()
+        if self.overlay.isVisible():
+            self.overlay.raise_()
+
+    def _on_render_terminated(self, status, exit_code: int) -> None:
+        """
+        Sahifa jarayoni (QtWebEngineProcess) o'ldi — qayta yuklaymiz.
+
+        Sabab: xotira yetmadi, sayt JS'i qulatdi, antivirus o'ldirdi yoki
+        Task Manager'dan to'xtatildi. Brauzer jarayoni tirik, ya'ni
+        off-the-record profildagi cookie (platforma sessiyasi) SAQLANGAN
+        — oxirgi sahifani qayta ochish talabgorni testga qaytaradi.
+
+        Qayta-qayta qulasa (`CrashGuard`) avtomatik yuklash to'xtaydi:
+        cheksiz sikl faqat CPU va miltillash bo'lardi.
+        """
+        try:
+            status_name = getattr(status, "name", str(status))
+            if not self._exam_open or self.web_view is None:
+                log.info("Renderer to'xtadi (%s) - imtihon ochiq emas", status_name)
+                return
+            log.warning("Test sahifasi jarayoni to'xtadi: %s (kod %s)", status_name, exit_code)
+            self._monitor.push_event(
+                "client_anomaly",
+                severity=2,
+                payload={
+                    "kind": "renderer_terminated",
+                    "status": status_name,
+                    "exit_code": int(exit_code or 0),
+                },
+            )
+            delay = self._crash_guard.record()
+            current = self.web_view.url()
+            self._retry_url = current if self._usable(current) else QUrl()
+            if delay is None:
+                self._error_panel.show_error(
+                    "Test sahifasi qayta-qayta yopilmoqda",
+                    "Brauzer jarayoni (QtWebEngineProcess) {} marta to'xtadi. Antivirus "
+                    "uni bloklayotgan bo'lishi mumkin. «Qayta yuklash» ni bosing; "
+                    "takrorlansa administratorga murojaat qiling.".format(
+                        self._crash_guard.count
+                    ),
+                )
+            else:
+                self._error_panel.show_error(
+                    "Test sahifasi to'xtab qoldi",
+                    "Sahifa qayta yuklanmoqda — javoblaringiz test platformasida "
+                    "saqlangan.",
+                    retry_in_s=delay,
+                )
+            self._raise_chrome()
+        except Exception:
+            log.exception("Renderer qulashini qayta ishlashda xato")
+
+    def _on_loading_changed(self, info) -> None:
+        """Asosiy sahifa yuklanishi: muvaffaqiyat — xato ekrani yopiladi."""
+        try:
+            self._handle_loading(info)
+        except Exception:
+            log.exception("Sahifa yuklanish holatini qayta ishlashda xato")
+
+    def _handle_loading(self, info) -> None:
+        if not self._exam_open or self.web_view is None:
+            return
+        status = info.status()
+        url = info.url()
+        if status == QWebEngineLoadingInfo.LoadStatus.LoadSucceededStatus:
+            if self._usable(url):
+                self._last_good_url = QUrl(url)
+            self._load_retry.success()
+            self._blocked_main_host = ""
+            self._error_panel.dismiss()
+            return
+        if status != QWebEngineLoadingInfo.LoadStatus.LoadFailedStatus:
+            return
+
+        code = int(info.errorCode())
+        domain = getattr(info.errorDomain(), "name", str(info.errorDomain()))
+        blocked_host, self._blocked_main_host = self._blocked_main_host, ""
+        if blocked_host or code == ERR_BLOCKED_BY_CLIENT:
+            # Allowlist to'sdi: bu tarmoq xatosi EMAS va qayta yuklash
+            # uni o'zgartirmaydi — testga qaytish yo'lini beramiz.
+            log.info("Ruxsat etilmagan sahifaga o'tish to'sildi: %s", blocked_host or "-")
+            self._retry_url = QUrl(self._last_good_url)
+            self._error_panel.show_error(
+                "Bu sahifa imtihon uchun ruxsat etilmagan",
+                "{} manziliga o'tish taqiqlangan. Testga qaytish uchun tugmani "
+                "bosing.".format(blocked_host or "Bu"),
+                button_text="Testga qaytish",
+            )
+            self._raise_chrome()
+            return
+
+        described = describe_load_error(domain, code, info.errorString())
+        # Host — log uchun yetarli; to'liq URL'da token bo'lishi mumkin.
+        log.warning(
+            "Test sahifasi ochilmadi: %s %s (%s)", domain, code, url.host() or "-"
+        )
+        if described is None:
+            return
+        title, text, auto_retry = described
+        self._retry_url = QUrl(url) if self._usable(url) else QUrl()
+        delay = self._load_retry.failure() if auto_retry else None
+        self._error_panel.show_error(title, text, retry_in_s=delay)
+        self._raise_chrome()
+
+    @staticmethod
+    def _usable(url) -> bool:
+        return bool(url is not None and url.isValid() and url.scheme() in ("http", "https"))
+
+    def _on_error_retry(self) -> None:
+        """Panel tugmasi yoki sanoq: qayta yuklash (ikki marta bosish himoyalangan)."""
+        self._error_panel.show_progress("Qayta yuklanmoqda...")
+        self._reload_timer.start(0)
+
+    def _reload_page(self) -> None:
+        """
+        Qayerga qaytamiz: xato bergan manzil -> oxirgi ochilgan sahifa ->
+        `test_link` (sessiyaga qayta kirish). GET bilan (`load`), forma
+        qayta yuborilmaydi.
+        """
+        if not self._exam_open or self.web_view is None:
+            return
+        try:
+            if self._web_pending is not None:
+                policy, access = self._web_pending
+                self._error_panel.dismiss()
+                self._start_web(policy, access)
+                return
+            target = QUrl(self._retry_url)
+            if not self._usable(target):
+                target = QUrl(self._last_good_url)
+            if not self._usable(target) and self._login_url:
+                target = QUrl(self._login_url)
+            if not self._usable(target):
+                self._error_panel.show_error(
+                    "Test havolasi yo'q",
+                    "Sahifani qayta ochib bo'lmadi. Imtihonni yakunlab, "
+                    "administratorga murojaat qiling.",
+                )
+                return
+            log.info("Test sahifasi qayta yuklanmoqda: %s", target.host() or "-")
+            self.web_view.load(target)
+        except Exception:
+            log.exception("Test sahifasini qayta yuklab bo'lmadi")
+            self._error_panel.show_error(
+                "Test sahifasi ochilmadi",
+                "Qayta yuklab bo'lmadi. Yana urinib ko'ring; takrorlansa "
+                "administratorga murojaat qiling.",
+            )
+
+    def _retry_soon(self) -> None:
+        """
+        Aloqa tiklandi / kompyuter uyg'ondi: xato ekrani sanoqni kutmaydi,
+        lekin butun zal bir lahzada saytga urilmasligi uchun jitter bilan.
+        """
+        if not self._exam_open or not self._error_panel.isVisible():
+            return
+        if self._reload_timer.isActive():
+            return
+        self._error_panel.show_progress("Aloqa tiklandi — qayta yuklanmoqda...")
+        self._reload_timer.start(random.randint(500, 5_000))
+
+    def _on_network_status(self, online: bool) -> None:
+        if online:
+            self._retry_soon()
 
     # ------------------------------------------------------------------
     # Yakunlash
@@ -1480,9 +1785,11 @@ class ExamWebViewPage(QWidget):
                 # u sessiya papkasida (`<sessiya>_<jshshir>_<mac>/`)
                 # topiladi - qayd faqat proktor uni paneldan topishi
                 # uchun.
+                # YO'L LOG'GA YOZILMAYDI: papka nomida to'liq JSHSHIR bor
+                # (`<sessiya>_<jshshir>_<mac>`).
                 log.warning(
-                    "Ekran yozuvi qayd etilmadi: %s - fayl mashinada qoldi (%s)",
-                    exc, fields.get("local_path", ""),
+                    "Ekran yozuvi qayd etilmadi (%s) - fayl mashinada qoldi",
+                    getattr(exc, "code", "") or type(exc).__name__,
                 )
         return self._repo.finish_session(reason=reason, completed=completed, timeout=timeout)
 
@@ -1534,6 +1841,7 @@ class ExamWebViewPage(QWidget):
                 (self._camera.frame_ready, self._on_camera_frame),
                 (self._camera.face_result, self._on_face_result),
                 (self._camera.camera_error, self._on_camera_error),
+                (self._camera.camera_restored, self._on_camera_restored),
             ):
                 try:
                     signal.disconnect(slot)
@@ -1544,9 +1852,18 @@ class ExamWebViewPage(QWidget):
             retire_camera(self._camera)
             self._camera = None
 
+        # Xato ekrani va qayta yuklash — keyingi talabgorga o'tmaydi.
+        self._reload_timer.stop()
+        self._error_panel.dismiss()
+        self._login_url = ""
+        self._last_good_url = QUrl()
+        self._blocked_main_host = ""
+        self._web_pending = None
+
         # Sahifani bo'sh holatga o'tkazamiz: aks holda tugagan sessiya
         # ekranda ko'rinib turadi va keyingi talabgor uni ko'radi.
-        self.web_view.setUrl(QUrl("about:blank"))
+        if self.web_view is not None:
+            self.web_view.setUrl(QUrl("about:blank"))
         self._last_embedding = None
         self._last_faces = 0
         # Kadr havolasi ham bo'shatiladi: keyingi talabgorning

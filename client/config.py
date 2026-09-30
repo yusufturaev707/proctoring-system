@@ -87,6 +87,12 @@ def _env_list(name: str, default: str = "") -> list:
 # ── Backend ──────────────────────────────────────────────────────────
 API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api/v1").rstrip("/")
 API_TIMEOUT = _env_float("API_TIMEOUT", 30.0)
+# ── [C3] Tarmoq qatlami (services/api_client.py) ─────────────────────
+# Ulanish (TCP + TLS) uchun ALOHIDA, qisqa timeout: server/tarmoq yo'q
+# bo'lsa buni 30 s emas, ~10 s da bilish kerak. `API_TIMEOUT` esa
+# javobni o'qish uchun qoladi (sekin backend).
+API_CONNECT_TIMEOUT = min(_env_float("API_CONNECT_TIMEOUT", 10.0), API_TIMEOUT)
+# ── [C3] tugadi ──────────────────────────────────────────────────────
 
 # TLS: `1`/`0` yoki CA fayl yo'li. Production'da HTTPS + haqiqiy CA shart —
 # `0` qiymati MITM'ga ochiq qoldiradi va faqat lokal dev uchun.
@@ -515,3 +521,16 @@ THREAT_SCAN_ALLOW = _env_list("THREAT_SCAN_ALLOW")
 # mashinalarda) buni `true` qilish kerak, aks holda hech bir mashina
 # imtihonni boshlay olmaydi.
 THREAT_ALLOW_VIRTUAL_HOST = _env_bool("THREAT_ALLOW_VIRTUAL_HOST", False)
+
+# ── [C1] Global himoya: watchdog va o'z-o'zini tekshirish ────────────
+# Watchdog - UI kutilmaganda yopilsa uni qayta ishga tushiradi
+# (`core/watchdog.py`, o'sha exe `--watchdog` bilan; 5 daqiqada ko'pi
+# bilan 3 marta). Standart: faqat O'RNATILGAN dastur + kiosk. Dev'da
+# (manba koddan) o'chiq - aks holda dasturchi to'xtatgan jarayon yana
+# ko'tarilib turardi.
+WATCHDOG_ENABLED = _env_bool("WATCHDOG_ENABLED", is_frozen() and KIOSK_MODE)
+# Ishga tushishdagi tekshiruv (`core/self_check.py`): papkalar, `.env`,
+# model fayllari (manifest bo'yicha), kamera, server/internet. Faqat
+# ma'lumot beradi, hech narsani to'smaydi.
+SELF_CHECK_ENABLED = _env_bool("SELF_CHECK_ENABLED", True)
+# ── [C1] tugadi ──────────────────────────────────────────────────────

@@ -43,6 +43,13 @@ _CREDENTIALS_RE = re.compile(r"//[^/@]*@")
 #: hammasi bitta kritik bo'limda.
 _FFMPEG_LOCK = threading.Lock()
 
+#: RTSP ochish va kadr o'qish uchun vaqt chegarasi (ms). Kamera
+#: o'chirilgan yoki tarmoq uzilgan bo'lsa FFmpeg shundan ortiq
+#: kutmaydi. `GuardedSource` (`guard.py`) ikkinchi himoya qatlami:
+#: uning chegarasi bulardan KATTA, ya'ni odatda FFmpeg o'zi qaytadi.
+_OPEN_TIMEOUT_MS = 10000
+_READ_TIMEOUT_MS = 5000
+
 
 def safe_url(url: str) -> str:
     """Log va UI uchun: kredensialsiz manzil."""
@@ -101,14 +108,20 @@ class RtspSource(CameraSource):
             return self._fail("Server kamera manzilini bermadi")
 
         capture = self._open_capture(url)
-        if capture is None or not capture.isOpened():
+        try:
+            opened = capture is not None and capture.isOpened()
+        except Exception:
+            opened = False
+        if not opened:
             if capture is not None:
                 try:
                     capture.release()
                 except Exception:
                     pass
             return self._fail(
-                "RTSP oqimi ochilmadi: {}".format(safe_url(url))
+                "IP kamera oqimi ochilmadi: {}. Kamera yoqilganini va "
+                "tarmoqqa ulanganini tekshiring; qayta ulanish avtomatik "
+                "davom etadi.".format(safe_url(url))
             )
 
         try:
@@ -117,9 +130,12 @@ class RtspSource(CameraSource):
             log.debug("RTSP: CAP_PROP_BUFFERSIZE qo'llab-quvvatlanmadi", exc_info=True)
 
         self._capture = capture
-        self.info.width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
-        self.info.height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
-        self.info.declared_fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
+        try:
+            self.info.width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+            self.info.height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+            self.info.declared_fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
+        except Exception:
+            log.debug("RTSP xususiyatlari o'qilmadi", exc_info=True)
 
         log.info(
             "RTSP ochildi: %s (%s, %s) %s",
@@ -151,13 +167,28 @@ class RtspSource(CameraSource):
             ]
         )
 
+        # OpenCV'ning O'Z vaqt chegaralari (4.6+). `stimeout` FFmpeg
+        # versiyasiga bog'liq: bundle'dagi avformat 58 (FFmpeg 4.4) uni
+        # taniydi, FFmpeg 5+ esa uni olib tashlagan (u yerda `timeout`
+        # boshqa ma'noga ega — 4.4 da u "tinglash" rejimini yoqardi,
+        # shuning uchun uni bu yerga qo'shib bo'lmaydi). OpenCV
+        # parametrlari esa uzish callback'i orqali ishlaydi va FFmpeg
+        # versiyasidan MUSTAQIL — ochish ham, o'qish ham chegaralanadi.
+        params = []
+        if hasattr(cv2, "CAP_PROP_OPEN_TIMEOUT_MSEC"):
+            params += [cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, _OPEN_TIMEOUT_MS]
+        if hasattr(cv2, "CAP_PROP_READ_TIMEOUT_MSEC"):
+            params += [cv2.CAP_PROP_READ_TIMEOUT_MSEC, _READ_TIMEOUT_MS]
+
         with _FFMPEG_LOCK:
             previous = os.environ.get("OPENCV_FFMPEG_CAPTURE_OPTIONS")
             os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = options
             try:
+                if params:
+                    return cv2.VideoCapture(url, cv2.CAP_FFMPEG, params)
                 return cv2.VideoCapture(url, cv2.CAP_FFMPEG)
             except Exception as exc:
-                log.warning("RTSP ochishda istisno: %s", str(exc)[:200])
+                log.warning("RTSP ochishda istisno: %s", safe_url(str(exc))[:200])
                 return None
             finally:
                 if previous is None:
@@ -168,7 +199,13 @@ class RtspSource(CameraSource):
     def read(self) -> Optional[np.ndarray]:
         if self._capture is None:
             return None
-        ok, frame = self._capture.read()
+        try:
+            ok, frame = self._capture.read()
+        except Exception as exc:
+            # Istisno matnida URL (kredensial bilan) bo'lishi mumkin —
+            # faqat turi yoziladi.
+            self._last_error = "RTSP kadr o'qishda xato ({})".format(type(exc).__name__)
+            return None
         return frame if ok else None
 
     def close(self) -> None:

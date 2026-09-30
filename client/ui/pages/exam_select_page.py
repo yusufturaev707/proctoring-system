@@ -419,6 +419,25 @@ class ExamSelectPage(QWidget):
         """Tekshiruv natijasi 'Davom etish' xabarida ham aks etadi."""
         self._update_continue_state()
 
+    def preselect_exam(self, exam_id: int) -> bool:
+        """
+        Imtihonni ro'yxatdan oldindan tanlaydi (kutilmagan yopilishdan
+        keyingi tiklash - `MainWindow._offer_resume`). `False` - bugungi
+        ro'yxatda yo'q (operator o'zi tanlaydi).
+        """
+        for type_index in range(self.type_combo.count()):
+            type_id = self.type_combo.itemData(type_index)
+            exams = self._state.exams_of_type(type_id)
+            if not any(exam.id == exam_id for exam in exams):
+                continue
+            self.type_combo.setCurrentIndex(type_index)
+            for exam_index in range(self.exam_combo.count()):
+                exam = self.exam_combo.itemData(exam_index)
+                if exam is not None and exam.id == exam_id:
+                    self.exam_combo.setCurrentIndex(exam_index)
+                    return True
+        return False
+
     def _update_continue_state(self) -> None:
         """
         "Davom etish" faolligi UCHTA shartga bog'liq.

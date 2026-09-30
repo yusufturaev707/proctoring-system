@@ -298,25 +298,53 @@ class ProctoringPipeline(QThread):
             )
         }
 
+        # Har yuklash o'z `try` ida: DLL'ni antivirus to'sgan, model
+        # fayli buzilgan yoki GPU drayveri yiqilgan bo'lsa istisno
+        # `run()` dan chiqib, thread'ni SIKLSIZ tugatardi - kuzatuv
+        # jimgina to'xtab, `proctoring_degraded` ham chiqmasdi.
         if self._rates["identity"].enabled or self._rates["gaze"].enabled:
-            self._identity = FaceIdentity()
-            if self._reference is not None:
-                self._identity.set_reference(self._reference)
-            if not self._identity.is_ready:
-                self._disable("identity", "Yuz modeli yuklanmadi")
-                self._disable("gaze", "Yuz modeli yuklanmadi")
+            try:
+                self._identity = FaceIdentity()
+                if self._reference is not None:
+                    self._identity.set_reference(self._reference)
+                ready = self._identity.is_ready
+            except Exception as exc:
+                log.exception("Yuz modulini yuklashda xato")
+                ready = False
+                reason = "Yuz modeli yuklanmadi ({})".format(type(exc).__name__)
+            else:
+                reason = "Yuz modeli yuklanmadi"
+            if not ready:
+                self._disable("identity", reason)
+                self._disable("gaze", reason)
                 self._identity = None
 
         if self._rates["gaze"].enabled:
-            from proctoring.gaze.gaze_estimator import GazeEstimator
+            try:
+                from proctoring.gaze.gaze_estimator import GazeEstimator
 
-            self._gaze = GazeEstimator()
+                self._gaze = GazeEstimator()
+            except Exception as exc:
+                log.exception("Nigoh modulini yuklashda xato")
+                self._gaze = None
+                self._disable("gaze", "Nigoh moduli yuklanmadi ({})".format(type(exc).__name__))
 
         if self._rates["objects"].enabled:
-            self._load_detector()
+            try:
+                self._load_detector()
+            except Exception as exc:
+                log.exception("Obyekt aniqlash modulini yuklashda xato")
+                self._detector = None
+                self._tracker = None
+                self._disable("objects", "Model yuklanmadi ({})".format(type(exc).__name__))
 
         if self._rates["pose"].enabled:
-            self._load_pose()
+            try:
+                self._load_pose()
+            except Exception as exc:
+                log.exception("Poza modulini yuklashda xato")
+                self._pose = None
+                self._disable("pose", "Model yuklanmadi ({})".format(type(exc).__name__))
 
     def _load_detector(self) -> None:
         from proctoring.detection.yolo_detector import YoloDetector

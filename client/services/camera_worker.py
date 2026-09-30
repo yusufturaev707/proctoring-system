@@ -49,6 +49,76 @@ log = logging.getLogger(__name__)
 #: ikkalasidan ham mustaqil.
 _DOMINANCE_RATIO = 0.7
 
+#: Qayta ulanish kechikishlari (soniya), oxirgisi takrorlanadi.
+#:
+#: FaceID ishchisi faqat LOKAL/rol kamerasini ochadi va operator
+#: kamera oldida turadi: kabel qayta ulangach 30 s kutish (kuzatuv
+#: oqimidagi IP kamera qatori) "dastur kamerani ko'rmayapti" degan
+#: taassurot berardi. Urinish arzon — qurilma yo'q bo'lsa DirectShow
+#: darhol rad etadi.
+_BACKOFF_S = (1, 2, 3, 5)
+
+#: Ketma-ket shuncha bo'sh kadrdan keyin kamera "yo'qolgan" (~1 s).
+_EMPTY_FRAMES_BEFORE_LOST = 30
+
+#: Kadr sifati chegaralari (`assess_quality`). Ular faqat OPERATORGA
+#: MASLAHAT tanlaydi ("yorug'lik yetarli emas"), qarorga ta'sir
+#: qilmaydi — shuning uchun taxminiy qiymatlar yetarli.
+#:
+#: Yorqinlik — luma o'rtachasi (0..255): 45 dan past kadrda
+#: InsightFace yuzni ko'pincha umuman topmaydi, 230 dan yuqorisi —
+#: ortiqcha yoritilgan (deraza orqada, yuz "oqarib" ketgan).
+_DARK_LUMA = 45
+_BRIGHT_LUMA = 230
+#: Yuz qirqimidagi Laplas dispersiyasi (112 px kenglikka keltirilgan
+#: kulrang tasvir). O'tkir yuzda odatda 100+, harakatdan xiralashganda
+#: 20 dan past tushadi.
+_BLUR_VARIANCE = 20.0
+
+
+def assess_quality(frame, bbox=None) -> list:
+    """
+    Kadr (yoki yuz qirqimi) sifati: `["dark" | "bright" | "blurry"]`.
+
+    SOF FUNKSIYA va istisno TASHLAMAYDI — sifat faqat maslahat, uning
+    xatosi tekshiruvni to'xtatmasligi kerak. `bbox` berilsa yorqinlik
+    va xiralik YUZ ustida o'lchanadi: fon (oq devor, qorong'i xona)
+    yuz qanday ko'rinishini aytmaydi.
+    """
+    issues: list = []
+    try:
+        import cv2
+
+        if frame is None or getattr(frame, "ndim", 0) != 3:
+            return issues
+        region = frame
+        if bbox is not None:
+            height, width = frame.shape[:2]
+            x1, y1, x2, y2 = [int(value) for value in bbox[:4]]
+            x1, y1 = max(0, x1), max(0, y1)
+            x2, y2 = min(width, x2), min(height, y2)
+            if x2 - x1 >= 8 and y2 - y1 >= 8:
+                region = frame[y1:y2, x1:x2]
+        # Yorqinlik siyrak tanlanma bo'yicha: aniqlik emas, kattalik
+        # tartibi kerak (`camera/measure.py:_brightness` bilan bir xil).
+        sample = region[::4, ::4]
+        luma = float(
+            (sample[:, :, 0] * 0.114 + sample[:, :, 1] * 0.587 + sample[:, :, 2] * 0.299).mean()
+        )
+        if luma < _DARK_LUMA:
+            issues.append("dark")
+        elif luma > _BRIGHT_LUMA:
+            issues.append("bright")
+        if bbox is not None and region is not frame:
+            gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
+            scale = 112.0 / max(1, gray.shape[1])
+            gray = cv2.resize(gray, None, fx=scale, fy=scale)
+            if float(cv2.Laplacian(gray, cv2.CV_64F).var()) < _BLUR_VARIANCE:
+                issues.append("blurry")
+    except Exception:
+        log.debug("Kadr sifatini baholab bo'lmadi", exc_info=True)
+    return issues
+
 
 def _face_width(face: dict) -> int:
     bbox = face["bbox"]
@@ -151,6 +221,9 @@ class CameraWorker(QThread):
         frame_ready(np.ndarray)  - har bir kadr (BGR), oldindan ko'rish uchun
         face_result(dict)        - detektsiya natijasi (pastga qarang)
         camera_error(str)        - kamera ochilmadi / kadr o'qilmadi
+                                   (uzilish boshiga BIR MARTA, sabab
+                                   o'zgarsa yana; ishchi TO'XTAMAYDI)
+        camera_restored()        - uzilishdan keyin kadrlar qaytdi
 
     `face_result` tarkibi:
         state: "none" | "far" | "multiple" | "ok"
@@ -160,11 +233,14 @@ class CameraWorker(QThread):
         total: int                     (kadrdagi umumiy son)
         embedding: np.ndarray | None   (faqat state == "ok")
         det_score: float
+        quality: list                  ("dark" | "bright" | "blurry",
+                                        faqat maslahat uchun)
     """
 
     frame_ready = pyqtSignal(object)
     face_result = pyqtSignal(dict)
     camera_error = pyqtSignal(str)
+    camera_restored = pyqtSignal()
 
     def __init__(self, source=None, *, camera_index: Optional[int] = None,
                  detect: bool = True, parent=None) -> None:
@@ -177,7 +253,12 @@ class CameraWorker(QThread):
         ochish) — odatdagi oqimda manba har doim rol bo'yicha keladi.
         """
         super().__init__(parent)
-        self._source = source or self._fallback_source(camera_index)
+        from proctoring.camera.factory import guarded
+
+        # Manba VAQT CHEGARASI bilan (`camera/guard.py`): osilgan
+        # `read()` ishchini qotirmasin va `retire_camera` UI thread'ida
+        # uzoq kutmasin. `source_for_role` bergani allaqachon o'ralgan.
+        self._source = guarded(source or self._fallback_source(camera_index))
         # `True` bilan boshlanadi va FAQAT `stop()` uni o'chiradi.
         #
         # Ilgari u `False` edi va `run()` ichida `True` ga o'rnatilardi.
@@ -200,6 +281,24 @@ class CameraWorker(QThread):
         # Oddiy `bool`: yozish ham, o'qish ham GIL ostida atomik va
         # sikl uni har kadrda qayta o'qiydi.
         self._detect = bool(detect)
+        #: Hozir uzilish bormi va oxirgi aytilgan sabab — xabar
+        #: uzilish boshida BIR MARTA chiqadi (va sabab o'zgarganda).
+        #: Har urinishda chiqarish imtihon sahifasida bir xil
+        #: `camera_lost` hodisalarini yog'dirardi.
+        self._outage = False
+        self._reported_error = ""
+        #: Uyqudan uyg'onish — ulanishni yopib darhol qayta ochish.
+        self._reconnect_requested = False
+        #: Detektsiya xatolari soni — log'ni har kadrda to'ldirmaslik uchun.
+        self._detect_errors = 0
+        try:
+            from core.system_events import system_events
+
+            system_events().power_resumed.connect(self.request_reconnect)
+        except Exception:
+            # Modul bo'lmasa qayta ulanish baribir bo'sh kadrlar
+            # orqali ishlaydi — faqat sekinroq.
+            log.debug("power_resumed signaliga ulanib bo'lmadi", exc_info=True)
         # Registrdan chiqarish ASOSIY thread'da bajariladi: qabul
         # qiluvchi - shu obyekt va u asosiy thread'da yashaydi, ya'ni
         # ulanish navbatli (queued). Oxirgi referens aynan shu yerda,
@@ -259,9 +358,22 @@ class CameraWorker(QThread):
 
         `terminate()` ISHLATILMAYDI: u kamera deskriptorini ochiq
         qoldiradi va Windows'da qurilma keyingi safar umuman ochilmaydi.
-        Bayroq qo'yamiz va sikl o'zi chiqadi.
+        Bayroq qo'yamiz va sikl o'zi chiqadi. Osilgan `open()`/`read()`
+        kutishi ham darhol uziladi (`GuardedSource.abort`).
         """
         self._running = False
+        abort = getattr(self._source, "abort", None)
+        if abort is not None:
+            try:
+                abort()
+            except Exception:
+                log.debug("Kamera abort xatosi", exc_info=True)
+
+    def request_reconnect(self) -> None:
+        """Ulanishni yopib, darhol qayta ochish (uyqudan uyg'onish)."""
+        if self._running:
+            log.info("Kamera qayta ulanadi (uyqudan uyg'onish)")
+            self._reconnect_requested = True
 
     def run(self) -> None:
         # `start()` dan keyin darhol `stop()` chaqirilgan bo'lishi mumkin -
@@ -270,45 +382,113 @@ class CameraWorker(QThread):
             return
 
         source = self._source
-        if source is None or not source.open():
-            self.camera_error.emit(
-                (getattr(source, "last_error", "") if source else "")
-                or "Kamera ochilmadi."
-            )
+        if source is None:
+            self._report_error("Yuz kamerasi topilmadi.")
             return
 
-        log.info("Kamera ochildi: %s", source.info.label)
+        # UZILISH ISHCHINI TO'XTATMAYDI. Ilgari kamera ochilmasa yoki
+        # kadr kelmay qolsa `run()` tugardi va sahifa qayta ochmaguncha
+        # kamera o'lik qolardi: imtihon paytida USB kabel bir soniya
+        # chiqib ketsa, davriy FaceID imtihon oxirigacha ishlamasdi.
+        # Endi ishchi qisqa oraliqlar bilan (`_BACKOFF_S`) qayta
+        # ulanadi va kadr qaytgach `camera_restored` beradi.
+        #
+        # Kutilmagan istisno ham siklni o'ldirmaydi — tutilmagan xato
+        # thread'ni jimgina tugatardi va sahifada oxirgi kadr qotib
+        # qolardi.
+        attempt = 0
         try:
-            frame_index = 0
-            failures = 0
-
             while self._running:
-                frame = source.read()
-                if frame is None:
-                    failures += 1
-                    # Bitta o'tkazib yuborilgan kadr normal holat (USB
-                    # uzilishi). Ketma-ket 30 tasi esa kamera yo'qolgani.
-                    if failures > 30:
-                        self.camera_error.emit("Kameradan kadr kelmayapti.")
+                try:
+                    attempt = self._cycle(source, attempt)
+                except Exception as exc:
+                    log.exception("Kamera ishchisida kutilmagan xato")
+                    self._report_error("Kamera xatosi: {}".format(str(exc)[:120]))
+                    self._close(source)
+                    if not self._sleep_backoff(attempt):
                         break
-                    time.sleep(0.03)
-                    continue
-
-                failures = 0
-                self.frame_ready.emit(frame.copy())
-                frame_index += 1
-
-                if self._detect and frame_index % max(1, DETECT_EVERY_NTH_FRAME) == 0:
-                    self._process(frame)
+                    attempt += 1
         finally:
             # Har qanday chiqish yo'lida yopiladi - aks holda kamera
             # band qolib, keyingi sahifa (yoki kuzatuv oqimi) uni
             # umuman ocholmaydi.
-            try:
-                source.close()
-            except Exception:
-                log.debug("Kamerani yopishda xato", exc_info=True)
+            self._close(source)
             log.info("Kamera yopildi: %s", source.info.label)
+
+    def _cycle(self, source, attempt: int) -> int:
+        """Bitta "ochish -> o'qish -> uzilish" aylanishi. Keyingi `attempt`."""
+        self._reconnect_requested = False
+        if not source.open():
+            self._report_error(source.last_error or "Kamera ochilmadi.")
+            if not self._sleep_backoff(attempt):
+                return attempt
+            return attempt + 1
+
+        log.info("Kamera ochildi: %s", source.info.label)
+        self._read_loop(source)
+        self._close(source)
+        if self._running and not self._reconnect_requested:
+            self._sleep_backoff(0)
+        return 0
+
+    def _read_loop(self, source) -> None:
+        frame_index = 0
+        failures = 0
+        while self._running:
+            if self._reconnect_requested:
+                return
+            frame = source.read()
+            if frame is None:
+                failures += 1
+                # Bitta o'tkazib yuborilgan kadr normal holat (USB
+                # uzilishi). Ketma-ket 30 tasi esa kamera yo'qolgani.
+                if failures >= _EMPTY_FRAMES_BEFORE_LOST:
+                    self._report_error(_explain_lost(source))
+                    return
+                time.sleep(0.03)
+                continue
+
+            failures = 0
+            if self._outage:
+                self._outage = False
+                self._reported_error = ""
+                log.info("Kamera tiklandi: %s", source.info.label)
+                self.camera_restored.emit()
+            self.frame_ready.emit(frame.copy())
+            frame_index += 1
+
+            if self._detect and frame_index % max(1, DETECT_EVERY_NTH_FRAME) == 0:
+                self._process(frame)
+
+    def _report_error(self, message: str) -> None:
+        """Uzilish haqida xabar — boshida bir marta, sabab o'zgarsa yana."""
+        self._outage = True
+        if message == self._reported_error:
+            return
+        self._reported_error = message
+        log.warning("Kamera: %s", message)
+        self.camera_error.emit(message)
+
+    def _sleep_backoff(self, attempt: int) -> bool:
+        """
+        Qayta urinishdan oldingi kutish. `False` — to'xtatish so'raldi.
+
+        Kichik bo'laklarda: `stop()` va uyg'onish so'rovi darhol sezilsin.
+        """
+        delay = _BACKOFF_S[min(attempt, len(_BACKOFF_S) - 1)]
+        deadline = time.monotonic() + delay
+        while self._running and time.monotonic() < deadline:
+            if self._reconnect_requested:
+                break
+            self.msleep(100)
+        return self._running
+
+    @staticmethod
+    def _close(source) -> None:
+        try:
+            source.close()
+        except Exception:
+            log.debug("Kamerani yopishda xato", exc_info=True)
 
     # ------------------------------------------------------------------
     def _process(self, frame: np.ndarray) -> None:
@@ -318,8 +498,16 @@ class CameraWorker(QThread):
         try:
             faces = engine.detect(frame)
         except Exception:
-            log.exception("Detektsiya xatosi")
+            # Log THROTTLE qilinadi: xato odatda har kadrda
+            # takrorlanadi (masalan GPU uyqudan keyin yo'qolgan) va
+            # har 300 ms da to'liq traceback log faylini to'ldirardi.
+            # GPU'dan CPU'ga o'tishni dvigatelning o'zi hal qiladi
+            # (`FaceEngine._run`).
+            self._detect_errors += 1
+            if self._detect_errors == 1 or self._detect_errors % 100 == 0:
+                log.exception("Detektsiya xatosi (%s-marta)", self._detect_errors)
             return
+        self._detect_errors = 0
 
         state, main, ignored = select_candidate_face(faces)
 
@@ -345,6 +533,15 @@ class CameraWorker(QThread):
         }
         if main is not None:
             payload["det_score"] = main["det_score"]
+        # SIFAT — faqat maslahat: yuz bo'lsa uning ustida, yuz
+        # topilmasa butun kadr bo'yicha ("qorong'i — shuning uchun
+        # topilmadi"). Qarorga ta'sir qilmaydi.
+        if state in ("ok", "none"):
+            payload["quality"] = assess_quality(
+                frame, main["bbox"] if main is not None else None
+            )
+        else:
+            payload["quality"] = []
         self.face_result.emit(payload)
 
     def _ensure_engine(self):
@@ -353,6 +550,17 @@ class CameraWorker(QThread):
 
             self._engine = FaceEngine()
         return self._engine
+
+
+def _explain_lost(source) -> str:
+    """Kadr kelmay qo'ydi — sabab (`camera/manager.py:_explain_lost`)."""
+    try:
+        from proctoring.camera.manager import _explain_lost as explain
+
+        return explain(source)
+    except Exception:
+        log.debug("Uzilish sababi aniqlanmadi", exc_info=True)
+        return "Kameradan kadr kelmayapti. Qayta ulanish avtomatik davom etadi."
 
 
 #: Ishga tushirilgan va hali tugamagan barcha workerlar

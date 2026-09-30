@@ -194,12 +194,15 @@ class FaceIdentity:
         nuqtali `kps` ishlatiladi va bosh holati ANIQLIGI pastroq,
         lekin baribir hisoblanadi.
         """
-        application = getattr(engine, "_app", None)
-        if application is None:
+        # `engine.analyze` — `_app.get()` emas: GPU ishlash paytida
+        # yiqilsa CPU'ga o'tish qoidasi dvigatelda (`FaceEngine._run`)
+        # va u bu yo'lni ham qamrashi kerak.
+        analyze = getattr(engine, "analyze", None)
+        if analyze is None:
             return []
 
         faces = []
-        for item in application.get(frame):
+        for item in analyze(frame):
             embedding = getattr(item, "embedding", None)
             if embedding is not None:
                 norm = float(np.linalg.norm(embedding))

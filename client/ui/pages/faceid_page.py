@@ -77,7 +77,12 @@ from services.camera_worker import (
     retire_camera,
     source_for_role,
 )
-from services.face_engine import FaceEngine, similarity_score
+from services.face_engine import (
+    FaceEngine,
+    is_model_loading,
+    similarity_score,
+    start_model_loading,
+)
 from services.repositories import ProctoringRepository
 from services.workers import ApiWorker, WorkerHolder
 from ui.styles import COLORS, badge_style, primary_button_style
@@ -234,6 +239,27 @@ class FaceIDPage(QWidget):
         self._guide_timer = QTimer(self)
         self._guide_timer.setSingleShot(True)
         self._guide_timer.timeout.connect(self._finish_guide)
+        #: Model tayyor bo'lguncha holatni kuzatuvchi taymer.
+        #
+        # Sahifa model yuklanishi TUGAMASDAN ochilishi mumkin (sekin
+        # disk, CPU nashri, qayta yuklash). Ilgari o'sha holatda etalon
+        # darhol "rasmdan yuz olinmadi" bo'lib qolardi (dvigatel
+        # tayyor emasligi sababli `None`) va model yuklangach ham
+        # tekshiruv TIKLANMASDI — operator talabgorni qaytadan
+        # qidirishga majbur edi. So'rov (poll) signal o'rniga: yuklovchi
+        # boshqa joyda (MainWindow, login sahifasi) yaratilgan bo'lishi
+        # mumkin va holat dvigatelning o'zida (`FaceEngine.state`).
+        self._model_timer = QTimer(self)
+        self._model_timer.setInterval(500)
+        self._model_timer.timeout.connect(self._poll_model)
+        #: Model tayyor bo'lgach tayyorlanadigan hujjat rasmi.
+        self._pending_photo: Optional[str] = None
+        #: Ekrandagi xabar KAMERA nosozligi haqidami — kadr qaytganda
+        #: faqat shu xabar tozalanadi (boshqasi, masalan server javobi,
+        #: o'chib ketmasligi kerak).
+        self._camera_problem = False
+        #: Ekrandagi xabar MODEL holati haqidami (xuddi shu sabab).
+        self._model_message = False
 
         self._setup_ui()
 
@@ -427,6 +453,19 @@ class FaceIDPage(QWidget):
         self.retry_btn.setVisible(False)
         self.retry_btn.installEventFilter(self)
         side.addWidget(self.retry_btn)
+
+        # MODELNI QAYTA YUKLASH — faqat model yuklanmaganda ko'rinadi.
+        # "Qaytadan urinish" dan ALOHIDA: u yuz solishtiruvini qayta
+        # boshlaydi, bu esa dvigatelning o'zini. Ikkalasini bitta
+        # tugmaga birlashtirish modelsiz holatda "qayta urinish hech
+        # narsa qilmayapti" degan taassurot berardi.
+        self.model_retry_btn = QPushButton("Modelni qayta yuklash")
+        self.model_retry_btn.setProperty("variant", "ghost")
+        self.model_retry_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.model_retry_btn.clicked.connect(self._on_model_retry)
+        self.model_retry_btn.setVisible(False)
+        self.model_retry_btn.installEventFilter(self)
+        side.addWidget(self.model_retry_btn)
 
         # "SESSIYA TIRIK" KARTASI (`_enter_resume`). Kuzatuv rad
         # etilib shu sahifaga qaytilganda yuz ALLAQACHON tasdiqlangan va
@@ -640,11 +679,12 @@ class FaceIDPage(QWidget):
         self.retry_btn.setVisible(False)
         self.message.clear_message()
 
+        self._camera_problem = False
+        self._model_message = False
+        self.model_retry_btn.setVisible(False)
         if not self._engine.is_ready:
-            self.message.show_message(
-                "Yuz aniqlash modeli hali yuklanmoqda. Bir necha soniya kuting.",
-                "warning",
-            )
+            self._show_model_state()
+            self._model_timer.start()
 
         # Sanoq kamera ochilishidan OLDIN qo'yiladi: ishchi aniqlash
         # O'CHIQ holda yaratiladi va birinchi kadrdan boshlab hech
@@ -661,6 +701,8 @@ class FaceIDPage(QWidget):
     def cleanup(self) -> None:
         """Kamerani to'xtatadi. Sahifadan chiqishda MAJBURIY."""
         self._guide_timer.stop()
+        self._model_timer.stop()
+        self._pending_photo = None
         self._guide_state = "done"
         retire_camera(self._camera)
         self._camera = None
@@ -680,6 +722,7 @@ class FaceIDPage(QWidget):
                 camera.frame_ready.disconnect(self._on_frame)
                 camera.face_result.disconnect(self._on_face)
                 camera.camera_error.disconnect(self._on_camera_error)
+                camera.camera_restored.disconnect(self._on_camera_restored)
             except TypeError:
                 pass
             # Keyingi sahifa (davriy FaceID) aniqlashga TAYANADI.
@@ -718,6 +761,7 @@ class FaceIDPage(QWidget):
         self._camera.frame_ready.connect(self._on_frame)
         self._camera.face_result.connect(self._on_face)
         self._camera.camera_error.connect(self._on_camera_error)
+        self._camera.camera_restored.connect(self._on_camera_restored)
         self._camera.start()
 
     # ------------------------------------------------------------------
@@ -736,20 +780,53 @@ class FaceIDPage(QWidget):
         """Etalon embedding - fon thread'ida (model chaqiruvi bloklovchi)."""
         self._reference = None
         self._reference_ready = False
+        self._pending_photo = None
         if not photo_base64:
             # Rasm umuman kelmadi va "rasm keldi, lekin yuz topilmadi"
             # bilan bir xil yakun beradi — shuning uchun bitta yo'ldan
             # o'tadi: nishon ham, xabar ham o'sha yerda.
-            self._on_reference_ready(None)
+            self._on_reference_ready((None, "missing"))
             return
 
         self._set_mode_badge(None)
-        worker = ApiWorker(self._engine.embed_base64, photo_base64, parent=self)
+        if not self._engine.is_ready:
+            # MODEL KUTILADI (`_poll_model`), etalon esa keyin
+            # tayyorlanadi. Hozir chaqirilsa dvigatel `None` qaytarardi
+            # va talabgor "hujjat rasmi yaroqsiz" bo'lib qolardi.
+            self._pending_photo = photo_base64
+            return
+        worker = ApiWorker(self._engine.embed_reference, photo_base64, parent=self)
         worker.succeeded.connect(self._on_reference_ready)
-        worker.failed.connect(lambda message, code: self._on_reference_ready(None))
+        worker.failed.connect(lambda message, code: self._on_reference_ready((None, "error")))
         self._workers.run(worker)
 
-    def _on_reference_ready(self, embedding) -> None:
+    #: Etalon olinmagan sabab -> operatorga xabar. Har biri KIM nima
+    #: qilishini aytadi: platforma ma'lumoti yoki rasm sifati
+    #: (administrator), dastur xatosi (qayta urinish).
+    _REFERENCE_MESSAGES = {
+        "missing": "Platforma hujjat rasmini bermadi — bu talabgorni tekshirib "
+                   "bo'lmaydi. Administratorga murojaat qiling.",
+        "invalid": "Platformadan kelgan hujjat rasmi buzilgan (base64 emas). "
+                   "Administratorga murojaat qiling.",
+        "not_image": "Platformadan kelgan hujjat rasmini o'qib bo'lmadi (rasm "
+                     "fayli buzilgan). Administratorga murojaat qiling.",
+        "too_small": "Hujjat rasmi juda kichik — undan yuzni ishonchli olib "
+                     "bo'lmaydi. Administratorga murojaat qiling.",
+        "no_face": "Hujjat rasmida yuz topilmadi (rasm sifati past yoki yuz "
+                   "ko'rinmaydi). Administratorga murojaat qiling.",
+        "model_not_ready": "Yuz aniqlash modeli tayyor emas — model yuklangach "
+                           "«Qaytadan urinish» ni bosing.",
+        "error": "Hujjat rasmini qayta ishlashda xato. «Qaytadan urinish» ni "
+                 "bosing; takrorlansa administratorga murojaat qiling.",
+    }
+
+    def _on_reference_ready(self, result) -> None:
+        # Natija `(embedding, sabab)`; eski shakl (faqat vektor) ham
+        # qabul qilinadi.
+        if isinstance(result, tuple) and len(result) == 2:
+            embedding, reason = result
+        else:
+            embedding, reason = result, ("ok" if result is not None else "error")
         self._reference = embedding if isinstance(embedding, np.ndarray) else None
         self._reference_ready = True
         self._set_mode_badge(self._reference is not None)
@@ -759,13 +836,77 @@ class FaceIDPage(QWidget):
         # Etalonsiz solishtirib bo'lmaydi. Enrollment o'chirilgan
         # (`_ENROLLMENT_ENABLED`), ya'ni bu TO'SIQ: sabab platformada
         # yoki rasm sifatida va uni operator tuzata olmaydi.
+        log.warning("Etalon olinmadi: %s", reason)
+        if _ENROLLMENT_ENABLED:
+            self.message.show_message(
+                "Hujjat rasmidan yuz olinmadi - tekshiruv operator zimmasida.",
+                "warning",
+            )
+        else:
+            self.message.show_message(
+                self._REFERENCE_MESSAGES.get(reason, self._REFERENCE_MESSAGES["error"]),
+                "error",
+            )
+        if reason in ("model_not_ready", "error"):
+            # Dastur tomonidagi sabab — operator o'zi qayta urina oladi.
+            self.retry_btn.setVisible(True)
+
+    # ------------------------------------------------------------------
+    # Model holati
+    # ------------------------------------------------------------------
+    def _show_model_state(self) -> None:
+        """Model tayyor emas — nega va nima qilish kerak."""
+        state = self._engine.state
+        problem = self._engine.problem
+        if state == "failed" and not is_model_loading():
+            self.message.show_message(
+                problem.detail if problem is not None else "Yuz aniqlash modeli yuklanmadi.",
+                "error",
+            )
+            self.model_retry_btn.setVisible(True)
+            self.state_badge.setText(
+                problem.title if problem is not None else "Model yuklanmadi"
+            )
+            self.state_badge.setStyleSheet(badge_style("error"))
+        else:
+            self.message.show_message(
+                "Yuz aniqlash modeli yuklanmoqda. Bir necha soniya kuting.",
+                "warning",
+            )
+            self.model_retry_btn.setVisible(False)
+        self._model_message = True
+
+    def _poll_model(self) -> None:
+        if not self._engine.is_ready:
+            # Holat o'zgargan bo'lsa (yuklanmoqda -> xato) xabar yangilanadi.
+            # Kamera xabari ustun: u operatordan darhol amal kutadi.
+            if not self._camera_problem:
+                self._show_model_state()
+            return
+        self._model_timer.stop()
+        self.model_retry_btn.setVisible(False)
+        if self._model_message:
+            self._model_message = False
+            self.message.clear_message()
+        if self._guide_state == "done" and not (self._verified or self._failed):
+            self._update_state_badge("checking")
+        if self._pending_photo:
+            photo, self._pending_photo = self._pending_photo, None
+            self._prepare_reference(photo)
+
+    def _on_model_retry(self) -> None:
+        """Operator modelni qayta yuklashni so'radi."""
+        try:
+            start_model_loading()
+        except Exception:
+            log.exception("Modelni qayta yuklashni boshlab bo'lmadi")
+        self.model_retry_btn.setVisible(False)
         self.message.show_message(
-            "Hujjat rasmi yo'q yoki undan yuz olinmadi — bu talabgorni "
-            "tekshirib bo'lmaydi. Administratorga murojaat qiling."
-            if not _ENROLLMENT_ENABLED
-            else "Hujjat rasmidan yuz olinmadi - tekshiruv operator zimmasida.",
-            "error" if not _ENROLLMENT_ENABLED else "warning",
+            "Yuz aniqlash modeli qayta yuklanmoqda. Bir necha soniya kuting.",
+            "warning",
         )
+        self._model_message = True
+        self._model_timer.start()
 
     def _set_mode_badge(self, has_reference: Optional[bool]) -> None:
         # Matn QISQA: nishon tor ustunda turadi va uzun matn
@@ -844,12 +985,39 @@ class FaceIDPage(QWidget):
         # Kamera to'xtadi - sanoq ham to'xtaydi. Aks holda taymer
         # "tekshiruv boshlandi" deb, kadrsiz ekranda holatni
         # almashtirib qo'yardi.
+        #
+        # Ishchi TO'XTAMAYDI — o'zi qayta ulanadi (`CameraWorker`) va
+        # kadr qaytgach `_on_camera_restored` keladi. Sanoq birinchi
+        # yangi kadrda qaytadan boshlanadi ("waiting" holati), ya'ni
+        # talabgor yuzini yana joylashtirishga vaqt oladi.
         self._guide_timer.stop()
-        self._guide_state = "waiting"
+        if not self._verified:
+            self._guide_state = "waiting"
+            if self._camera is not None and self._guide_seconds > 0:
+                self._camera.set_detection_enabled(False)
         self.camera_view.end_guide(keep_hint=False)
         self.message.show_message(message, "error")
+        self._camera_problem = True
+        self._model_message = False
         self.state_badge.setText("Kamera xatosi")
         self.state_badge.setStyleSheet(badge_style("error"))
+
+    def _on_camera_restored(self) -> None:
+        """Uzilishdan keyin kadrlar qaytdi — kamera xabari tozalanadi."""
+        if self._camera_problem:
+            self._camera_problem = False
+            self.message.clear_message()
+        if self._guide_state == "waiting" and self._guide_seconds <= 0:
+            # Sanoq o'chiq: aniqlash darhol qaytadi (`_begin_guide` bilan
+            # bir xil qoida).
+            self._guide_state = "done"
+            if self._camera is not None:
+                self._camera.set_detection_enabled(True)
+        if self._verified:
+            self.state_badge.setText("Tasdiqlangan")
+            self.state_badge.setStyleSheet(badge_style("success"))
+        elif not self._engine.is_ready:
+            self._show_model_state()
 
     def _on_face(self, result: dict) -> None:
         if self._guide_state != "done":
@@ -892,6 +1060,8 @@ class FaceIDPage(QWidget):
             self.camera_view.set_detection(state_hint, shown or None)
             return
 
+        quality = result.get("quality") or []
+
         if state != "ok":
             # Yuz yo'q / uzoq / bir nechta - SOLISHTIRIB BO'LMAYDI,
             # ya'ni bu "mos kelmadi" ham emas. Ikkala seriya ham
@@ -901,7 +1071,13 @@ class FaceIDPage(QWidget):
             self._fail_streak = 0
             self._fail_since = 0.0
             self.camera_view.set_detection(state)
-            self._update_state_badge(state)
+            if state == "none" and "dark" in quality:
+                # Yuz topilmaganining eng ko'p sababi — qorong'i
+                # (yoki yopilgan obyektiv). Operator yorug'likni
+                # to'g'rilaydi, talabgorni emas.
+                self._update_state_badge("dark")
+            else:
+                self._update_state_badge(state)
             return
 
         embedding = result.get("embedding")
@@ -952,7 +1128,7 @@ class FaceIDPage(QWidget):
             if self._fail_since == 0.0:
                 self._fail_since = time.monotonic()
             self.camera_view.set_detection("mismatch", score)
-            self._update_state_badge("mismatch")
+            self._update_state_badge("mismatch", quality)
             # Ketma-ket uzoq mos kelmaslik - endi bu o'tkinchi holat
             # emas. Urinish yopiladi va DALIL serverga ketadi: kadrda
             # boshqa odam turgan bo'lishi mumkin.
@@ -968,9 +1144,17 @@ class FaceIDPage(QWidget):
             ):
                 self._report_failed_attempt(self._best_score)
 
-    def _update_state_badge(self, state: str) -> None:
+    #: Sifat maslahati — "mos kelmadi" yoniga (faqat izoh, qaror emas).
+    _QUALITY_HINTS = {
+        "dark": "yorug'lik kam",
+        "bright": "ortiqcha yorug'",
+        "blurry": "tasvir xira",
+    }
+
+    def _update_state_badge(self, state: str, quality=None) -> None:
         mapping = {
             "none": ("Yuz topilmadi", "muted"),
+            "dark": ("Yorug'lik yetarli emas", "warning"),
             "far": ("Yaqinroq keling", "warning"),
             "multiple": ("Kadrda bir nechta odam", "error"),
             "mismatch": (
@@ -988,6 +1172,10 @@ class FaceIDPage(QWidget):
             "checking": ("Tekshirilmoqda", "info"),
         }
         text, kind = mapping.get(state, ("Kutilmoqda", "muted"))
+        hints = [self._QUALITY_HINTS[item] for item in (quality or []) if item in self._QUALITY_HINTS]
+        if hints:
+            # Qisqa: nishon tor qatorda turadi.
+            text = "{} · {}".format(text, hints[0])
         self.state_badge.setText(text)
         self.state_badge.setStyleSheet(badge_style(kind))
 
@@ -1400,6 +1588,16 @@ class FaceIDPage(QWidget):
         self._reset_matching_state()
         self.message.clear_message()
         self.retry_btn.setVisible(False)
+        if self._reference is None and self._pending_photo is None:
+            # Etalon oldingi urinishda olinmagan (model tayyor emas edi
+            # yoki qayta ishlashda xato) — qayta urinish uni ham qayta
+            # tayyorlaydi, aks holda tugma "hech narsa qilmasdi".
+            candidate = self._state.candidate
+            if candidate is not None and candidate.photo_base64:
+                if not self._engine.is_ready:
+                    self._show_model_state()
+                    self._model_timer.start()
+                self._prepare_reference(candidate.photo_base64)
         self._begin_guide()
         if self._camera is None:
             self.camera_view.clear_view()

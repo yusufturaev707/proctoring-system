@@ -280,16 +280,36 @@ class AuthService(QObject):
 
     # ------------------------------------------------------------------
     def logout(self) -> None:
-        """Lokal holat DARHOL tozalanadi, server chaqiruvi best-effort."""
+        """
+        Lokal holat DARHOL tozalanadi, server chaqiruvi best-effort va FONDA.
+
+        Ilgari `auth/logout/` shu yerda, ya'ni UI thread'ida sinxron
+        ketardi (`MainWindow._on_logout`, `_on_auth_expired`): tarmoq
+        yo'q paytda oyna `API_TIMEOUT` gacha muzlardi va Windows uni
+        "javob bermayapti" deb oqartirardi. Endi tokenlar nusxasi fon
+        thread'iga beriladi, lokal holat esa darhol tozalanadi — keyingi
+        login eski token bilan aralashmaydi.
+
+        Oddiy `threading.Thread` (QThread emas): u Qt obyektlariga
+        tegmaydi, `daemon=True` esa dastur yopilishini ushlab turmaydi.
+        """
         refresh = self._refresh_token
+        access = self._api.access_token or ""
         self._refresh_token = ""
         self._state.reset_all()
         self._api.set_session_token(None)
-        try:
-            if refresh:
-                self._auth_repo.logout(refresh)
-        finally:
-            self._api.clear()
+        self._api.clear()
+        if not refresh:
+            return
+        import threading
+
+        threading.Thread(
+            target=self._auth_repo.logout,
+            args=(refresh,),
+            kwargs={"access": access},
+            name="logout",
+            daemon=True,
+        ).start()
 
     @property
     def state(self) -> AppState:

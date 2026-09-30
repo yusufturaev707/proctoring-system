@@ -28,10 +28,10 @@ import logging
 import time
 from typing import Optional
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 from core.bundle_paths import resource_root
-from services import local_archive
+from services import local_archive, net_policy
 from services.workers import ApiWorker, WorkerHolder
 
 log = logging.getLogger(__name__)
@@ -43,6 +43,16 @@ log = logging.getLogger(__name__)
 #: egallab, hodisa flush'ini va heartbeat'ni kechiktirardi - ya'ni
 #: dalil sessiyaning o'zini "yo'qolgan" qilib ko'rsatardi.
 _MAX_PARALLEL_UPLOADS = 2
+
+#: Yuborilmagan dalil KADRLARI qayta urinish navbati (RAM'da, ~150 KB
+#: dan). To'lsa eng eskisi tushadi — u mahalliy arxivda baribir bor.
+_MAX_RETRY_ITEMS = 20
+
+#: Dalil yuklash xatosidan keyingi kutish (soniya): 15 -> 30 ... 300,
+#: jitter bilan. Ilgari qayta urinish umuman yo'q edi (kadr faqat
+#: yozuvchi navbatida qolib ketardi).
+_RETRY_BASE_S = 15.0
+_RETRY_CAP_S = 300.0
 
 
 class ProctoringSupervisor(QObject):
@@ -79,6 +89,12 @@ class ProctoringSupervisor(QObject):
         #: Kamera rollarining oxirgi holati — "tiklandi" hodisasini
         #: faqat HAQIQIY uzilishdan keyin chiqarish uchun.
         self._camera_state: dict = {}
+        #: Tarmoq xatosi bilan qaytgan kadrlar — backoff'dan keyin navbatga.
+        self._retry_items: list = []
+        self._retry_backoff = net_policy.Backoff(base=_RETRY_BASE_S, cap=_RETRY_CAP_S)
+        self._retry_timer = QTimer(self)
+        self._retry_timer.setSingleShot(True)
+        self._retry_timer.timeout.connect(self._on_retry_timer)
 
     # ------------------------------------------------------------------
     @property
@@ -308,6 +324,9 @@ class ProctoringSupervisor(QObject):
         # bog'laydigan hodisa allaqachon yozilgan. Ularni ushlab
         # turish dasturning yopilishini kechiktirardi.
         self._queue.clear()
+        self._retry_timer.stop()
+        self._retry_items.clear()
+        self._retry_backoff.success()
         self._workers.wait_all(4_000)
 
     # ------------------------------------------------------------------
@@ -383,12 +402,10 @@ class ProctoringSupervisor(QObject):
                 parent=self,
             )
             worker.succeeded.connect(
-                lambda _result, evidence=item: self._finish(evidence, sent=True)
+                lambda _result, evidence=item: self._on_uploaded(evidence)
             )
-            worker.failed.connect(
-                lambda message, code, evidence=item: self._on_upload_failed(
-                    evidence, message, code
-                )
+            worker.failed_error.connect(
+                lambda exc, evidence=item: self._on_upload_failed(evidence, exc)
             )
             self._workers.run(worker)
 
@@ -476,12 +493,49 @@ class ProctoringSupervisor(QObject):
                 self._pipeline.evidence_failed(item)
         self._pump()
 
-    def _on_upload_failed(self, item, message: str, code: str) -> None:
-        log.warning("Dalil yuborilmadi (%s): %s", code or "-", message)
-        # Qayta urinish NAVBAT orqali: fayl saqlanadi va keyingi
-        # dalil kelganda u ham yuboriladi. Darhol qayta urinish
-        # uzilgan tarmoqda cheksiz sikl bo'lardi.
+    def _on_uploaded(self, item) -> None:
+        self._retry_backoff.success()
+        self._finish(item, sent=True)
+
+    def _on_upload_failed(self, item, exc) -> None:
+        code = getattr(exc, "code", "") or ""
+        status = int(getattr(exc, "status", 0) or 0)
+        message = getattr(exc, "message", "") or str(exc)
+        if code in ("session_not_found", "session_forbidden") or not self._active:
+            # Sessiya yopilgan — qayta urinishning ma'nosi yo'q; kadr
+            # mahalliy arxivda bor.
+            log.warning("Dalil yuborilmadi (%s) - sessiya yopilgan", code or "-")
+            self._finish(item, sent=True)
+            return
+        if net_policy.is_poison_payload(status):
+            # Server kadrni o'zini rad etdi — takror ham shunday tugaydi.
+            log.error("Dalil server tomonidan rad etildi (%s %s) - tashlandi", status, code or "-")
+            self._finish(item, sent=True)
+            return
+        # QAYTA URINISH BACKOFF BILAN: darhol takrorlash uzilgan
+        # tarmoqda cheksiz sikl bo'lardi, qat'iy oraliq esa butun
+        # binoni bir ritmda serverga urardi.
+        delay = self._retry_backoff.failure(getattr(exc, "retry_after", None))
+        log.warning(
+            "Dalil yuborilmadi (%s): %s - %.0f s dan keyin qayta", code or "-", message, delay
+        )
+        if item not in self._retry_items:
+            self._retry_items.append(item)
+            while len(self._retry_items) > _MAX_RETRY_ITEMS:
+                self._retry_items.pop(0)
+        if not self._retry_timer.isActive():
+            self._retry_timer.start(int(delay * 1000))
+        # `sent=False`: yozuvchi faylni ushlab turadi (qayta yasab bo'lmaydi).
         self._finish(item, sent=False)
+
+    def _on_retry_timer(self) -> None:
+        if not self._active or not self._retry_items:
+            return
+        items, self._retry_items = self._retry_items, []
+        for item in items:
+            if item not in self._queue:
+                self._queue.append(item)
+        self._pump()
 
     # ------------------------------------------------------------------
     def _on_module_failed(self, module: str, reason: str) -> None:

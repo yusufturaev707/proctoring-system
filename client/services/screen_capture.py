@@ -67,8 +67,9 @@ from config import (
     SCREENSHOT_RETRY_QUEUE,
 )
 from core.errors import ClientError
-from services import local_archive, runtime_settings
+from services import local_archive, net_policy, runtime_settings
 from services.api_client import ApiClient
+from services.network_status import on_power_resumed
 from services.repositories import ProctoringRepository
 from services.workers import ApiWorker, WorkerHolder
 
@@ -102,8 +103,12 @@ _PRESIGN_SAFETY_S = 30
 #: navbat odatda bo'sh; shu savolning eski kadri baribir almashtiriladi.
 _MAX_PENDING_ENCODES = 8
 
-#: Yuklash xatosidan keyin qayta urinish (ms).
-_RETRY_MS = 15_000
+#: Yuklash xatosidan keyin qayta urinish (soniya): 15 -> 30 -> 60 ...
+#: chegara 300, jitter bilan (`net_policy.Backoff`). Ilgari qat'iy 15 s
+#: edi: server tushganda butun bino har 15 s da bir xil ritmda urardi,
+#: u turganda esa hamma to'plangan navbatini BIR LAHZADA yuborardi.
+_RETRY_BASE_S = 15.0
+_RETRY_CAP_S = 300.0
 
 # --------------------------------------------------------------------------
 # Konfiguratsiya
@@ -405,8 +410,9 @@ class ScreenshotService(QObject):
         # buyruq kelmasligi mumkin (oxirgi savol).
         self._retry = QTimer(self)
         self._retry.setSingleShot(True)
-        self._retry.setInterval(_RETRY_MS)
         self._retry.timeout.connect(self._kick_upload)
+        self._backoff = net_policy.Backoff(base=_RETRY_BASE_S, cap=_RETRY_CAP_S)
+        on_power_resumed(self._on_power_resumed)
 
     # ------------------------------------------------------------------
     @property
@@ -444,6 +450,7 @@ class ScreenshotService(QObject):
         self._commits.clear()
         self._mode = None
         self._upload_closed = False
+        self._backoff.success()
         log.info(
             "Skrinshot: buyruq bilan, maks. kenglik %s px, sifat %s, serverga %s",
             self._config.max_width,
@@ -609,11 +616,15 @@ class ScreenshotService(QObject):
         """
         if self._uploading or self._upload_closed or not self._queue:
             return
-        self._retry.stop()
+        if self._retry.isActive():
+            # Backoff kutilmoqda: yangi kadr navbatga tushdi, lekin
+            # yuklash muddatidan oldin boshlanmaydi (aks holda har
+            # buyruq backoff'ni bekor qilib, uzilgan tarmoqni urardi).
+            return
         self._uploading = True
         worker = ApiWorker(self._drain_queue, parent=self)
         worker.succeeded.connect(self._on_sent)
-        worker.failed.connect(self._on_upload_failed)
+        worker.failed_error.connect(self._on_upload_failed)
         self._workers.run(worker)
 
     def _drain_queue(self) -> dict:
@@ -635,6 +646,23 @@ class ScreenshotService(QObject):
                 break
             try:
                 self._upload(frame)
+            except ClientError as exc:
+                if net_policy.is_poison_payload(exc.status):
+                    # Server kadrni o'zini rad etdi (buzilgan fayl, hajm):
+                    # takror ham xuddi shunday tugaydi va navbat boshida
+                    # qolsa orqasidagi kadrlar ABADIY kutardi. Kadr
+                    # mahalliy arxivda bor.
+                    log.error(
+                        "Skrinshot server tomonidan rad etildi (%s %s) - tashlandi "
+                        "(mashinada bor)", exc.status, exc.code or "-",
+                    )
+                    continue
+                superseded = bool(frame.question_id) and any(
+                    item.question_id == frame.question_id for item in list(self._queue)
+                )
+                if not superseded and len(self._queue) < (self._queue.maxlen or 0):
+                    self._queue.appendleft(frame)
+                raise
             except Exception:
                 superseded = bool(frame.question_id) and any(
                     item.question_id == frame.question_id for item in list(self._queue)
@@ -746,13 +774,24 @@ class ScreenshotService(QObject):
         if not self._commits:
             return {"committed": 0}
         batch = list(self._commits)
-        self._repo.commit_screenshots(batch)
+        try:
+            self._repo.commit_screenshots(batch)
+        except ClientError as exc:
+            if not net_policy.is_poison_payload(exc.status):
+                raise
+            # Server batch'ni tuzilishi uchun rad etdi — takror abadiy
+            # xuddi shunday tugardi va keyingi commit'larni ham ushlardi.
+            log.error(
+                "Skrinshot commit'i rad etildi (%s %s) - %s ta yozuv tashlandi",
+                exc.status, exc.code or "-", len(batch),
+            )
         del self._commits[: len(batch)]
         return {"committed": len(batch)}
 
     # ------------------------------------------------------------------
     def _on_sent(self, result) -> None:
         self._uploading = False
+        self._backoff.success()
         count = int((result or {}).get("sent") or 0)
         if count:
             self._total_sent += count
@@ -760,8 +799,10 @@ class ScreenshotService(QObject):
         # Yuklash paytida yangi kadr kelgan bo'lishi mumkin.
         self._kick_upload()
 
-    def _on_upload_failed(self, message: str, code: str) -> None:
+    def _on_upload_failed(self, exc) -> None:
         self._uploading = False
+        message = getattr(exc, "message", "") or str(exc)
+        code = getattr(exc, "code", "") or ""
         # Sessiya yopilgan bo'lsa qayta urinishning ma'nosi yo'q (token
         # bekor): navbat tashlanadi - kadrlar mahalliy arxivda qoladi.
         if code in ("session_not_found", "session_forbidden"):
@@ -772,10 +813,23 @@ class ScreenshotService(QObject):
                     len(self._queue),
                 )
             self._queue.clear()
+        elif self._queue:
+            delay = self._backoff.failure(getattr(exc, "retry_after", None))
+            self._retry.start(int(delay * 1000))
+            log.warning(
+                "Skrinshot yuborilmadi (%s): %s - %.0f s dan keyin qayta",
+                code or "-", message, delay,
+            )
         else:
-            self._retry.start()
-        log.warning("Skrinshot yuborilmadi (%s): %s", code or "-", message)
+            log.warning("Skrinshot yuborilmadi (%s): %s", code or "-", message)
         self.failed.emit(message)
+
+    def _on_power_resumed(self) -> None:
+        """Uyg'onish: backoff qisqaradi (jitter bilan), navbat bir necha daqiqa kutmaydi."""
+        if self._upload_closed or not self._queue or not self._retry.isActive():
+            return
+        self._backoff.nudge(5.0)
+        self._retry.start(int(self._backoff.remaining() * 1000))
 
     def shutdown(self) -> None:
         """Dasturdan chiqish: qolgan ish CHEGARALANGAN vaqt kutiladi."""

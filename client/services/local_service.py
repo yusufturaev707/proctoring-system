@@ -48,7 +48,7 @@ XAVFSIZLIK - to'rt qatlam, hammasi arzon:
     so'rov (brauzer emas) o'tadi - lokal jarayonni baribir to'xtatib
     bo'lmaydi;
   * tana 16 KB, `q_id` qat'iy belgilar to'plami (fayl nomiga boradi -
-    `..\` kabi yo'l qismlari o'tmaydi), sekundiga 20 buyruq.
+    `..\\` kabi yo'l qismlari o'tmaydi), sekundiga 20 buyruq.
 
 Bu KREDENSIAL EMAS: MAC va raqam maxfiy emas, skrinshot esa baribir
 kuzatuv qismi. Maqsad - begona sahifa buyruq yubora olmasligi.
@@ -268,13 +268,33 @@ class _Handler(BaseHTTPRequestHandler):
         """Host va Origin tekshiruvi. `False` - javob allaqachon yuborilgan."""
         owner: LocalDeviceService = self.server.owner
         if not host_allowed(self.headers.get("Host", ""), owner.port):
+            self._drain_body()
             self._json(403, {"ok": False, "error": "bad_host"})
             return False
         if not owner.origin_allowed(self.headers.get("Origin", "")):
             log.warning("Lokal xizmat: begona Origin rad etildi: %s", self.headers.get("Origin"))
+            self._drain_body()
             self._json(403, {"ok": False, "error": "origin_not_allowed"})
             return False
         return True
+
+    def _drain_body(self) -> None:
+        """
+        Rad etilgan so'rovning tanasini o'qib tashlaydi (chegarali).
+
+        O'qilmagan tana bilan ulanish yopilsa, Windows mijozga 403 o'rniga
+        RST yuboradi (`WinError 10054`) - brauzer/test rad javobini umuman
+        ko'rmasdi.
+        """
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return
+        if 0 < length <= _MAX_BODY:
+            try:
+                self.rfile.read(length)
+            except OSError:
+                pass
 
     # --- metodlar --------------------------------------------------------
     def do_OPTIONS(self) -> None:  # noqa: N802 - http.server nomlash qoidasi

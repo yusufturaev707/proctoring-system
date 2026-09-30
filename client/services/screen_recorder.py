@@ -327,17 +327,35 @@ class _CaptureThread(QThread):
 
     # ------------------------------------------------------------------
     def run(self) -> None:
-        import cv2
+        # Tayyorgarlik ham `try` ichida: `cv2` DLL'ini antivirus to'sgan,
+        # disk to'la yoki GDI resursi tugagan bo'lsa istisno thread'dan
+        # chiqib ketardi va `error` bo'sh qolardi - yozuv "ishlayapti"
+        # bo'lib ko'rinardi.
+        try:
+            import cv2
 
-        writer = cv2.VideoWriter(
-            self._path, cv2.VideoWriter_fourcc(*_FOURCC), self._fps, self._size
-        )
+            writer = cv2.VideoWriter(
+                self._path, cv2.VideoWriter_fourcc(*_FOURCC), self._fps, self._size
+            )
+        except Exception:
+            self.error = "VideoWriter ochilmadi"
+            log.exception("Ekran yozuvini ochib bo'lmadi: %s", self._path)
+            return
         if not writer.isOpened():
             self.error = "VideoWriter ochilmadi"
             log.error("Ekran yozuvini ochib bo'lmadi: %s", self._path)
             return
 
-        grabber = ScreenGrabber()
+        try:
+            grabber = ScreenGrabber()
+        except Exception:
+            self.error = "ekran nusxasi olinmadi"
+            log.exception("Ekran nusxalovchisi yaratilmadi")
+            try:
+                writer.release()
+            except Exception:
+                log.debug("VideoWriter yopilmadi", exc_info=True)
+            return
         interval = 1.0 / self._fps
         started = time.monotonic()
         last: Optional[np.ndarray] = None

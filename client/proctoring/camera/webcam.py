@@ -37,6 +37,7 @@ class WebcamSource(CameraSource):
         height: int = 720,
         label: str = "",
         is_virtual: bool = False,
+        device_path: str = "",
     ) -> None:
         super().__init__(
             CameraInfo(
@@ -49,6 +50,10 @@ class WebcamSource(CameraSource):
             )
         )
         self._index = index
+        #: DirectShow `DevicePath` — ochilmaganda sababni aniqlash uchun
+        #: ("qurilma ro'yxatda bormi?", `diagnose.py`). Indeks
+        #: qurilmalar qayta sanalganda siljiydi, yo'l esa yo'q.
+        self._device_path = device_path or ""
         self._want_width = width
         self._want_height = height
         self._capture = None
@@ -60,19 +65,30 @@ class WebcamSource(CameraSource):
         self.close()
 
         backend = cv2.CAP_DSHOW if sys.platform == "win32" else cv2.CAP_ANY
-        capture = cv2.VideoCapture(self._index, backend)
-        if not capture.isOpened():
-            try:
-                capture.release()
-            except Exception:
-                pass
-            return self._fail(
-                "Kamera ochilmadi (indeks {}). Boshqa dastur band qilgan "
-                "bo'lishi mumkin.".format(self._index)
-            )
+        capture = None
+        try:
+            capture = cv2.VideoCapture(self._index, backend)
+            opened = capture.isOpened()
+        except Exception as exc:
+            # `cv2.error` drayver xatosida chiqadi (masalan qurilma
+            # ochilish paytida sug'urildi). Istisno chaqiruvchining
+            # siklini (qayta ulanish) buzmasligi kerak — oddiy
+            # "ochilmadi" bo'lib qaytadi.
+            log.warning("Kamerani ochishda istisno (indeks %s): %s", self._index, exc)
+            opened = False
+        if not opened:
+            if capture is not None:
+                try:
+                    capture.release()
+                except Exception:
+                    pass
+            return self._fail(self._explain(lost=False))
 
-        capture.set(cv2.CAP_PROP_FRAME_WIDTH, self._want_width)
-        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self._want_height)
+        try:
+            capture.set(cv2.CAP_PROP_FRAME_WIDTH, self._want_width)
+            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self._want_height)
+        except Exception:
+            log.debug("Rezolyutsiya so'rovi qabul qilinmadi (indeks %s)", self._index)
 
         # MJPG SO'RALADI va u REZOLYUTSIYADAN KEYIN qo'yiladi.
         #
@@ -114,9 +130,12 @@ class WebcamSource(CameraSource):
         # HAQIQIY qiymatlarni qurilmadan o'qiymiz: so'ralgan
         # rezolyutsiya berilmagan bo'lishi mumkin va tekshiruv
         # sahifasi so'ralganini emas, olinganini ko'rsatishi kerak.
-        self.info.width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
-        self.info.height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
-        self.info.declared_fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
+        try:
+            self.info.width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+            self.info.height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+            self.info.declared_fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
+        except Exception:
+            log.debug("Kamera xususiyatlari o'qilmadi (indeks %s)", self._index)
 
         # Format LOG'GA yoziladi: "FPS past" xatosini tekshirishda
         # birinchi savol aynan shu bo'ladi — kamera MJPG bermadimi?
@@ -140,10 +159,31 @@ class WebcamSource(CameraSource):
             return ""
         return "".join(chr((raw >> (8 * shift)) & 0xFF) for shift in range(4)).strip()
 
+    def _explain(self, *, lost: bool) -> str:
+        """Operatorga tushunarli sabab (`diagnose.py`). Xato — umumiy matn."""
+        try:
+            from proctoring.camera.diagnose import explain_local_failure
+
+            return explain_local_failure(self._index, self._device_path, lost=lost)
+        except Exception:
+            log.debug("Kamera nosozligi sababi aniqlanmadi", exc_info=True)
+            return "Kamera ochilmadi (indeks {}).".format(self._index)
+
+    def explain_lost(self) -> str:
+        """Kadr kelmay qo'ydi — sababi (chaqiruvchi sikldan so'raydi)."""
+        return self._explain(lost=True)
+
     def read(self) -> Optional[np.ndarray]:
         if self._capture is None:
             return None
-        ok, frame = self._capture.read()
+        try:
+            ok, frame = self._capture.read()
+        except Exception as exc:
+            # USB sug'urilganda ba'zi drayverlar `cv2.error` beradi.
+            # Bu "kadr yo'q" — uzilishni ketma-ket bo'sh kadrlar
+            # bo'yicha chaqiruvchi aniqlaydi.
+            self._last_error = "Kadr o'qishda xato: {}".format(str(exc)[:120])
+            return None
         return frame if ok else None
 
     def close(self) -> None:

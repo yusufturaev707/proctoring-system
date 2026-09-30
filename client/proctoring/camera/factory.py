@@ -54,9 +54,41 @@ def build_source(
     rezolyutsiya bilan imtihondagi rezolyutsiya boshqa-boshqa
     bo'lardi.
     """
-    if spec.source == "ip":
-        return _rtsp_source(spec, stream_url_provider)
-    return _webcam_source(spec, discovered or [], width, height)
+    try:
+        if spec.source == "ip":
+            source = _rtsp_source(spec, stream_url_provider)
+        else:
+            source = _webcam_source(spec, discovered or [], width, height)
+    except Exception:
+        # Manba YASASH (hali ochish emas) yiqilishi sahifani
+        # yiqitmasligi kerak — "kamera yo'q" bilan bir xil yakun.
+        log.exception("[%s] kamera manbaini yasab bo'lmadi", spec.role)
+        return None
+    return guarded(source)
+
+
+def guarded(source: Optional[CameraSource]) -> Optional[CameraSource]:
+    """
+    Manbani vaqt chegarasi bilan o'raydi (`guard.py`).
+
+    HAR BIR manba shu yerdan o'tadi: osilgan `read()`/`open()` UI'ni
+    ham, kuzatuv siklini ham qotirmasligi kerak va bu qoida
+    chaqiruvchiga (FaceID ishchisi, kuzatuv oqimi) bog'liq bo'lmasligi
+    uchun manba yasaladigan yagona joyda qo'llanadi.
+
+    IP kamera chegaralari kattaroq: ochish ichida serverdan
+    kredensial so'raladi (HTTP) va FFmpeg'ning o'z chegarasi
+    (`rtsp._OPEN_TIMEOUT_MS`) ham shu vaqtga kiradi.
+    """
+    if source is None:
+        return None
+    from proctoring.camera.guard import GuardedSource
+
+    if isinstance(source, GuardedSource):
+        return source
+    if source.info.source == "ip":
+        return GuardedSource(source, open_timeout=30.0, read_timeout=10.0)
+    return GuardedSource(source, open_timeout=20.0, read_timeout=5.0)
 
 
 # --------------------------------------------------------------------------
@@ -121,6 +153,7 @@ def _webcam_source(
         is_virtual=found.is_virtual if found else looks_virtual(spec.label),
         width=int(width or FRAME_WIDTH),
         height=int(height or FRAME_HEIGHT),
+        device_path=(found.device_path if found else "") or spec.device_path,
     )
 
 

@@ -148,7 +148,13 @@ def prepare() -> CudaStatus:
     global _status
     with _lock:
         if _status is None:
-            _status = _detect()
+            try:
+                _status = _detect()
+            except Exception:
+                # Aniqlash yiqilishi model yuklanishini to'xtatmasligi
+                # kerak: "CUDA yo'q" deb CPU yo'li bilan davom etamiz.
+                log.exception("CUDA holatini aniqlab bo'lmadi — CPU ishlatiladi")
+                _status = CudaStatus()
         return _status
 
 

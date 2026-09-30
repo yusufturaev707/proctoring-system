@@ -44,6 +44,11 @@ class ApiWorker(QThread):
     succeeded = pyqtSignal(object)
     failed = pyqtSignal(str, str)
     failed_details = pyqtSignal(str, str, object)
+    #: Xatoning O'ZI (`ClientError`; kutilmagan xatoda `internal` kodli
+    #: `ClientError`). Davriy yuboruvchilar undan `status` va
+    #: `retry_after` ni o'qiydi (backoff, `Retry-After`) — matn/kod
+    #: bunga yetmaydi. Qolgan signallar kabi HAR xatoda chiqadi.
+    failed_error = pyqtSignal(object)
 
     def __init__(self, func: Callable[..., Any], *args, parent=None, **kwargs) -> None:
         super().__init__(parent)
@@ -52,20 +57,36 @@ class ApiWorker(QThread):
         self._kwargs = kwargs
 
     def run(self) -> None:
+        # BUTUN tana himoyalangan, `BaseException` gacha: thread ichidan
+        # chiqib ketgan istisno Qt'da jarayonni yiqitishi mumkin, imtihon
+        # davomida esa dastur HECH QACHON kutilmaganda yopilmasligi kerak.
+        # (`SystemExit`/`KeyboardInterrupt` ham bu yerda faqat xato.)
         try:
-            result = self._func(*self._args, **self._kwargs)
-        except ClientError as exc:
-            # Kutilgan xato - xabar allaqachon foydalanuvchi tilida
-            # (`ApiClient._unwrap` uni `core.errors` orqali tarjima qilgan).
-            self.failed_details.emit(exc.message, exc.code, exc.details)
-            self.failed.emit(exc.message, exc.code)
-        except Exception as exc:
-            log.exception("Fon vazifasida kutilmagan xato")
-            message = "Kutilmagan xato: {}".format(str(exc)[:120])
-            self.failed_details.emit(message, "internal", None)
-            self.failed.emit(message, "internal")
-        else:
-            self.succeeded.emit(result)
+            try:
+                result = self._func(*self._args, **self._kwargs)
+            except ClientError as exc:
+                # Kutilgan xato - xabar allaqachon foydalanuvchi tilida
+                # (`api_client.parse_response` uni `core.errors` orqali
+                # tarjima qilgan).
+                self.failed_error.emit(exc)
+                self.failed_details.emit(exc.message, exc.code, exc.details)
+                self.failed.emit(exc.message, exc.code)
+            except BaseException as exc:  # noqa: BLE001 - ataylab keng
+                log.exception("Fon vazifasida kutilmagan xato")
+                # Matnda faqat istisno TURI: `str(exc)` da so'rov tanasi
+                # (token, JSHSHIR) bo'lishi mumkin va u ekranga chiqadi.
+                message = "Kutilmagan xato ({}). Qaytadan urinib ko'ring.".format(
+                    type(exc).__name__
+                )
+                self.failed_error.emit(ClientError(message, code="internal"))
+                self.failed_details.emit(message, "internal", None)
+                self.failed.emit(message, "internal")
+            else:
+                self.succeeded.emit(result)
+        except BaseException:  # noqa: BLE001
+            # Signal chiqarishning o'zi yiqildi (obyekt o'chirilgan) —
+            # faqat log.
+            log.exception("Fon vazifasi natijasini yetkazib bo'lmadi")
 
 
 class WorkerHolder:

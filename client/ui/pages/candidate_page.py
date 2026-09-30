@@ -65,6 +65,7 @@ from PyQt6.QtWidgets import (
 )
 
 from services.app_state import AppState, Candidate
+from services.network_status import network_status
 from services.repositories import ProctoringRepository
 from services.workers import ApiWorker, WorkerHolder
 from ui.styles import (
@@ -115,7 +116,11 @@ class CandidatePage(QWidget):
         self._state = state
         self._repo = repo
         self._workers = WorkerHolder()
+        #: Oxirgi xato tarmoq sababli bo'ldimi — aloqa tiklanganda
+        #: operatorga "endi qaytadan tekshirish mumkin" deyish uchun.
+        self._network_failed = False
         self._setup_ui()
+        network_status().changed.connect(self._on_network_changed)
 
     # ------------------------------------------------------------------
     # Ko'rinish
@@ -554,6 +559,7 @@ class CandidatePage(QWidget):
         self._workers.run(worker)
 
     def _on_found(self, payload) -> None:
+        self._network_failed = False
         self.overlay.stop()
         self.lookup_btn.setEnabled(True)
 
@@ -656,7 +662,19 @@ class CandidatePage(QWidget):
         if code in ("candidate_not_found", "candidate_not_eligible"):
             self.message.show_message(message, "warning")
             return
+        # Tarmoq/server vaqtincha — JSHSHIR to'g'ri, faqat qayta urinish
+        # kerak. Aloqa tiklanganda `_on_network_changed` aytadi.
+        self._network_failed = code in ("network", "server_unavailable")
         self.message.show_message(message, "error")
+
+    def _on_network_changed(self, online: bool) -> None:
+        """Aloqa tiklandi — oldingi tarmoq xatosi o'rniga ko'rsatma."""
+        if not online or not self._network_failed or not self.isVisible():
+            return
+        self._network_failed = False
+        self.message.show_message(
+            "Server bilan aloqa tiklandi — «TEKSHIRISH» ni qayta bosing.", "info"
+        )
 
     def _on_next(self) -> None:
         if self._state.candidate is None:

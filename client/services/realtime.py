@@ -36,6 +36,8 @@ from __future__ import annotations
 import functools
 import json
 import logging
+import random
+import time
 from typing import Optional
 from urllib.parse import urlparse, urlunparse
 
@@ -44,15 +46,27 @@ from PyQt6.QtNetwork import QNetworkRequest
 from PyQt6.QtWebSockets import QWebSocket
 
 from config import API_BASE_URL, WS_BASE_URL
+from services import net_policy
+from services.network_status import on_power_resumed
 
 log = logging.getLogger(__name__)
 
-#: Qayta ulanish kechikishlari (soniya). Oxirgisi takrorlanadi.
+#: Qayta ulanish kechikishi (soniya): 1 -> 2 -> 4 ... chegara 60,
+#: JITTER bilan (`net_policy.backoff_delay`).
 #:
-#: Eksponensial: server qayta ishga tushganda 500 ta client bir vaqtda
-#: urilsa, u yana yiqiladi. Admin paneldagi `useLiveMonitor.js` ham
-#: aynan shu qoidada ishlaydi.
-_BACKOFF_S = (1, 2, 4, 8, 15, 30)
+#: Eksponensial: server qayta ishga tushganda minglab client bir vaqtda
+#: urilsa, u yana yiqiladi. Jitter esa SHART: hamma bir lahzada uzilgan
+#: (server restart) va jitter'siz jadval bir xil bo'lgani uchun ular
+#: har to'lqinda yana bir lahzada qaytib kelardi. Kanal ixtiyoriy
+#: tezlik qatlami — kafolat heartbeat'da — shuning uchun chegara uzun.
+_BACKOFF_BASE_S = 1.0
+_BACKOFF_CAP_S = 60.0
+
+#: Ulanish shuncha turgach "barqaror" hisoblanadi va backoff nolga tushadi.
+_STABLE_CONNECTION_S = 10.0
+
+#: Uyg'ongandan keyin qayta ulanish shu oraliqda, tasodifiy paytda (ms).
+_RESUME_JITTER_MS = 3_000
 
 #: Ulanishni tirik ushlab turish uchun ping oralig'i (ms).
 #:
@@ -124,6 +138,7 @@ class ProctorChannel(QObject):
         self._active = False
         self._attempt = 0
         self._connected = False
+        self._connected_at = 0.0
 
         self._retry_timer = QTimer(self)
         self._retry_timer.setSingleShot(True)
@@ -132,6 +147,8 @@ class ProctorChannel(QObject):
         self._ping_timer = QTimer(self)
         self._ping_timer.setInterval(_PING_INTERVAL_MS)
         self._ping_timer.timeout.connect(self._send_ping)
+
+        on_power_resumed(self._on_power_resumed)
 
     # ------------------------------------------------------------------
     @property
@@ -208,16 +225,35 @@ class ProctorChannel(QObject):
         socket.deleteLater()
 
     def _schedule_retry(self) -> None:
+        if not self._active or self._retry_timer.isActive():
+            # `errorOccurred` va `disconnected` ikkalasi kelishi mumkin —
+            # ikkinchisi jadvalni qayta boshlab, kutishni uzaytirmasin.
+            return
+        delay = net_policy.backoff_delay(
+            self._attempt, base=_BACKOFF_BASE_S, cap=_BACKOFF_CAP_S
+        )
+        self._attempt += 1
+        log.info("WebSocket qayta ulanish %.1f s dan keyin", delay)
+        self._retry_timer.start(int(delay * 1000))
+
+    def _on_power_resumed(self) -> None:
+        """
+        Uyqudan keyin kanal o'lik (TCP uzilgan, lekin Qt buni hali
+        bilmaydi) — backoff'ni kutmay, jitter bilan qayta ulanamiz.
+        """
         if not self._active:
             return
-        delay = _BACKOFF_S[min(self._attempt, len(_BACKOFF_S) - 1)]
-        self._attempt += 1
-        log.info("WebSocket qayta ulanish %s s dan keyin", delay)
-        self._retry_timer.start(delay * 1000)
+        self._attempt = 0
+        self._retry_timer.stop()
+        self._retry_timer.start(random.randint(0, _RESUME_JITTER_MS))
 
     # ------------------------------------------------------------------
     def _on_connected(self) -> None:
-        self._attempt = 0
+        # `_attempt` bu yerda NOLGA TUSHIRILMAYDI: server ulanishni qabul
+        # qilib darhol yopsa (token bekor), nol har safar 1 s lik siklga
+        # olib kelardi. Nol — faqat ulanish barqaror turgach
+        # (`_on_disconnected`).
+        self._connected_at = time.monotonic()
         self._connected = True
         self._ping_timer.start()
         self.online.emit(True)
@@ -225,6 +261,8 @@ class ProctorChannel(QObject):
 
     def _on_disconnected(self) -> None:
         self._ping_timer.stop()
+        if self._connected and time.monotonic() - self._connected_at >= _STABLE_CONNECTION_S:
+            self._attempt = 0
         if self._connected:
             self._connected = False
             self.online.emit(False)
@@ -249,9 +287,21 @@ class ProctorChannel(QObject):
     def _send_ping(self) -> None:
         if self._socket is None or not self._connected:
             return
-        self._socket.sendTextMessage(json.dumps({"action": "ping"}))
+        try:
+            self._socket.sendTextMessage(json.dumps({"action": "ping"}))
+        except Exception:
+            log.debug("WebSocket ping yuborilmadi", exc_info=True)
 
     def _on_message(self, raw: str) -> None:
+        # Slot ichidagi istisno Qt hodisa siklida — imtihon oynasida
+        # hech qachon chiqib ketmasligi kerak (serverdan kelgan buzilgan
+        # xabar dasturni yiqitmasin).
+        try:
+            self._handle_message(raw)
+        except Exception:
+            log.exception("WebSocket xabarini qayta ishlashda xato")
+
+    def _handle_message(self, raw: str) -> None:
         try:
             message = json.loads(raw)
         except (TypeError, ValueError):
@@ -267,13 +317,19 @@ class ProctorChannel(QObject):
             log.debug("WebSocket: noma'lum xabar turi %r", kind)
             return
 
-        payload = message.get("payload") or {}
+        payload = message.get("payload")
+        if not isinstance(payload, dict):
+            payload = {}
         command = str(payload.get("command") or "")
 
         if command == "warning":
+            try:
+                severity = int(payload.get("severity") or 2)
+            except (TypeError, ValueError):
+                severity = 2
             self.warning.emit(
                 str(payload.get("message") or "Proktor ogohlantirdi"),
-                int(payload.get("severity") or 2),
+                severity,
             )
         elif command == "terminate":
             self.terminated.emit(str(payload.get("reason") or ""))

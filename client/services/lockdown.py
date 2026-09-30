@@ -617,24 +617,22 @@ class _Lockdown:
         """
         Tiklashni dasturning HAR QANDAY tugashiga bog'laydi.
 
-        `atexit` oddiy chiqishni va `sys.exit()` ni qamrab oladi;
-        `excepthook` esa tutilmagan istisnoni. Ikkalasi ham bo'lmasa,
-        yiqilgan dastur talaba mashinasida Sticky Keys'ni butunlay
-        o'chirilgan holda qoldirardi.
+        `atexit` oddiy chiqishni, `sys.exit()` ni VA asosiy thread'dagi
+        tutilmagan istisno bilan tugashni ham qamrab oladi (interpretator
+        traceback'dan keyin baribir `atexit` ni bajaradi). Usiz yiqilgan
+        dastur talaba mashinasida Sticky Keys'ni butunlay o'chirilgan
+        holda qoldirardi.
+
+        `sys.excepthook` ga ATAYLAB ulanmaydi (ilgari ulanardi). PyQt6
+        da ilgak slotdagi HAR bir xatoda chaqiriladi va jarayon DAVOM
+        ETADI (`core/crash_guard.py`) - ilgakdagi `release()` birinchi
+        slot xatosidan keyin imtihon oxirigacha tugmalarni OCHIQ
+        qoldirardi. Nativ qulashni esa hech qaysi Python ilgagi
+        ushlamaydi - uni qayta ishga tushirilgan nusxa qoplaydi.
         """
         if self._cleanup_registered:
             return
         atexit.register(self.release)
-
-        previous_hook = sys.excepthook
-
-        def _hook(exc_type, exc_value, traceback):
-            try:
-                self.release()
-            finally:
-                previous_hook(exc_type, exc_value, traceback)
-
-        sys.excepthook = _hook
         self._cleanup_registered = True
 
     # ------------------------------------------------------------------

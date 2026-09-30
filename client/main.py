@@ -25,6 +25,18 @@ if __name__ == "__main__" and "--keyboard-hook" in sys.argv:
 
     sys.exit(_run_keyboard_hook())
 
+# WATCHDOG JARAYONI (`core/watchdog.py`) - xuddi shu sabab bilan Qt, asosiy
+# log va `.env` dan OLDIN. Alohida exe yo'q: o'sha exe bayroq bilan.
+# `--watchdog-launch` - oraliq jarayon (watchdog UI daraxtidan uzilishi
+# uchun), darhol chiqadi. Ikkalasi ham mutex OLMAYDI.
+if __name__ == "__main__" and ("--watchdog" in sys.argv or "--watchdog-launch" in sys.argv):
+    from core import watchdog as _watchdog
+
+    if "--watchdog-launch" in sys.argv:
+        sys.exit(_watchdog.run_launcher(sys.argv))
+    sys.exit(_watchdog.run(sys.argv))
+
+from core import crash_guard
 from core.bundle_paths import resource_root
 from core.logging_setup import setup_logging
 
@@ -40,6 +52,10 @@ _stub.MaskRenderer = type("MaskRenderer", (), {})
 sys.modules.setdefault("insightface.app.mask_renderer", _stub)
 
 log = setup_logging()
+# Nativ qulash (access violation, abort) izi - ochiq deskriptorga.
+_native_log = crash_guard.enable_native_crash_log()
+if _native_log:
+    log.info("Native crash log: %s", _native_log)
 
 
 def _disable_extra_monitors() -> None:
@@ -244,7 +260,47 @@ def _log_env_file() -> None:
     )
 
 
+def _begin_state(restart_count: int):
+    """
+    `state.json`: yangi jarayon yoziladi, oldingisi baholanadi.
+
+    Xato dasturni TO'XTATMAYDI - holat fayli qulaylik (`core/state_store.py`).
+    """
+    from config import APP_VERSION
+    from core.state_store import StateStore
+
+    try:
+        store = StateStore()
+        crash = store.begin(
+            pid=os.getpid(), app_version=APP_VERSION, restart_count=restart_count
+        )
+    except Exception:
+        log.exception("Holat fayli ishga tushmadi")
+        return None, {}
+    if restart_count:
+        log.warning("Dastur watchdog tomonidan qayta ishga tushirildi (%s-marta)", restart_count)
+    if crash:
+        log.error(
+            "OLDINGI ishga tushish kutilmaganda tugagan: pid=%s bosqich=%s sessiya=%s",
+            crash.get("pid"), crash.get("stage") or "-",
+            "bor" if crash.get("session_public_id") else "yo'q",
+        )
+    return store, crash
+
+
 def main() -> int:
+    # BITTA NUSXA - tozalash bosqichlaridan OLDIN: ikkinchi nusxaning
+    # `app_closer` i birinchisining oynasini "begona dastur" deb yopardi.
+    from core import single_instance
+    from core import watchdog
+
+    if not single_instance.acquire():
+        log.warning("Dasturning boshqa nusxasi allaqachon ishlayapti - bu nusxa yopiladi")
+        return 0
+
+    wd_args = watchdog.parse_args(sys.argv)
+    store, previous_crash = _begin_state(wd_args["restart_count"])
+
     _disable_extra_monitors()
     _purge_archive()
     _close_other_apps()
@@ -269,11 +325,24 @@ def main() -> int:
     # `sys.argv` MAJBURIY, bo'sh ro'yxat EMAS. Chromium `argv[0]` dan
     # dastur nomini oladi; usiz WebEngine "base::CommandLine cannot be
     # properly initialized" deb butun jarayonni qulatadi (0xC0000409).
-    app = QApplication(sys.argv)
+    # Watchdog bayroqlari (`--watchdog-pid`, `--restart-count`) Qt va
+    # Chromium'ga uzatilmaydi - ular faqat bizniki.
+    app = QApplication(watchdog.strip_own_flags(sys.argv))
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(APP_VERSION)
     app.setFont(QFont("Segoe UI", 10))
     app.setStyleSheet(GLOBAL_STYLESHEET)
+
+    # Qt xabarlari log'ga; xato xabarchisi va tizim hodisalari (uyqu,
+    # monitor/DPI) QApplication paydo bo'lgan zahoti.
+    crash_guard.install_qt_message_handler()
+    crash_guard.reporter()
+    try:
+        from core.system_events import system_events
+
+        system_events().attach()
+    except Exception:
+        log.exception("Tizim hodisalari ulanmadi")
 
     # Oyna qatlamidagi himoya: kiosk'da Windows System Menu ochilmaydi
     # (Alt+Space, SC_KEYMENU) - global hook ishlamay qolgan holatda ham.
@@ -282,7 +351,11 @@ def main() -> int:
         from services.lockdown import install_system_menu_guard
         install_system_menu_guard(app)
 
-    window = MainWindow()
+    window = MainWindow(
+        state_store=store,
+        previous_crash=previous_crash,
+        watchdog_pid=wd_args["watchdog_pid"],
+    )
     window.show_start()
     log.info("%s v%s ishga tushdi", APP_NAME, APP_VERSION)
     _log_env_file()
@@ -293,6 +366,7 @@ def main() -> int:
         # va u dastur bilan birga yo'qolmaydi. Oddiy chiqishda ham,
         # istisno bilan tugashda ham ekran operatorga qaytishi kerak.
         _restore_monitors()
+        crash_guard.uninstall_qt_message_handler()
 
 
 if __name__ == "__main__":

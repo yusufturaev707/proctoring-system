@@ -31,16 +31,17 @@ qoida. Birinchisi chetlab o'tilishi mumkin, ikkinchisi yo'q.
 from __future__ import annotations
 
 import logging
+import os
 import threading
+import time
 from typing import Optional
 
-from PyQt6.QtCore import QEventLoop, Qt, QTimer
+from PyQt6.QtCore import QEventLoop, QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
     QMainWindow,
-    QMessageBox,
     QStackedWidget,
 )
 
@@ -52,7 +53,12 @@ from config import (
     LOCAL_SERVICE_ALLOWED_ORIGINS,
     LOCAL_SERVICE_ENABLED,
     LOCAL_SERVICE_PORT,
+    SELF_CHECK_ENABLED,
+    WATCHDOG_ENABLED,
 )
+from core import crash_guard
+from core import watchdog as watchdog_mod
+from core.state_store import had_open_session
 from services.api_client import ApiClient
 from services.app_state import AppState
 from services.auth_service import AuthService
@@ -78,6 +84,22 @@ log = logging.getLogger(__name__)
 #: bir chiziqda turgani ko'zga tartibli ko'rinadi.
 _FLOATING_MARGIN = 18
 
+#: Watchdog tirikligini tekshirish oralig'i va qayta ko'tarish chegarasi.
+#: UI watchdog'ni, watchdog UI ni kuzatadi: bittasini o'ldirish
+#: yetmaydi. Chegara - watchdog o'zi yiqilib tursa, cheksiz jarayon
+#: yaratmaslik uchun.
+_WATCHDOG_CHECK_MS = 30_000
+_WATCHDOG_MAX_RESPAWNS = 5
+
+#: Stack indeksi -> `state.json` dagi `stage` (PAGE_* tartibida).
+_STAGES = ("preflight", "login", "exam_select", "candidate", "faceid", "exam")
+
+
+class _SelfCheckBridge(QObject):
+    """Fon thread'idagi self-check natijasini asosiy thread'ga olib o'tadi."""
+
+    done = pyqtSignal(object)
+
 
 class MainWindow(QMainWindow):
     """Oqim: preflight -> login -> imtihon -> talabgor -> FaceID -> WebView."""
@@ -89,9 +111,24 @@ class MainWindow(QMainWindow):
     PAGE_FACEID = 4
     PAGE_WEBVIEW = 5
 
-    def __init__(self) -> None:
+    def __init__(self, *, state_store=None, previous_crash: Optional[dict] = None,
+                 watchdog_pid: int = 0) -> None:
         super().__init__()
         self.setWindowTitle(APP_NAME)
+        #: `state.json` (`core/state_store.py`) - `None` bo'lishi mumkin.
+        self._store = state_store
+        #: Oldingi jarayon kutilmaganda tugagan bo'lsa uning holati.
+        self._previous_crash = dict(previous_crash or {})
+        self._resume_offered = False
+        self._watchdog_pid = int(watchdog_pid or 0)
+        self._watchdog_respawns = 0
+        #: Imtihon paytida xodim tokeni tugadi - chiqish yakundan keyin.
+        self._auth_expired_pending = False
+        self._notice = None
+        self._self_check_dialog = None
+        self._self_check_running = False
+        self._self_check_bridge = _SelfCheckBridge(self)
+        self._self_check_bridge.done.connect(self._on_self_check_done)
         self.setMinimumSize(1180, 760)
 
         # Kiosk oyna bayroqlari KONSTRUKTORDA qo'yiladi: `setWindowFlags`
@@ -205,6 +242,27 @@ class MainWindow(QMainWindow):
         # u z-tartibida tepaga chiqadi va panel uning ostida qolib
         # ketardi.
         self._stack.currentChanged.connect(lambda _index: self._place_language_bar())
+        # Bosqich `state.json` ga: kutilmagan yopilishdan keyin "qayerda
+        # edik?" savoliga javob (faqat maxfiy bo'lmagan qiymatlar).
+        self._stack.currentChanged.connect(self._persist_stage)
+
+        # Tutilmagan xatolar (`core/crash_guard.py`) - bloklamaydigan xabar.
+        reporter = crash_guard.reporter()
+        if reporter is not None:
+            reporter.error_occurred.connect(self._on_unhandled_error)
+
+        # Uyqudan uyg'onish va monitor/DPI o'zgarishi (`core/system_events.py`).
+        try:
+            from core.system_events import system_events
+
+            events = system_events()
+            events.display_changed.connect(self._on_display_changed)
+            events.power_resumed.connect(self._on_power_resumed)
+        except Exception:
+            log.exception("Tizim hodisalariga ulanib bo'lmadi")
+
+        self._watchdog_timer = QTimer(self)
+        self._watchdog_timer.timeout.connect(self._check_watchdog)
 
         # Public IP fon rejimida oldindan olinadi. Bu YAGONA tashqi
         # tarmoq so'rovi; login oqimida sinxron chaqirilsa, sekin
@@ -310,6 +368,7 @@ class MainWindow(QMainWindow):
         self._apply_lockdown(self._state.config.get("hotkeys") or [])
         self._ensure_pages()
         self._go_to_exam()
+        self._offer_resume()
         # Oraliqni SERVER aytadi (`network.presence_interval`): u
         # serverdagi presence TTL'iga bog'langan va imtihon profiliga
         # emas - shuning uchun handshake'dagi global profildan bir marta
@@ -470,6 +529,12 @@ class MainWindow(QMainWindow):
         # tozalaydi). Operator keyingi talabgorni shu yerda kutadi va
         # "stol bo'shadimi?" degan savolga javob aynan shu yerda kerak.
         self._candidate_page.show_finish_notice(result or {})
+        self._after_exam_closed()
+
+    def _after_exam_closed(self) -> None:
+        """Imtihon paytida kechiktirilgan login muddati - endi bajariladi."""
+        if self._auth_expired_pending:
+            QTimer.singleShot(0, self._on_auth_expired)
 
     def _on_session_blocked(self, code: str, message: str) -> None:
         """
@@ -485,15 +550,24 @@ class MainWindow(QMainWindow):
         yaqin nuqta bo'lib, undan "Boshlash" qayta bosiladi.
         """
         log.warning("Imtihon ochilmadi (%s): %s", code or "-", message)
-        QMessageBox.warning(
-            self,
-            "Kuzatuv boshlanmadi",
-            "{}\n\nYuz tasdig'i saqlanadi — qayta tekshirish kerak emas. "
-            "Kamerani tekshirib, imtihonni qayta boshlang.".format(
-                message or "Sabab noma'lum"
-            ),
-        )
+        # Avval sahifa, keyin xabar (`show()`, `exec()` EMAS): ilgari
+        # `QMessageBox` yopilguncha FaceID sahifasi ochilmasdi.
         self._go_to_faceid()
+        if code == "webview_unavailable":
+            # Kamera emas, brauzer komponenti (QtWebEngine) ochilmadi -
+            # "kamerani tekshiring" maslahati operatorni adashtirardi.
+            title = "Test sahifasi ochilmadi"
+            advice = ("Yuz tasdig'i saqlanadi. Imtihonni qayta boshlang; "
+                      "takrorlansa - administratorga murojaat qiling.")
+        else:
+            title = "Kuzatuv boshlanmadi"
+            advice = ("Yuz tasdig'i saqlanadi — qayta tekshirish kerak emas. "
+                      "Kamerani tekshirib, imtihonni qayta boshlang.")
+        self._show_notice(
+            title,
+            "{}\n\n{}".format(message or "Sabab noma'lum", advice),
+            kind="warning",
+        )
 
     def _go_to_faceid(self) -> None:
         """FaceID sahifasiga qaytish - kamera qaytadan ochiladi."""
@@ -504,14 +578,15 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentIndex(self.PAGE_FACEID)
 
     def _on_session_lost(self, reason: str) -> None:
-        QMessageBox.warning(
-            self,
+        self._state.reset_flow()
+        self._go_to_candidate()
+        self._show_notice(
             "Sessiya yakunlandi",
             "Sessiya serverda yakunlandi ({}). Keyingi talabgorga o'tishingiz "
             "mumkin.".format(reason or "-"),
+            kind="info",
         )
-        self._state.reset_flow()
-        self._go_to_candidate()
+        self._after_exam_closed()
 
     # ------------------------------------------------------------------
     def _on_logout(self) -> None:
@@ -537,6 +612,23 @@ class MainWindow(QMainWindow):
         """
         if self._stack.currentIndex() == self.PAGE_LOGIN:
             return
+        if self._webview_page is not None and self._webview_page.has_open_exam:
+            # OCHIQ IMTIHON TO'XTATILMAYDI: xodim tokenining muddati -
+            # talabgorning aybi emas. Sahifani yopish test platformasini,
+            # ekran yozuvini va kuzatuvni o'sha zahoti uzardi. Chiqish
+            # imtihon yakunlangach bajariladi (`_after_exam_closed`).
+            if not self._auth_expired_pending:
+                log.warning("Xodim sessiyasi muddati tugadi - imtihon yakunlangach "
+                            "login sahifasiga qaytiladi")
+                snackbar = getattr(self._webview_page, "message", None)
+                if snackbar is not None and hasattr(snackbar, "show_message"):
+                    snackbar.show_message(
+                        "Operator sessiyasi muddati tugadi — imtihon davom etmoqda. "
+                        "Yakunlangach qaytadan kiring.", "warning",
+                    )
+            self._auth_expired_pending = True
+            return
+        self._auth_expired_pending = False
         log.info("Sessiya muddati tugadi - login sahifasiga qaytarilmoqda")
         # Xodim endi tizimda emas - "client ishlab turibdi" signali
         # ham to'xtaydi (panelda mashina TTL bo'yicha so'nadi).
@@ -765,6 +857,15 @@ class MainWindow(QMainWindow):
 
     def _shutdown(self) -> None:
         """Barcha fon ishlarini tugatadi. Oyna allaqachon yashiringan."""
+        # TOZA CHIQISH BELGISI BIRINCHI: tozalash paytida nativ qulash
+        # bo'lsa ham watchdog uni "kutilmagan yopilish" deb qayta
+        # ko'tarmasligi kerak - chiqish parol bilan tasdiqlangan yoki
+        # OS seansi yakunlanmoqda.
+        self._watchdog_timer.stop()
+        if self._store is not None:
+            self._store.mark_clean_exit(
+                "parol bilan chiqish" if self._exit_allowed else "OS seansi yakuni"
+            )
         # Signal taymeri BIRINCHI to'xtaydi: yopilish paytida yangi
         # so'rov ochish tozalashni cho'zardi.
         self._presence_timer.stop()
@@ -872,3 +973,257 @@ class MainWindow(QMainWindow):
         # birinchi kadrda bo'sh oyna turadi va operator "dastur
         # ochilmadi" deb o'ylaydi.
         self._preflight_page.start()
+
+        self._start_watchdog()
+        if SELF_CHECK_ENABLED:
+            # Kechiktirib: birinchi soniyalarda model yuklovchi va
+            # preflight bilan disk/tarmoq uchun raqobatlashmasin.
+            QTimer.singleShot(1500, self._start_self_check)
+
+    # ------------------------------------------------------------------
+    # Holat fayli va qayta tiklash (`core/state_store.py`)
+    # ------------------------------------------------------------------
+    def _persist_stage(self, index: int) -> None:
+        """
+        Joriy bosqichni `state.json` ga yozadi. XATO YUTILADI.
+
+        Faqat maxfiy bo'lmagan qiymatlar: imtihon id/nomi, jadval id,
+        sessiya `public_id`. Token, JSHSHIR, ism - YO'Q.
+        """
+        if self._store is None or self._closing:
+            return
+        try:
+            stage = _STAGES[index] if 0 <= index < len(_STAGES) else ""
+            exam = self._state.selected_exam
+            session = self._state.session
+            fields = {
+                "stage": stage,
+                "exam_id": getattr(exam, "id", None),
+                "exam_name": getattr(exam, "name", None),
+                "schedule_id": getattr(exam, "schedule_id", None),
+                "session_public_id": (getattr(session, "public_id", "") or None)
+                if session is not None else None,
+            }
+            if stage == "exam":
+                fields["session_started_at"] = time.time()
+            elif stage != "faceid":
+                fields["session_started_at"] = None
+            self._store.update(**fields)
+        except Exception:
+            log.debug("Bosqich holat fayliga yozilmadi", exc_info=True)
+
+    def _offer_resume(self) -> None:
+        """
+        Login'dan keyin: oldingi jarayon OCHIQ SESSIYA bilan yiqilgan bo'lsa -
+        imtihonni oldindan tanlaydi va nima qilish kerakligini aytadi.
+
+        SESSIYANI TO'LIQ TIKLAB BO'LMAYDI: sessiya tokeni ataylab diskka
+        yozilmaydi, serverda esa `public_id` bo'yicha tokenni qayta
+        beradigan xavfsiz yo'l yo'q (`exam/access/` token talab qiladi).
+        Mavjud xavfsiz yo'l - o'sha KOMPYUTERDAN talabgorni qayta qidirish
+        va yuz tekshiruvi: server shu qurilmaga qayta kirishga ruxsat
+        beradi (`lookup_candidate` faqat BOSHQA qurilmadagi faol sessiyani
+        rad etadi), eski sessiyani esa `close_stale_sessions` yopadi.
+        """
+        if self._resume_offered:
+            return
+        self._resume_offered = True
+        crash = self._previous_crash
+        if not had_open_session(crash):
+            return
+        exam_id = crash.get("exam_id")
+        preselected = False
+        if exam_id and self._exam_page is not None and hasattr(self._exam_page, "preselect_exam"):
+            try:
+                preselected = bool(self._exam_page.preselect_exam(int(exam_id)))
+            except Exception:
+                log.debug("Imtihon oldindan tanlanmadi", exc_info=True)
+        log.warning("Oldingi sessiya ochiq qolgan - operatorga xabar berildi")
+        when = ""
+        try:
+            if crash.get("at"):
+                when = time.strftime(" (%H:%M)", time.localtime(float(crash["at"])))
+        except (TypeError, ValueError, OverflowError, OSError):
+            when = ""
+        exam_name = crash.get("exam_name")
+        self._show_notice(
+            "Oldingi sessiya ochiq qolgan",
+            "Dastur kutilmaganda yopilgan{when} va imtihon sessiyasi "
+            "{exam}ochiq qolgan.\n\n"
+            "Talabgorni davom ettirish uchun: {select}JSHSHIR ni qayta kiriting "
+            "va yuz tekshiruvidan o'ting — server shu kompyuterdan qayta "
+            "kirishga ruxsat beradi. Oldingi sessiya serverda avtomatik "
+            "yopiladi.".format(
+                when=when,
+                exam="(«{}») ".format(exam_name) if exam_name else "",
+                select=(
+                    "imtihon oldindan tanlandi — «Davom etish» ni bosing, "
+                    if preselected else "o'sha imtihonni tanlang, "
+                ),
+            ),
+            kind="warning",
+        )
+
+    # ------------------------------------------------------------------
+    # Xabarlar
+    # ------------------------------------------------------------------
+    def _show_notice(self, title: str, text: str, *, kind: str = "warning",
+                     detail: str = "", auto_close_s: int = 0) -> None:
+        """Bloklamaydigan xabar (`show()`); bitta nusxa, uyilmaydi."""
+        try:
+            if self._notice is None:
+                from ui.dialogs.notice_dialog import NoticeDialog
+
+                self._notice = NoticeDialog(self)
+            self._notice.show_notice(
+                title, text, kind=kind, detail=detail, auto_close_s=auto_close_s
+            )
+        except Exception:
+            log.exception("Xabar oynasi ko'rsatilmadi: %s", title)
+
+    def _on_unhandled_error(self, signature: str, count: int) -> None:
+        """
+        Tutilmagan xato - dastur ISHLASHDA DAVOM ETADI.
+
+        Imtihon sahifasida modal oyna EMAS, Snackbar: talabgorning
+        ekrani to'silmaydi va kiritish to'xtamaydi. Qolgan sahifalarda
+        - `NoticeDialog` (20 s da o'zi yopiladi). Takrorlanish
+        `crash_guard.ErrorThrottle` da cheklangan.
+        """
+        if self._closing:
+            return
+        repeat = " ({} marta takrorlandi)".format(count) if count > 1 else ""
+        try:
+            if self._stack.currentIndex() == self.PAGE_WEBVIEW and self._webview_page is not None:
+                snackbar = getattr(self._webview_page, "message", None)
+                if snackbar is not None and hasattr(snackbar, "show_message"):
+                    snackbar.show_message(
+                        "Dasturda ichki xato qayd etildi, imtihon davom etmoqda{}.".format(repeat),
+                        "warning",
+                    )
+                return
+        except Exception:
+            log.debug("Snackbar ko'rsatilmadi", exc_info=True)
+            return
+        self._show_notice(
+            "Dasturda ichki xato",
+            "Kutilmagan xato yuz berdi, lekin dastur ishlashda davom etmoqda. "
+            "Amal bajarilmagan bo'lsa, uni qaytadan urinib ko'ring. Xato "
+            "takrorlansa - administratorga murojaat qiling.",
+            kind="error",
+            detail="Texnik ma'lumot (log faylida): {}{}".format(signature, repeat),
+            auto_close_s=20,
+        )
+
+    # ------------------------------------------------------------------
+    # Tizim hodisalari
+    # ------------------------------------------------------------------
+    def _on_display_changed(self) -> None:
+        """
+        Monitor ulandi/uzildi yoki DPI o'zgardi: oyna asosiy ekranni
+        to'liq qoplashda davom etishi kerak (kioskda chetda bo'sh joy
+        qolsa, ish stoli ko'rinib qolardi).
+        """
+        if self._closing:
+            return
+        try:
+            if FULLSCREEN and self.isVisible():
+                screen = QApplication.primaryScreen()
+                handle = self.windowHandle()
+                if screen is not None and handle is not None and handle.screen() is not screen:
+                    handle.setScreen(screen)
+                self.showFullScreen()
+            self._place_language_bar()
+        except Exception:
+            log.exception("Ekran o'zgarishidan keyin oyna tiklanmadi")
+
+    def _on_power_resumed(self) -> None:
+        """Uyg'onish: kamera (C2) va tarmoq (C3) o'z signaliga ulangan; bu yerda oyna."""
+        log.info("Uyqudan keyin oyna tiklanmoqda")
+        self._on_display_changed()
+
+    # ------------------------------------------------------------------
+    # Watchdog (`core/watchdog.py`)
+    # ------------------------------------------------------------------
+    def _start_watchdog(self) -> None:
+        if not WATCHDOG_ENABLED:
+            return
+        if self._watchdog_pid:
+            # Bizni watchdog'ning o'zi qayta ko'targan - u allaqachon kuzatyapti.
+            log.info("Watchdog kuzatmoqda (pid=%s)", self._watchdog_pid)
+        elif not watchdog_mod.spawn_for(os.getpid()):
+            log.error("Watchdog ishga tushmadi - kutilmagan yopilishdan keyin "
+                      "dastur o'zi qayta ochilmaydi")
+        self._watchdog_timer.start(_WATCHDOG_CHECK_MS)
+
+    def _check_watchdog(self) -> None:
+        """Watchdog tirikmi; o'ldirilgan bo'lsa qayta ko'tariladi (chegarali)."""
+        try:
+            status = watchdog_mod.read_status()
+            pid = int(status.get("pid") or 0)
+            if int(status.get("ui_pid") or 0) == os.getpid() and watchdog_mod.is_alive(pid):
+                self._watchdog_pid = pid
+                return
+            if self._watchdog_respawns >= _WATCHDOG_MAX_RESPAWNS:
+                self._watchdog_timer.stop()
+                log.error("Watchdog %s marta qayta ko'tarildi - to'xtatildi",
+                          self._watchdog_respawns)
+                return
+            self._watchdog_respawns += 1
+            log.warning("Watchdog ishlamayapti (pid=%s) - qayta ishga tushirilmoqda", pid or "-")
+            watchdog_mod.spawn_for(os.getpid())
+        except Exception:
+            log.debug("Watchdog tekshiruvida xato", exc_info=True)
+
+    # ------------------------------------------------------------------
+    # O'z-o'zini tekshirish (`core/self_check.py`)
+    # ------------------------------------------------------------------
+    def _start_self_check(self) -> None:
+        """
+        FON thread'ida (daemon): chiqishda uni kutish shart emas va
+        `QThread` kabi "Destroyed while running" bilan qulamaydi.
+        """
+        if self._self_check_running or self._closing:
+            return
+        self._self_check_running = True
+        bridge = self._self_check_bridge
+
+        def work() -> None:
+            report = None
+            try:
+                from core import self_check
+
+                report = self_check.run_all()
+            except Exception:
+                log.exception("Self-check yiqildi")
+            try:
+                bridge.done.emit(report)
+            except RuntimeError:
+                pass  # oyna allaqachon yo'q qilingan
+
+        threading.Thread(target=work, name="self-check", daemon=True).start()
+
+    def _on_self_check_done(self, report) -> None:
+        self._self_check_running = False
+        if report is None or self._closing:
+            if self._self_check_dialog is not None:
+                self._self_check_dialog.set_checking(False)
+            return
+        dialog = self._self_check_dialog
+        visible = dialog is not None and dialog.isVisible()
+        if report.ok and not visible:
+            return
+        if not visible and self._stack.currentIndex() == self.PAGE_WEBVIEW:
+            # Imtihon ochilib ulgurgan - talabgor ekraniga oyna chiqmaydi,
+            # natija log'da.
+            return
+        try:
+            if dialog is None:
+                from ui.dialogs.self_check_dialog import SelfCheckDialog
+
+                dialog = SelfCheckDialog(self)
+                dialog.recheck_requested.connect(self._start_self_check)
+                self._self_check_dialog = dialog
+            dialog.show_report(report)
+        except Exception:
+            log.exception("Self-check oynasi ko'rsatilmadi")
