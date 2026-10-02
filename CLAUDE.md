@@ -1496,13 +1496,14 @@ Yangi domen xatosi — `DomainError` merosxo'ri; `code` React'da tarjima kaliti.
 * **(client) WebSocket boshqa jarayon**: `WS_BASE_URL` berilmasa client uni
   API manzilidan chiqaradi va dev tartibini taniydi (`realtime.default_ws_url`);
   noto'g'ri port bilan proktor buyruqlari clientga yetmaydi.
-* **Yangi migratsiya fayllari git'ga YUBORILMAYDI** (`backend/.gitignore`:
-  `**/migrations/*`, `git add -f` QILMANG): serverda o'z migratsiya
-  fayllari bor va repodagi fayl ular bilan to'qnashadi. Server
-  `makemigrations` ni o'zi bajaradi — shuning uchun migratsiyadagi
-  `RunPython` (ma'lumot ko'chirish) serverga yetib bormaydi, uni alohida
-  aytish kerak. Repoda ilgari qo'shilgan eski migratsiyalar qoladi
-  (o'chirilsa `git pull` ularni serverdan ham o'chirardi).
+* **Migratsiya fayllari git'da UMUMAN YO'Q** (faqat `__init__.py`;
+  `backend/.gitignore`: `**/migrations/*`, `git add -f` QILMANG): lokal
+  va production migratsiyalari bir-biriga mos kelmaydi — har muhit
+  `makemigrations` ni o'zi bajaradi va o'z fayllariga ega. Repodagi fayl
+  serverdagi bir xil nomli faylni bosib ketgan (`0001_initial`) va
+  `migrate` `KeyError` bilan yiqilgan. Oqibatlari: migratsiyadagi
+  `RunPython` (ma'lumot ko'chirish) serverga yetib bormaydi — uni
+  alohida aytish kerak; yangi klonda avval `makemigrations`.
   `src/config/settings/local.py` ham `.gitignore` da.
 * **Read replica**: "yozdim va darhol o'qidim" da `.using("default")`
   (`common/db_router.py`).
