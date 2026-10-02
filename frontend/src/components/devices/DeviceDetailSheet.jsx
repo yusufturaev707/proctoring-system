@@ -1,18 +1,15 @@
 import {
-  Box, Button, Chip, Drawer, IconButton, Stack, Tooltip, Typography,
+  Box, Button, Chip, Drawer, IconButton, Stack, Typography,
 } from '@mui/material'
 import CloseIcon from '@mui/icons-material/CloseOutlined'
-import CopyIcon from '@mui/icons-material/ContentCopyOutlined'
 import CheckIcon from '@mui/icons-material/CheckCircleOutline'
 import BlockIcon from '@mui/icons-material/BlockOutlined'
 import LockOpenIcon from '@mui/icons-material/LockOpenOutlined'
 import LinkIcon from '@mui/icons-material/LinkOutlined'
 import ComputerIcon from '@mui/icons-material/DesktopWindowsOutlined'
 
-import { useUi } from '../../context/UiContext'
-import {
-  AI_PROFILE_LABEL, computerLabel, DEVICE_STATUS_LABEL, formatDateTime, fromNow,
-} from '../../utils/labels'
+import { dateText, Field, HeaderIcon, Section, useCopy } from '../data/DetailFields'
+import { AI_PROFILE_LABEL, computerLabel, DEVICE_STATUS_LABEL } from '../../utils/labels'
 
 const STATUS_COLOR = { active: 'success', revoked: 'error', pending: 'warning' }
 
@@ -28,17 +25,8 @@ const STATUS_COLOR = { active: 'success', revoked: 'error', pending: 'warning' }
 export default function DeviceDetailSheet({
   device, canManage, onClose, onApprove, onRevoke, onUnblock, onRebind,
 }) {
-  const { notify } = useUi()
   const open = Boolean(device)
-
-  const copy = async (value) => {
-    try {
-      await navigator.clipboard.writeText(value)
-      notify('Nusxalandi')
-    } catch {
-      notify('Nusxalab bo‘lmadi', 'warning')
-    }
-  }
+  const copy = useCopy()
 
   return (
     <Drawer
@@ -60,15 +48,7 @@ export default function DeviceDetailSheet({
         <Stack sx={{ height: '100%' }}>
           {/* Sarlavha: kompyuter nomi — operator mashinani shu bilan taniydi. */}
           <Stack direction="row" spacing={1.5} alignItems="flex-start" sx={{ px: 3, pt: 3, pb: 2 }}>
-            <Box
-              sx={{
-                width: 48, height: 48, borderRadius: '16px', flexShrink: 0,
-                display: 'grid', placeItems: 'center',
-                bgcolor: 'm3.primaryContainer', color: 'primary.main',
-              }}
-            >
-              <ComputerIcon />
-            </Box>
+            <HeaderIcon><ComputerIcon /></HeaderIcon>
             <Box sx={{ flex: 1, minWidth: 0 }}>
               <Typography variant="h6" noWrap sx={{ lineHeight: 1.3 }}>
                 {computerLabel(device.computer_number, device.computer_code) || 'Kompyuter biriktirilmagan'}
@@ -206,64 +186,5 @@ export default function DeviceDetailSheet({
   )
 }
 
-const dateText = (value) => (value ? `${formatDateTime(value)} · ${fromNow(value)}` : '')
-
 // Server `normalize_mac` bilan bir xil: `2C-F0-...` va `2c:f0:...` farq emas.
 const normalizeMac = (value) => String(value || '').trim().replace(/-/g, ':').toUpperCase()
-
-function Section({ title, children }) {
-  return (
-    <Box sx={{ mb: 1.5 }}>
-      <Typography
-        variant="overline"
-        color="text.secondary"
-        sx={{ display: 'block', px: 1, mb: 0.5, lineHeight: 2, fontWeight: 700 }}
-      >
-        {title}
-      </Typography>
-      <Box sx={{ bgcolor: 'background.paper', borderRadius: '16px', overflow: 'hidden' }}>
-        {children}
-      </Box>
-    </Box>
-  )
-}
-
-function Field({ label, value, mono, wrap, hint, onCopy, warn }) {
-  const empty = value == null || value === ''
-  return (
-    <Stack
-      direction="row"
-      alignItems="center"
-      spacing={1}
-      sx={{
-        px: 2, py: 1.25, minHeight: 56,
-        '& + &': { borderTop: 1, borderColor: 'divider' },
-      }}
-    >
-      <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Typography variant="caption" color={warn ? 'error' : 'text.secondary'} display="block">
-          {label}{warn ? ' · mos emas' : ''}
-        </Typography>
-        <Typography
-          variant="body2"
-          color={empty ? 'text.disabled' : 'text.primary'}
-          sx={{
-            fontFamily: mono && !empty ? 'monospace' : undefined,
-            fontSize: mono ? 12.5 : undefined,
-            wordBreak: wrap || mono ? 'break-all' : undefined,
-            whiteSpace: wrap ? 'pre-wrap' : undefined,
-          }}
-        >
-          {empty ? (hint || '—') : value}
-        </Typography>
-      </Box>
-      {onCopy && !empty && (
-        <Tooltip title="Nusxalash">
-          <IconButton size="small" onClick={() => onCopy(value)} aria-label={`${label}ni nusxalash`}>
-            <CopyIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-      )}
-    </Stack>
-  )
-}

@@ -95,14 +95,16 @@ class LoginPage(BrandBackdrop):
         card = QFrame()
         card.setObjectName("loginCard")
         card.setFixedWidth(460)
+        # MD3: ramkasiz, 28 px ("extra large") - dialoglar bilan bir shakl.
         card.setStyleSheet(
             """
             QFrame#loginCard {
-                background-color: #FFFFFF;
-                border-radius: 26px;
-                border: 1px solid rgba(0,0,0,0.05);
+                background-color: %s;
+                border-radius: 28px;
+                border: none;
             }
             """
+            % COLORS["surface_container_lowest"]
         )
         shadow = QGraphicsDropShadowEffect(self)
         shadow.setBlurRadius(70)

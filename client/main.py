@@ -295,7 +295,15 @@ def main() -> int:
     from core import watchdog
 
     if not single_instance.acquire():
-        log.warning("Dasturning boshqa nusxasi allaqachon ishlayapti - bu nusxa yopiladi")
+        # JIMGINA yopilmaydi: xodim belgini qayta-qayta bosmasligi uchun
+        # birinchi nusxaning oynasi oldinga chiqariladi yoki (u hali
+        # yuklanayotgan bo'lsa) "kuting" xabari ko'rsatiladi.
+        from version import APP_NAME as _APP_NAME
+
+        outcome = single_instance.notify_running(_APP_NAME)
+        log.warning(
+            "Dasturning boshqa nusxasi allaqachon ishlayapti - bu nusxa yopiladi (%s)", outcome
+        )
         return 0
 
     wd_args = watchdog.parse_args(sys.argv)
@@ -311,7 +319,6 @@ def main() -> int:
     from PyQt6.QtWidgets import QApplication
 
     from config import APP_NAME, APP_VERSION
-    from main_window import MainWindow
     from ui.styles import GLOBAL_STYLESHEET
 
     # QtWebEngine QApplication'dan OLDIN e'lon qilinishi shart. Aks holda
@@ -333,6 +340,24 @@ def main() -> int:
     app.setFont(QFont("Segoe UI", 10))
     app.setStyleSheet(GLOBAL_STYLESHEET)
 
+    # SPLASH - QApplication paydo bo'lgan zahoti, og'ir modullardan
+    # (`main_window`: kamera, AI, WebEngine sahifalari) OLDIN. Tozalash
+    # bosqichlaridan keyin va bu ataylab (`_close_other_apps` izohi):
+    # o'sha paytdagi bosishlarga ikkinchi nusxaning "kuting" xabari
+    # javob beradi (`single_instance.notify_running`).
+    splash = None
+    try:
+        from ui.widgets.startup_splash import StartupSplash
+
+        splash = StartupSplash(APP_NAME, APP_VERSION, steps=3)
+        splash.show()
+        splash.set_text("Dastur modullari yuklanmoqda…")
+    except Exception:  # noqa: BLE001 - splash bezak, ishga tushishni to'smaydi
+        log.warning("Ishga tushish oynasi ko'rsatilmadi", exc_info=True)
+        splash = None
+
+    from main_window import MainWindow
+
     # Qt xabarlari log'ga; xato xabarchisi va tizim hodisalari (uyqu,
     # monitor/DPI) QApplication paydo bo'lgan zahoti.
     crash_guard.install_qt_message_handler()
@@ -351,12 +376,17 @@ def main() -> int:
         from services.lockdown import install_system_menu_guard
         install_system_menu_guard(app)
 
+    if splash is not None:
+        splash.set_text("Oyna tayyorlanmoqda…")
     window = MainWindow(
         state_store=store,
         previous_crash=previous_crash,
         watchdog_pid=wd_args["watchdog_pid"],
     )
     window.show_start()
+    if splash is not None:
+        splash.close()
+        splash.deleteLater()
     log.info("%s v%s ishga tushdi", APP_NAME, APP_VERSION)
     _log_env_file()
     try:

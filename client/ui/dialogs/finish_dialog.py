@@ -135,7 +135,7 @@ class FinishDialog(CardDialog):
         apply_font(
             warning, 13, bold=True,
             extra="color: {}; background: {}; border-radius: 12px; padding: 10px 14px;".format(
-                COLORS["error"], COLORS["error_soft"]
+                COLORS["on_error_container"], COLORS["error_container"]
             ),
         )
         layout.addWidget(warning)

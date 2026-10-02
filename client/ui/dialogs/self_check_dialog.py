@@ -48,7 +48,7 @@ class _ProblemRow(QFrame):
         title = QLabel(problem.title)
         title.setWordWrap(True)
         apply_font(title, 14, bold=True, extra="color: {};".format(
-            COLORS["error"] if is_error else COLORS["text"]))
+            COLORS["on_error_container"] if is_error else COLORS["text"]))
         root.addWidget(title)
 
         solution = QLabel("Yechim: " + problem.solution)

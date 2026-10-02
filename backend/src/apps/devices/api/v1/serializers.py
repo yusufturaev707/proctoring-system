@@ -306,6 +306,13 @@ class DeviceTokenSerializer(serializers.ModelSerializer):
     region_name = serializers.CharField(
         source="computer.zone.region.name", read_only=True, default=""
     )
+    #: Bino va viloyat ID'lari - qayta biriktirish oynasi qidiruvni
+    #: qurilmaning HOZIRGI binosidan boshlaydi (odatda mashina o'sha
+    #: binoda, faqat boshqa stolda).
+    computer_zone = serializers.IntegerField(source="computer.zone_id", read_only=True, default=None)
+    computer_region = serializers.IntegerField(
+        source="computer.zone.region_id", read_only=True, default=None
+    )
     computer_status = serializers.CharField(source="computer.status", read_only=True, default="")
     #: Kompyuter yozuvidagi (administrator kiritgan) UUID - client
     #: aytgan `reported_machine_uuid` bilan yonma-yon ko'rsatiladi.
@@ -327,6 +334,7 @@ class DeviceTokenSerializer(serializers.ModelSerializer):
         model = DeviceToken
         fields = (
             "id", "device_id", "computer", "computer_code", "computer_number", "zone_name", "region_name",
+            "computer_zone", "computer_region",
             "hardware_fingerprint", "app_version", "app_hash", "status",
             "computer_status", "is_online", "online_staff", "online_state",
             "last_used_at", "last_ip", "reported_public_ip", "reported_lan_ip",

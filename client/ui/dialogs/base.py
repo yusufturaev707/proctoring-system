@@ -167,20 +167,26 @@ class CardDialog(QDialog):
 
         self.card = QFrame()
         self.card.setObjectName("dialogCard")
+        # MD3 dialog: RAMKASIZ, 28 px, sirt - eng yorug' konteyner (ichki
+        # bloklar `surface_container_low` - ular TON bilan ajraladi).
+        # Ilgari 1 px kulrang ramka bor edi va ichki bloklarning
+        # ramkalari bilan birga ichma-ich chegaralar hosil qilardi.
         self.card.setStyleSheet(
             """
             QFrame#dialogCard {
                 background-color: %s;
                 border-radius: %spx;
-                border: 1px solid %s;
+                border: none;
             }
             """
-            % (COLORS["surface"], CARD_RADIUS, COLORS["border"])
+            % (COLORS["surface_container_lowest"], CARD_RADIUS)
         )
+        # MD3 elevation 3: keng va yumshoq soya. Ilgari 120 alfali qora
+        # soya kartaning pastida qattiq dog' bo'lib ko'rinardi.
         shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(56)
-        shadow.setOffset(0, 16)
-        shadow.setColor(QColor(0, 0, 0, 120))
+        shadow.setBlurRadius(48)
+        shadow.setOffset(0, 12)
+        shadow.setColor(QColor(16, 32, 20, 70))
         self.card.setGraphicsEffect(shadow)
         outer.addWidget(self.card)
 
@@ -235,6 +241,9 @@ class CardDialog(QDialog):
             policy.setHeightForWidth(True)
             label.setSizePolicy(policy)
             width = label.width() or self.content_width
-            label.setMinimumHeight(label.heightForWidth(max(1, width)))
+            # Bo'sh yorliqda (masalan yashirin `MessageBar`) `heightForWidth`
+            # -1 qaytaradi va Qt "Negative sizes (0,-1)" ogohlantirishini
+            # beradi - manfiy qiymat 0 ga tushiriladi.
+            label.setMinimumHeight(max(0, label.heightForWidth(max(1, width))))
         self.body.invalidate()
         self.adjustSize()

@@ -268,5 +268,61 @@ class SingleInstanceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 7)
 
 
+class SecondInstanceNoticeTests(unittest.TestCase):
+    """Ikkinchi nusxa JIMGINA yopilmaydi - xodim belgini qayta bosmasin."""
+
+    def test_existing_window_is_activated(self):
+        from core import single_instance as s
+
+        with mock.patch.object(s, "_find_main_window", return_value=1234), \
+                mock.patch.object(s, "_activate") as activate, \
+                mock.patch.object(s, "_show_starting_notice") as notice, \
+                mock.patch.object(s.sys, "platform", "win32"):
+            self.assertEqual(s.notify_running("ProctoringClient"), "activated")
+        activate.assert_called_once_with(1234)
+        notice.assert_not_called()
+
+    def test_still_loading_shows_notice(self):
+        from core import single_instance as s
+
+        with mock.patch.object(s, "_find_main_window", return_value=0), \
+                mock.patch.object(s, "_show_starting_notice", return_value=True), \
+                mock.patch.object(s.sys, "platform", "win32"):
+            self.assertEqual(s.notify_running("ProctoringClient"), "notice")
+
+    def test_failure_is_swallowed(self):
+        from core import single_instance as s
+
+        with mock.patch.object(s, "_find_main_window", side_effect=OSError("x")), \
+                mock.patch.object(s.sys, "platform", "win32"):
+            self.assertEqual(s.notify_running("ProctoringClient"), "none")
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows API")
+    def test_only_one_notice_at_a_time(self):
+        """Boshqa nusxa xabarni ko'rsatib turgan bo'lsa - yangi oyna ochilmaydi."""
+        import ctypes
+        from ctypes import wintypes
+
+        from core import single_instance as s
+
+        name = "Local\\ProctoringClient.TestNotice.{}".format(os.getpid())
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateMutexW.argtypes = (wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR)
+        kernel32.CreateMutexW.restype = wintypes.HANDLE
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        held = kernel32.CreateMutexW(None, False, name)
+        self.addCleanup(kernel32.CloseHandle, held)
+
+        with mock.patch.object(s, "NOTICE_MUTEX_NAME", name):
+            # Xabar oynasi CHIQMASLIGI kerak - aks holda test 4 s kutardi.
+            self.assertFalse(s._show_starting_notice("ProctoringClient"))
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows API")
+    def test_unknown_title_finds_nothing(self):
+        from core import single_instance as s
+
+        self.assertEqual(s._find_main_window("Yo'q oyna {}".format(os.getpid())), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

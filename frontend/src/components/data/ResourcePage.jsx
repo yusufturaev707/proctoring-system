@@ -646,7 +646,10 @@ export default function ResourcePage({
           fetching={resource.isFetching}
           error={resource.error}
           onRetry={resource.refetch}
-          onRowClick={onRowClick}
+          // Ikkinchi argument - sahifa amallari: tafsilot oynasidan
+          // "Tahrirlash" shu sahifaning formasini ochadi (ikkinchi forma
+          // yasamasdan).
+          onRowClick={onRowClick && ((params, event) => onRowClick(params, { event, openEdit }))}
           rowCount={resource.total}
           paginationModel={resource.paginationModel}
           onPaginationModelChange={resource.setPaginationModel}

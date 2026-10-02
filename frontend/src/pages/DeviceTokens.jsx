@@ -1,8 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  Alert, Autocomplete, Badge, Box, Button, Chip, Dialog, DialogActions, DialogContent,
-  DialogTitle, IconButton, Stack, TextField, ToggleButton, ToggleButtonGroup, Tooltip, Typography,
+  Alert, Badge, Box, Button, Chip, IconButton, Stack, ToggleButton, ToggleButtonGroup, Tooltip, Typography,
 } from '@mui/material'
 import BlockIcon from '@mui/icons-material/BlockOutlined'
 import LockOpenIcon from '@mui/icons-material/LockOpenOutlined'
@@ -12,8 +11,9 @@ import DoneAllIcon from '@mui/icons-material/DoneAllOutlined'
 import ResourcePage from '../components/data/ResourcePage'
 import ConfirmDialog from '../components/ConfirmDialog'
 import DeviceDetailSheet from '../components/devices/DeviceDetailSheet'
+import RebindDialog from '../components/devices/RebindDialog'
 import { useAuth } from '../context/AuthContext'
-import { LastSeenCell, regionZoneFilters, useComputerOptions, useRegionOptions, useZoneOptions } from './crud/shared'
+import { LastSeenCell, regionZoneFilters, useRegionOptions, useZoneOptions } from './crud/shared'
 import { deviceTokens as devicesApi } from '../api/endpoints'
 import { useUi } from '../context/UiContext'
 import { AI_PROFILE_LABEL, computerLabel, DEVICE_STATUS_LABEL } from '../utils/labels'
@@ -434,57 +434,6 @@ export default function DeviceTokens() {
 }
 
 const countLabel = (value) => (value == null ? '' : ` · ${value}`)
-
-/**
- * Qurilmani boshqa kompyuterga biriktirish.
- *
- * Asosiy holat — mashina obrazi ko'chirilgan: `device_id` diskdagi fayl
- * bilan birga ko'chadi va handshake'dagi MAC tekshiruvi `mismatch`
- * beradi (client "Davom etish" ni bloklaydi). To'g'ri javob — qurilmani
- * client HAQIQATAN turgan kompyuterga o'tkazish. Server viloyat
- * doirasini va hisobdan chiqarilgan mashinani o'zi tekshiradi.
- */
-function RebindDialog({ device, loading, onSave, onClose }) {
-  const { options } = useComputerOptions()
-  const [value, setValue] = useState(null)
-  const current = options.find((option) => option.value === device.computer) || null
-  const selected = value ?? current
-
-  return (
-    <Dialog open onClose={loading ? undefined : onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Kompyuterga biriktirish</DialogTitle>
-      <DialogContent>
-        <Stack spacing={2} sx={{ pt: 0.5 }}>
-          <Typography variant="body2" color="text.secondary">
-            Mashina obrazi ko‘chirilganda client boshqa kompyuterning qurilma ID’si bilan
-            keladi va MAC tekshiruvi «boshqa kompyuter» deb to‘xtatadi. Qurilmani client
-            aslida turgan kompyuterga biriktiring.
-          </Typography>
-          <DeviceDetails device={device} />
-          <Autocomplete
-            options={options}
-            value={selected}
-            onChange={(_, option) => setValue(option)}
-            isOptionEqualToValue={(option, item) => option.value === item.value}
-            getOptionLabel={(option) => option?.label || ''}
-            renderInput={(params) => <TextField {...params} label="Kompyuter" autoFocus />}
-            noOptionsText="Kompyuter topilmadi"
-          />
-        </Stack>
-      </DialogContent>
-      <DialogActions sx={{ px: 3, pb: 2 }}>
-        <Button onClick={onClose} disabled={loading}>Bekor qilish</Button>
-        <Button
-          variant="contained"
-          disabled={loading || !selected || selected.value === device.computer}
-          onClick={() => onSave(selected.value)}
-        >
-          Biriktirish
-        </Button>
-      </DialogActions>
-    </Dialog>
-  )
-}
 
 function DeviceDetails({ device }) {
   return (

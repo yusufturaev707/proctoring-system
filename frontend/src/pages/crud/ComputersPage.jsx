@@ -10,6 +10,7 @@ import {
 } from './shared'
 import { computers as computersApi } from '../../api/endpoints'
 import ComputerImportDialog from '../../components/computers/ComputerImportDialog'
+import ComputerDetailDialog from '../../components/computers/ComputerDetailDialog'
 import { useAuth } from '../../context/AuthContext'
 import { normalizeMachineUuid } from '../../utils/validation'
 
@@ -41,6 +42,9 @@ export default function ComputersPage() {
   const { options: cameraOptions } = useCameraOptions()
   const { can } = useAuth()
   const [importOpen, setImportOpen] = useState(false)
+  // Qator bosilganda - kompyuterning to'liq kartasi. `openEdit` sahifaning
+  // o'z formasini ochadi: kartadagi "Tahrirlash" ikkinchi forma yasamaydi.
+  const [detail, setDetail] = useState(null)
 
   return (
     <>
@@ -55,6 +59,7 @@ export default function ComputersPage() {
       defaultSort={{ field: 'number', sort: 'asc' }}
       defaults={{ is_active: true }}
       getRowLabel={(row) => row?.label || row?.inventory_code}
+      onRowClick={(params, { openEdit }) => setDetail({ row: params.row, openEdit })}
       deleteConfirmPhrase
       deleteDescription="Kompyuterga bog‘langan sessiyalar tarixi saqlanib qoladi, lekin qurilma tokeni bekor bo‘ladi."
       // Ustunlar ixcham: inventar kodi, bino va oxirgi signal jadvaldan
@@ -259,6 +264,19 @@ export default function ComputersPage() {
       ]}
     />
     <ComputerImportDialog open={importOpen} onClose={() => setImportOpen(false)} />
+    {detail && (
+      <ComputerDetailDialog
+        row={detail.row}
+        // "Savat"dagi (o'chirilgan) yozuv tahrirlanmaydi - avval tiklanadi.
+        canEdit={can('devices.manage') && !detail.row.deleted_at}
+        onEdit={(row) => {
+          const { openEdit } = detail
+          setDetail(null)
+          openEdit(row)
+        }}
+        onClose={() => setDetail(null)}
+      />
+    )}
     </>
   )
 }

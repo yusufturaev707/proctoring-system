@@ -63,7 +63,7 @@ class IssueRow(QFrame):
             14,
             bold=True,
             extra="color: {};".format(
-                COLORS["error"] if issue.blocking else COLORS["text"]
+                COLORS["on_error_container"] if issue.blocking else COLORS["text"]
             ),
         )
         title.setWordWrap(True)

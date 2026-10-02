@@ -144,7 +144,9 @@ FACE_DET_THRESH = _env_float("FACE_DET_THRESH", 0.6)
 # shkalada. Client ularni `score_to_cosine()` bilan o'giradi.
 #
 # Bu qiymat sozlama umuman kelmagan holat uchun (tarmoq xatosi):
-# 0.42 cosine ~ 71 ball, ya'ni standart chegara bilan bir xil.
+# 0.42 cosine = 42 ball (`similarity_score`: `max(0, cos) * 100`),
+# modeldagi standart chegaradan (`Setting.faceid_min_score_*` = 40)
+# biroz qat'iyroq.
 # Uni kattalashtirish aybsiz talabgorni to'sardi, kichraytirish esa
 # tekshiruvni ma'nosiz qilardi.
 FACE_MATCH_THRESHOLD = _env_float("FACE_MATCH_THRESHOLD", 0.42)

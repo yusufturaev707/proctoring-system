@@ -1294,6 +1294,15 @@ ProctoringClientSetup-1.0.0-gpu.exe /VERYSILENT [/INVENTORY_CODE=INV-001]
   (`ProctoringClientCheck.exe`, `smoke_check.py`) provayderni inferensiyadan
   keyin o'qiydi.
 * Avtostart — Task Scheduler (`installer/autostart.ps1`), `HKLM\Run` emas.
+* **Bitta nusxa** — `core/single_instance.py` (mutex `Local\ProctoringClient.SingleInstance`,
+  `main()` ning birinchi qadami; `--keyboard-hook`/`--watchdog` olmaydi).
+  Ikkinchi nusxa JIMGINA yopilmaydi (`notify_running`): birinchisining
+  oynasi bor — oldinga chiqaradi, hali yuklanmoqda — "kuting" xabari
+  (4 s, o'zi yopiladi, bir vaqtda bitta). Birinchi nusxa QApplication
+  paydo bo'lishi bilan splash ko'rsatadi (`ui/widgets/startup_splash.py`) —
+  tozalash bosqichlaridan KEYIN (ular paytida o'z oynamiz ko'rinmaydi,
+  `main._close_other_apps` izohi). Asosiy oyna sarlavhasi = `APP_NAME`
+  (ikkinchi nusxa shu bo'yicha qidiradi), splash'niki boshqa.
 * Yangilash imtihondan TASHQARIDA (o'rnatuvchi `taskkill /F` qiladi).
 * Build mashinasida `ProctoringClient.exe` ni `.env` SIZ ochmang — standart
   to'liq kiosk.

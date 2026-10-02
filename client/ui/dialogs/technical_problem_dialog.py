@@ -135,12 +135,12 @@ class TechnicalProblemDialog(CardDialog):
         for index, (code, label) in enumerate(KINDS):
             chip = QPushButton(label)
             chip.setCursor(Qt.CursorShape.PointingHandCursor)
-            chip.setStyleSheet(chip_style(selected=code == self._kind))
             chip.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             chip.clicked.connect(lambda _checked=False, value=code: self._select(value))
             self._chips[code] = chip
             chips_grid.addWidget(chip, index // 3, index % 3)
         layout.addLayout(chips_grid)
+        self._paint_chips()
 
         # --- Tavsif ----------------------------------------------------
         layout.addSpacing(16)
@@ -157,14 +157,18 @@ class TechnicalProblemDialog(CardDialog):
             """
             QTextEdit {{
                 background-color: {surface};
-                border: 1.5px solid {border};
-                border-radius: 14px;
+                border: 1px solid {outline_variant};
+                border-radius: 12px;
                 padding: 10px 12px;
                 font-size: 14px;
                 color: {text};
             }}
+            QTextEdit:hover {{
+                border-color: {outline};
+            }}
             QTextEdit:focus {{
                 border: 2px solid {primary};
+                padding: 9px 11px;
             }}
             """.format(**COLORS)
         )
@@ -208,8 +212,21 @@ class TechnicalProblemDialog(CardDialog):
     # ------------------------------------------------------------------
     def _select(self, code: str) -> None:
         self._kind = code
+        self._paint_chips()
+
+    def _paint_chips(self) -> None:
+        """
+        MD3 filter chip: tanlangani ✓ belgisi bilan.
+
+        Tanlov faqat RANG bilan ko'rsatilmaydi (`chip_style` izohi):
+        belgi rang ajratolmaydigan operator uchun ham tanlovni aytadi.
+        Matn `KINDS` dan qayta yoziladi - belgi yorliqqa yopishib qolmaydi.
+        """
+        labels = dict(KINDS)
         for value, chip in self._chips.items():
-            chip.setStyleSheet(chip_style(selected=value == code))
+            selected = value == self._kind
+            chip.setText(("✓  " if selected else "") + labels[value])
+            chip.setStyleSheet(chip_style(selected=selected))
 
     def _on_send(self) -> None:
         if not self.description:

@@ -25,9 +25,12 @@ from collections import deque
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtWidgets import QFrame, QLabel, QPushButton, QVBoxLayout
+from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import QFrame, QGraphicsDropShadowEffect, QLabel, QPushButton, QVBoxLayout
 
 from services import net_policy
+from ui.styles import COLORS, primary_button_style
+from ui.widgets.indicators import StateBadge
 
 log = logging.getLogger(__name__)
 
@@ -209,38 +212,71 @@ class WebErrorPanel(QFrame):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
+        # MD3: sahifa foni (tinted surface) ustida markazdagi karta - belgi,
+        # sarlavha, izoh, sanoq va bitta "pill" tugma. Dialoglar bilan BIR
+        # XIL ko'rinish (`StateBadge`, 28 px karta): operator uchun bu ham
+        # "tizim xabari", test sahifasining bir qismi emas.
         self.setObjectName("webErrorPanel")
         self.setStyleSheet(
-            "QFrame#webErrorPanel { background-color: #F1F5F4; }"
+            "QFrame#webErrorPanel {{ background-color: {bg}; }}"
+            "QFrame#webErrorCard {{ background-color: {card}; border: none; border-radius: 28px; }}".format(
+                bg=COLORS["background"], card=COLORS["surface_container_lowest"],
+            )
         )
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(48, 48, 48, 48)
-        layout.setSpacing(16)
-        layout.addStretch(1)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(48, 48, 48, 48)
+        outer.addStretch(1)
 
-        self._title = QLabel(self)
-        self._title.setProperty("role", "title")
+        card = QFrame(self)
+        card.setObjectName("webErrorCard")
+        card.setMaximumWidth(560)
+        shadow = QGraphicsDropShadowEffect(card)
+        shadow.setBlurRadius(40)
+        shadow.setOffset(0, 8)
+        shadow.setColor(QColor(16, 32, 20, 40))
+        card.setGraphicsEffect(shadow)
+        outer.addWidget(card, 0, Qt.AlignmentFlag.AlignHCenter)
+        outer.addStretch(2)
+
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(40, 36, 40, 32)
+        layout.setSpacing(12)
+
+        self._badge = StateBadge(size=64)
+        self._badge.set_state("warning")
+        layout.addWidget(self._badge, 0, Qt.AlignmentFlag.AlignHCenter)
+        layout.addSpacing(4)
+
+        self._title = QLabel(card)
         self._title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._title.setWordWrap(True)
+        self._title.setStyleSheet(
+            "font-size: 22px; font-weight: 700; color: {};".format(COLORS["on_surface"])
+        )
         layout.addWidget(self._title)
 
-        self._text = QLabel(self)
+        self._text = QLabel(card)
         self._text.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._text.setWordWrap(True)
-        self._text.setMaximumWidth(640)
-        layout.addWidget(self._text, 0, Qt.AlignmentFlag.AlignHCenter)
+        self._text.setStyleSheet(
+            "font-size: 15px; color: {};".format(COLORS["on_surface_variant"])
+        )
+        layout.addWidget(self._text)
 
-        self._countdown_label = QLabel(self)
-        self._countdown_label.setProperty("role", "caption")
+        self._countdown_label = QLabel(card)
         self._countdown_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._countdown_label.setStyleSheet(
+            "font-size: 13px; color: {};".format(COLORS["outline"])
+        )
         layout.addWidget(self._countdown_label)
+        layout.addSpacing(8)
 
-        self._button = QPushButton("Qayta yuklash", self)
+        self._button = QPushButton("Qayta yuklash", card)
         self._button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._button.setMinimumWidth(220)
+        self._button.setMinimumWidth(240)
+        self._button.setStyleSheet(primary_button_style(48))
         self._button.clicked.connect(self._on_clicked)
         layout.addWidget(self._button, 0, Qt.AlignmentFlag.AlignHCenter)
-        layout.addStretch(2)
 
         self._remaining = 0
         self._tick = QTimer(self)

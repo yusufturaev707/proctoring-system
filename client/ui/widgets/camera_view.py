@@ -415,8 +415,8 @@ class PhotoView(QLabel):
         self.setStyleSheet(
             "background-color: {}; border: 1px dashed {}; border-radius: {}px; "
             "color: {}; font-size: 13px;".format(
-                COLORS["surface_alt"], COLORS["border_strong"], _PHOTO_RADIUS,
-                COLORS["text_muted"],
+                COLORS["surface_container_low"], COLORS["outline_variant"], _PHOTO_RADIUS,
+                COLORS["outline"],
             )
         )
         self.setText(text)
@@ -429,8 +429,10 @@ class PhotoView(QLabel):
             return False
         self._source = pixmap
         self.setStyleSheet(
-            "background-color: {}; border: 1px solid {}; border-radius: {}px;".format(
-                COLORS["surface"], COLORS["border"], _PHOTO_RADIUS
+            # Ramkasiz: rasm o'zi yumaloq qirqilgan (`_rounded`), fon esa
+            # tonal - MD3 "media" konteyneri.
+            "background-color: {}; border: none; border-radius: {}px;".format(
+                COLORS["surface_container_low"], _PHOTO_RADIUS
             )
         )
         self.setPixmap(self._rounded(pixmap))

@@ -31,10 +31,12 @@ class StatusPill(QWidget):
     payt login/parol yozadi va model odatda undan oldin tayyor bo'ladi.
     """
 
+    #: Indikator ranglari - `inverse_surface` (to'q) fonda o'qiladigan MD3
+    #: "dark" tonlari (`SNACKBAR_ACCENTS` bilan bir oila).
     STATES = {
-        "loading": COLORS["warning"],
-        "ready": COLORS["primary"],
-        "error": COLORS["error"],
+        "loading": "#FFB870",
+        "ready": "#8DD9A2",
+        "error": "#FFB4AB",
     }
 
     def __init__(self, parent=None) -> None:
@@ -65,13 +67,14 @@ class StatusPill(QWidget):
         width, height = self.width(), self.height()
         color = QColor(self.STATES[self._state])
 
-        background = QColor(color)
-        background.setAlpha(30)
-        border = QColor(color)
-        border.setAlpha(90)
+        # MD3 "inverse" konteyner: to'q neytral fon + och matn. Ilgari fon
+        # holat rangining 12% i edi va login sahifasining to'q yashil
+        # fonida to'q sariq matn deyarli o'qilmasdi.
+        background = QColor(COLORS["inverse_surface"])
+        background.setAlpha(235)
         painter.setBrush(QBrush(background))
-        painter.setPen(QPen(border, 1))
-        painter.drawRoundedRect(QRectF(0.5, 0.5, width - 1, height - 1), height / 2, height / 2)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(QRectF(0, 0, width, height), height / 2, height / 2)
 
         cx, cy, radius = 17.0, height / 2, 7.0
         if self._state == "loading":
@@ -98,7 +101,7 @@ class StatusPill(QWidget):
             painter.setBrush(QBrush(color))
             painter.drawEllipse(QRectF(cx - radius, cy - radius, radius * 2, radius * 2))
 
-        painter.setPen(color.darker(135))
+        painter.setPen(QColor(COLORS["inverse_on_surface"]))
         painter.setFont(QFont("Segoe UI", 10, QFont.Weight.DemiBold))
         painter.drawText(
             QRectF(cx + radius + 10, 0, width - (cx + radius + 16), height),
@@ -289,12 +292,24 @@ class BusyOverlay(QWidget):
 
 
 class MessageBar(QLabel):
-    """Xato/muvaffaqiyat xabari. Bo'sh bo'lsa joy egallamaydi."""
+    """
+    Xato/muvaffaqiyat xabari. Bo'sh bo'lsa joy egallamaydi.
+
+    BALANDLIGINI O'ZI HISOBLAYDI (`_fit`). O'raladigan `QLabel` layout'ga
+    BIR QATORLIK balandlik aytadi: login kartasida uch qatorli xabar
+    ("Tashqi IP manzilga ruxsat yo'q...") 50 px ga siqilib, yarmi
+    ko'rinmay qolardi - operator nima qilishni o'qiy olmasdi. Endi
+    minimal balandlik haqiqiy kenglikdagi `heightForWidth` ga teng va
+    karta xabar sig'guncha o'sadi.
+    """
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWordWrap(True)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        policy = self.sizePolicy()
+        policy.setHeightForWidth(True)
+        self.setSizePolicy(policy)
         self.hide()
 
     def show_message(self, text: str, kind: str = "error") -> None:
@@ -304,21 +319,45 @@ class MessageBar(QLabel):
         self.setText(text)
         self.setStyleSheet(message_style(kind))
         self.show()
+        self._fit()
 
     def clear_message(self) -> None:
         self.setText("")
+        self.setMinimumHeight(0)
         self.hide()
 
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        # Kenglik layout'da aniqlangach - balandlik shu kenglik bo'yicha.
+        self._fit()
 
-#: Snackbar ranglari - `message_style` bilan BIR XIL jadval.
+    def _fit(self) -> None:
+        if not self.text():
+            return
+        width = self.width()
+        if width <= 1 and self.parentWidget() is not None:
+            # Hali joylashtirilmagan: ota kenglikdan (chetlarsiz) taxmin.
+            width = self.parentWidget().contentsRect().width()
+        needed = self.heightForWidth(max(1, width))
+        # `heightForWidth` bo'sh/o'lchanmagan yorliqda -1 qaytaradi -
+        # `setMinimumHeight(-1)` Qt'da "Negative sizes" ogohlantirishi.
+        if needed > 0 and needed != self.minimumHeight():
+            self.setMinimumHeight(needed)
+
+
+#: Snackbar jiddiylik urg'usi - chap chetdagi chiziq rangi.
 #:
-#: Alohida turadi, chunki bu yerda uslub ikki vidjetga bo'linadi
-#: (konteyner va yorliq), `message_style` esa bitta satr qaytaradi.
-SNACKBAR_COLORS = {
-    "error": (COLORS["error_soft"], COLORS["error"], "#FCA5A5"),
-    "success": (COLORS["success_soft"], COLORS["primary_dark"], "#86EFAC"),
-    "warning": (COLORS["warning_soft"], COLORS["warning"], "#FCD34D"),
-    "info": (COLORS["info_soft"], "#0369A1", "#7DD3FC"),
+#: MD3 snackbar BITTA rangda (`inverse_surface`): test sahifasi ustida
+#: u har qanday fonda o'qiladi va sahifaning o'z ranglari bilan
+#: aralashmaydi. Ilgari xato - och qizil, muvaffaqiyat - och yashil fon
+#: edi va oq test sahifasi ustida xabar deyarli ko'rinmasdi. Jiddiylik
+#: endi chap chetdagi rangli chiziq bilan - to'q fonda o'qiladigan
+#: MD3 "dark" tonlari.
+SNACKBAR_ACCENTS = {
+    "error": "#FFB4AB",
+    "success": "#8DD9A2",
+    "warning": "#FFB870",
+    "info": "#82D3E0",
 }
 
 
@@ -369,21 +408,22 @@ class Snackbar(QFrame):
             self.clear_message()
             return
         self._label.setText(text)
-        background, color, border = SNACKBAR_COLORS.get(kind, SNACKBAR_COLORS["error"])
+        accent = SNACKBAR_ACCENTS.get(kind, SNACKBAR_ACCENTS["error"])
         # Fon KONTEYNERDA, matn rangi YORLIQDA: `QFrame#snackbar`
         # selektori bolalarga tushmaydi va yorliq rangsiz qolardi.
         self.setStyleSheet(
             """
             QFrame#snackbar {{
                 background-color: {bg};
-                border: 1px solid {bd};
-                border-radius: 16px;
+                border: none;
+                border-left: 4px solid {accent};
+                border-radius: 8px;
             }}
-            """.format(bg=background, bd=border)
+            """.format(bg=COLORS["inverse_surface"], accent=accent)
         )
         self._label.setStyleSheet(
             "color: {}; font-size: 14px; font-weight: 600; "
-            "background: transparent; border: none;".format(color)
+            "background: transparent; border: none;".format(COLORS["inverse_on_surface"])
         )
         self.reposition()
         self.raise_()

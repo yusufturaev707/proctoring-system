@@ -611,7 +611,8 @@ class FaceIDPage(QWidget):
             policy.setHeightForWidth(True)
             label.setSizePolicy(policy)
             width = label.width() or _SIDE_WIDTH
-            label.setMinimumHeight(label.heightForWidth(max(1, width)))
+            # Bo'sh yorliqda -1 (`CardDialog.refit` izohi).
+            label.setMinimumHeight(max(0, label.heightForWidth(max(1, width))))
 
     # ------------------------------------------------------------------
     # Hayot sikli

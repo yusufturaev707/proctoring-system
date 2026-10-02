@@ -157,10 +157,10 @@ class PreflightPage(BrandBackdrop):
             QFrame#preflightCard {
                 background-color: %s;
                 border-radius: 28px;
-                border: 1px solid rgba(255, 255, 255, 0.16);
+                border: none;
             }
             """
-            % COLORS["surface"]
+            % COLORS["surface_container_lowest"]
         )
         shadow = QGraphicsDropShadowEffect(self)
         shadow.setBlurRadius(64)

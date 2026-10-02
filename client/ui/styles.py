@@ -1,8 +1,15 @@
 """
-Dizayn tizimi - yashil urg'uli, zamonaviy va toza.
+Dizayn tizimi - Material Design 3, yashil brend urg'usi bilan.
 
 Barcha ranglar SHU YERDA. Sahifalarda hex kod yozilmaydi: mavzu
 o'zgarsa (masalan boshqa muassasa brendi) o'zgarish bitta faylda qoladi.
+
+MD3 qoidalari (butun client bo'ylab):
+  * shakl: maydon 12 px, karta 16-22 px, dialog 28 px, tugma "pill";
+  * ajratish TON bilan (sirt konteynerlari), ramka bilan emas;
+  * holat - "state layer": hover yorug'roq, bosilgan to'qroq; nofaol -
+    `disabled_container` / `disabled_content`;
+  * xabar bloklari - `*_container` fon + `on_*_container` matn, ramkasiz.
 """
 
 # ---------------------------------------------------------------------
@@ -13,34 +20,87 @@ o'zgarsa (masalan boshqa muassasa brendi) o'zgarish bitta faylda qoladi.
 # haqiqiy to'siq uchun ishlatiladi, aks holda u ko'zga tashlanmay
 # qoladi.
 # ---------------------------------------------------------------------
-COLORS = {
+#
+# MATERIAL DESIGN 3 TONAL ROLLARI. Brend rangi (`primary`) o'zgarmadi -
+# qolganlari undan hosil qilingan MD3 tonal palitrasi: sirtlar yashilga
+# ozgina moyil ("tinted surface"), ajratish RAMKA bilan emas, TON bilan.
+# Ilgari har karta, xabar va blok 1 px kulrang ramkali edi va ekran
+# "jadval katakchalari" dek ko'rinardi; MD3 da ramka faqat maydon
+# (outlined text field) va outlined tugmada qoladi.
+#
+# Eski kalitlar (`primary_soft`, `surface_alt`, `border` ...) SAQLANADI -
+# ular 180 dan ortiq joyda ishlatiladi; qiymatlari mos MD3 roliga
+# tenglashtirilgan. Yangi kod MD3 nomlarini ishlatadi.
+# ---------------------------------------------------------------------
+_MD3 = {
+    # Primary (brend yashili) - asosiy amal, fokus, tanlangan holat.
     "primary": "#16A34A",
-    "primary_light": "#22C55E",
-    "primary_dark": "#15803D",
-    "primary_deep": "#064E3B",
-    "primary_soft": "#DCFCE7",
-    "accent": "#0EA5E9",
-    "background": "#F1F5F4",
-    "surface": "#FFFFFF",
-    "surface_alt": "#F8FAFB",
-    "border": "#E2E8F0",
-    "border_strong": "#CBD5E1",
-    "text": "#0F172A",
-    "text_secondary": "#64748B",
-    "text_muted": "#94A3B8",
-    "error": "#DC2626",
-    "error_soft": "#FEE2E2",
-    "warning": "#D97706",
-    "warning_soft": "#FEF3C7",
-    "success": "#16A34A",
-    "success_soft": "#DCFCE7",
-    "info_soft": "#E0F2FE",
     "on_primary": "#FFFFFF",
+    "primary_container": "#C8F1D3",
+    "on_primary_container": "#00391B",
+    # Secondary - neytral-yashil tonal elementlar (filter chip, tonal tugma).
+    "secondary_container": "#D5E8D6",
+    "on_secondary_container": "#101F13",
+    # Tertiary - ma'lumot (info) urg'usi.
+    "tertiary": "#0E6A7A",
+    "tertiary_container": "#C6EBF2",
+    "on_tertiary_container": "#001F25",
+    # Error.
+    "error": "#BA1A1A",
+    "error_container": "#FFDAD6",
+    "on_error_container": "#93000A",
+    # Warning - MD3 da yo'q, xuddi shu qoida bilan qo'shilgan.
+    "warning": "#B45309",
+    "warning_container": "#FFE2BF",
+    "on_warning_container": "#5C2B00",
+    # Sirtlar: fon -> konteynerlar (pastdan yuqoriga to'qlashadi).
+    "surface_bright": "#F6FAF5",
+    "surface_container_lowest": "#FFFFFF",
+    "surface_container_low": "#F0F5EF",
+    "surface_container": "#EAF0E9",
+    "surface_container_high": "#E4EAE3",
+    "surface_container_highest": "#DEE4DD",
+    "on_surface": "#171D19",
+    "on_surface_variant": "#414941",
+    "outline": "#717970",
+    "outline_variant": "#C1C9BF",
+    "inverse_surface": "#2C322D",
+    "inverse_on_surface": "#EDF2EB",
+}
+
+COLORS = {
+    **_MD3,
+    # --- eski nomlar -> MD3 rollari ---------------------------------
+    # Hover: primary ustiga 8% oq "state layer"; bosilgan: to'q ton.
+    "primary_light": "#2EAD5B",
+    "primary_dark": "#15803D",
+    "primary_deep": _MD3["on_primary_container"],
+    "primary_soft": _MD3["primary_container"],
+    "accent": _MD3["tertiary"],
+    "background": _MD3["surface_bright"],
+    "surface": _MD3["surface_container_lowest"],
+    "surface_alt": _MD3["surface_container_low"],
+    "border": "#DCE3DA",
+    "border_strong": _MD3["outline_variant"],
+    "text": _MD3["on_surface"],
+    "text_secondary": _MD3["on_surface_variant"],
+    "text_muted": _MD3["outline"],
+    "error_soft": _MD3["error_container"],
+    "warning_soft": _MD3["warning_container"],
+    "success": _MD3["primary"],
+    "success_soft": _MD3["primary_container"],
+    "info_soft": _MD3["tertiary_container"],
+    # MD3 nofaol holat: `on_surface` ning 12% (fon) va 38% (matn) i -
+    # oq sirt ustida hisoblangan tayyor qiymat (Qt uslubida rgba bilan
+    # aralashtirish har vidjetning ota fonga bog'liq bo'lib qolardi).
+    "disabled_container": "#E1E4E0",
+    "disabled_content": "#9FA49E",
 }
 
 FONT_FAMILY = "'Segoe UI', 'Inter', 'Roboto', sans-serif"
 
-RADIUS = 14
+#: MD3 shakl shkalasi: "medium" (maydon, ro'yxat) va "large" (karta).
+RADIUS = 12
 RADIUS_LG = 22
 
 GLOBAL_STYLESHEET = """
@@ -78,15 +138,17 @@ QLabel[role="value"] {{
     color: {text};
 }}
 
+/* Karta - sahifa fonidan TON bilan ajraladi; ingichka ramka faqat
+   yorug' monitorlarda chegarani saqlash uchun (outline_variant'dan och). */
 QFrame[role="card"] {{
     background-color: {surface};
     border: 1px solid {border};
     border-radius: {radius_lg}px;
 }}
 QFrame[role="panel"] {{
-    background-color: {surface};
-    border: 1px solid {border};
-    border-radius: {radius}px;
+    background-color: {surface_container_low};
+    border: none;
+    border-radius: 16px;
 }}
 QFrame[role="divider"] {{
     background-color: {border};
@@ -94,12 +156,13 @@ QFrame[role="divider"] {{
     border: none;
 }}
 
+/* MD3 filled button (standart tugma). */
 QPushButton {{
     background-color: {primary};
     color: {on_primary};
     border: none;
-    border-radius: {radius}px;
-    padding: 12px 26px;
+    border-radius: 22px;
+    padding: 12px 24px;
     font-size: 15px;
     font-weight: 600;
     min-height: 44px;
@@ -111,124 +174,147 @@ QPushButton:pressed {{
     background-color: {primary_dark};
 }}
 QPushButton:disabled {{
-    background-color: {border};
-    color: {text_muted};
+    background-color: {disabled_container};
+    color: {disabled_content};
 }}
 
+/* MD3 outlined button. */
 QPushButton[variant="ghost"] {{
     background-color: transparent;
-    color: {text_secondary};
-    border: 1px solid {border_strong};
+    color: {primary_dark};
+    border: 1px solid {outline};
 }}
 QPushButton[variant="ghost"]:hover {{
-    background-color: {surface_alt};
-    color: {text};
+    background-color: {surface_container_low};
+}}
+QPushButton[variant="ghost"]:pressed {{
+    background-color: {surface_container};
 }}
 QPushButton[variant="danger"] {{
     background-color: {error};
 }}
 QPushButton[variant="danger"]:hover {{
-    background-color: #EF4444;
+    background-color: #C73A36;
 }}
+/* MD3 text button. */
 QPushButton[variant="link"] {{
     background: transparent;
     color: {primary_dark};
     border: none;
-    padding: 6px 10px;
+    border-radius: 16px;
+    padding: 6px 12px;
     min-height: 28px;
     font-weight: 600;
 }}
 QPushButton[variant="link"]:hover {{
-    color: {primary};
+    background-color: {primary_container};
 }}
 
+/* MD3 outlined text field: 1 px outline_variant, fokusda 2 px primary. */
 QLineEdit, QTextEdit, QPlainTextEdit {{
     background-color: {surface};
-    border: 1.5px solid {border};
+    border: 1px solid {outline_variant};
     border-radius: {radius}px;
     padding: 12px 16px;
     font-size: 15px;
-    selection-background-color: {primary_light};
+    selection-background-color: {primary_container};
+    selection-color: {on_primary_container};
 }}
-QLineEdit:hover, QTextEdit:hover {{
-    border-color: {border_strong};
+QLineEdit:hover, QTextEdit:hover, QPlainTextEdit:hover {{
+    border-color: {outline};
 }}
 QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus {{
     border: 2px solid {primary};
     padding: 11px 15px;
 }}
 QLineEdit:disabled {{
-    background-color: {surface_alt};
-    color: {text_muted};
+    background-color: {surface_container_low};
+    color: {disabled_content};
+    border-color: {border};
 }}
 
 QComboBox {{
     background-color: {surface};
-    border: 1.5px solid {border};
+    border: 1px solid {outline_variant};
     border-radius: {radius}px;
     padding: 11px 16px;
     font-size: 15px;
     min-height: 44px;
 }}
 QComboBox:hover {{
-    border-color: {border_strong};
+    border-color: {outline};
 }}
-QComboBox:focus {{
+QComboBox:focus, QComboBox:on {{
     border: 2px solid {primary};
+    padding: 10px 15px;
 }}
 QComboBox:disabled {{
-    background-color: {surface_alt};
-    color: {text_muted};
+    background-color: {surface_container_low};
+    color: {disabled_content};
+    border-color: {border};
 }}
 QComboBox::drop-down {{
     border: none;
     width: 34px;
 }}
+/* MD3 menu: surface_container, 12 px, tanlangan qator - secondary_container. */
 QComboBox QAbstractItemView {{
-    background-color: {surface};
-    border: 1px solid {border};
-    border-radius: 10px;
-    padding: 6px;
-    selection-background-color: {primary_soft};
-    selection-color: {text};
+    background-color: {surface_container_low};
+    border: none;
+    border-radius: 12px;
+    padding: 8px 0;
+    selection-background-color: {secondary_container};
+    selection-color: {on_secondary_container};
     outline: none;
 }}
+QComboBox QAbstractItemView::item {{
+    min-height: 44px;
+    padding: 0 16px;
+}}
+QComboBox QAbstractItemView::item:hover {{
+    background-color: {surface_container_high};
+}}
 
+/* MD3 linear progress indicator: 4 px, trek - primary_container. */
 QProgressBar {{
     border: none;
-    border-radius: 4px;
-    background-color: {border};
-    height: 8px;
+    border-radius: 2px;
+    background-color: {primary_container};
+    max-height: 4px;
     text-align: center;
 }}
 QProgressBar::chunk {{
     background-color: {primary};
-    border-radius: 4px;
+    border-radius: 2px;
 }}
 
 QScrollBar:vertical {{
     background: transparent;
     width: 10px;
-    margin: 0;
+    margin: 2px;
 }}
 QScrollBar::handle:vertical {{
-    background: {border_strong};
-    border-radius: 5px;
+    background: {outline_variant};
+    border-radius: 3px;
     min-height: 36px;
 }}
 QScrollBar::handle:vertical:hover {{
-    background: {text_muted};
+    background: {outline};
 }}
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
     height: 0;
+    background: transparent;
 }}
 
+/* MD3 plain tooltip: inverse_surface, 4 px. */
 QToolTip {{
-    background-color: {text};
-    color: #FFFFFF;
+    background-color: {inverse_surface};
+    color: {inverse_on_surface};
     border: none;
     padding: 6px 10px;
-    border-radius: 8px;
+    border-radius: 4px;
+    font-size: 13px;
 }}
 """.format(
     font=FONT_FAMILY,
@@ -281,8 +367,8 @@ def primary_button_style(height: int = 52) -> str:
             background-color: {primary_dark};
         }}
         QPushButton:disabled {{
-            background-color: {border};
-            color: {text_muted};
+            background-color: {disabled_container};
+            color: {disabled_content};
         }}
     """.format(radius=height // 2, height=height, **COLORS)
 
@@ -303,15 +389,15 @@ def outlined_button_style(height: int = 44, tone: str = "neutral") -> str:
     """
     tones = {
         "neutral": (
-            COLORS["text_secondary"],       # matn
-            COLORS["border_strong"],        # ramka
-            COLORS["error_soft"],           # hover foni
+            COLORS["on_surface_variant"],   # matn
+            COLORS["outline"],              # ramka (MD3 outlined: `outline`)
+            COLORS["error_container"],      # hover foni
             COLORS["error"],                # hover matni va ramkasi
         ),
         "primary": (
             COLORS["primary_dark"],
-            COLORS["primary"],
-            COLORS["primary_soft"],
+            COLORS["outline"],
+            COLORS["primary_container"],
             COLORS["primary_dark"],
         ),
     }
@@ -320,7 +406,7 @@ def outlined_button_style(height: int = 44, tone: str = "neutral") -> str:
         QPushButton {{
             background-color: {surface};
             color: {text};
-            border: 1.5px solid {border};
+            border: 1px solid {border};
             border-radius: {radius}px;
             font-size: 14px;
             font-weight: 700;
@@ -339,9 +425,9 @@ def outlined_button_style(height: int = 44, tone: str = "neutral") -> str:
             color: {on_primary};
         }}
         QPushButton:disabled {{
-            background-color: {surface_alt};
-            border-color: {border_soft};
-            color: {text_muted};
+            background-color: transparent;
+            border-color: {disabled_container};
+            color: {disabled_content};
         }}
     """.format(
         radius=height // 2,
@@ -351,9 +437,8 @@ def outlined_button_style(height: int = 44, tone: str = "neutral") -> str:
         hover_bg=hover_bg,
         hover_fg=hover_fg,
         surface=COLORS["surface"],
-        surface_alt=COLORS["surface_alt"],
-        border_soft=COLORS["border"],
-        text_muted=COLORS["text_muted"],
+        disabled_container=COLORS["disabled_container"],
+        disabled_content=COLORS["disabled_content"],
         on_primary=COLORS["on_primary"],
     )
 
@@ -370,8 +455,8 @@ def tonal_button_style(height: int = 44) -> str:
     """
     return """
         QPushButton {{
-            background-color: {primary_soft};
-            color: {primary_deep};
+            background-color: {secondary_container};
+            color: {on_secondary_container};
             border: none;
             border-radius: {radius}px;
             font-size: 14px;
@@ -381,15 +466,16 @@ def tonal_button_style(height: int = 44) -> str:
             min-height: {height}px;
         }}
         QPushButton:hover {{
-            background-color: #BBF7D0;
+            background-color: {primary_container};
+            color: {on_primary_container};
         }}
         QPushButton:pressed {{
-            background-color: {primary};
-            color: {on_primary};
+            background-color: #B2E4BF;
+            color: {on_primary_container};
         }}
         QPushButton:disabled {{
-            background-color: {surface_alt};
-            color: {text_muted};
+            background-color: {disabled_container};
+            color: {disabled_content};
         }}
     """.format(radius=height // 2, height=height, **COLORS)
 
@@ -416,14 +502,14 @@ def danger_button_style(height: int = 48) -> str:
             min-height: {height}px;
         }}
         QPushButton:hover {{
-            background-color: #EF4444;
+            background-color: #C73A36;
         }}
         QPushButton:pressed {{
-            background-color: #B91C1C;
+            background-color: #93000A;
         }}
         QPushButton:disabled {{
-            background-color: {error_soft};
-            color: {surface};
+            background-color: {disabled_container};
+            color: {disabled_content};
         }}
     """.format(radius=height // 2, height=height, **COLORS)
 
@@ -451,14 +537,13 @@ def text_button_style(height: int = 34) -> str:
             min-height: {height}px;
         }}
         QPushButton:hover {{
-            background-color: {primary_soft};
+            background-color: {primary_container};
         }}
         QPushButton:pressed {{
-            background-color: {primary};
-            color: {on_primary};
+            background-color: #B2E4BF;
         }}
         QPushButton:disabled {{
-            color: {text_muted};
+            color: {disabled_content};
             background-color: transparent;
         }}
     """.format(radius=height // 2, height=height, **COLORS)
@@ -473,8 +558,8 @@ def chip_style(selected: bool = False, tone: str = "primary") -> str:
     farqi ma'lumotni yo'qotadi, chegara esa qoladi.
     """
     palette = {
-        "primary": (COLORS["primary_soft"], COLORS["primary_deep"], COLORS["primary"]),
-        "neutral": (COLORS["surface_alt"], COLORS["text"], COLORS["border_strong"]),
+        "primary": (COLORS["secondary_container"], COLORS["on_secondary_container"], COLORS["secondary_container"]),
+        "neutral": (COLORS["surface_container_high"], COLORS["text"], COLORS["surface_container_high"]),
     }
     fill, fg, edge = palette.get(tone, palette["primary"])
     if selected:
@@ -482,8 +567,8 @@ def chip_style(selected: bool = False, tone: str = "primary") -> str:
             QPushButton {{
                 background-color: {fill};
                 color: {fg};
-                border: 1.5px solid {edge};
-                border-radius: 16px;
+                border: 1px solid {edge};
+                border-radius: 8px;
                 padding: 0 16px;
                 min-height: 32px;
                 font-size: 13px;
@@ -493,16 +578,16 @@ def chip_style(selected: bool = False, tone: str = "primary") -> str:
     return """
         QPushButton {{
             background-color: transparent;
-            color: {text_secondary};
-            border: 1px solid {border};
-            border-radius: 16px;
+            color: {on_surface_variant};
+            border: 1px solid {outline_variant};
+            border-radius: 8px;
             padding: 0 16px;
             min-height: 32px;
             font-size: 13px;
             font-weight: 600;
         }}
         QPushButton:hover {{
-            background-color: {surface_alt};
+            background-color: {surface_container_low};
             color: {text};
         }}
     """.format(**COLORS)
@@ -559,9 +644,9 @@ def segmented_button_style(*, selected: bool, position: str = "left") -> str:
                 color: {text_muted};
             }}
         """.format(
-            fill=COLORS["primary_soft"],
-            fg=COLORS["primary_deep"],
-            edge=COLORS["border_strong"],
+            fill=COLORS["secondary_container"],
+            fg=COLORS["on_secondary_container"],
+            edge=COLORS["outline"],
             right_border=right_border,
             left_radius=left_radius,
             right_radius=right_radius,
@@ -607,19 +692,23 @@ def surface_container_style(object_name: str, *, tone: str = "low") -> str:
     ichidagi har bir matnga ramka chizib qo'yadi
     (`info_field_style` dagi bilan bir xil tuzoq).
     """
+    # RAMKASIZ: MD3 da konteyner sirtdan TON bilan ajraladi. Ilgari har
+    # blok ramkali edi va dialog ichida uchta ichma-ich chegara hosil
+    # bo'lardi (karta -> blok -> maydon).
     tones = {
-        "low": (COLORS["surface_alt"], COLORS["border"]),
-        "high": (COLORS["primary_soft"], "#BBF7D0"),
-        "error": (COLORS["error_soft"], "#FCA5A5"),
+        "low": COLORS["surface_container_low"],
+        "high": COLORS["primary_container"],
+        "error": COLORS["error_container"],
+        "warning": COLORS["warning_container"],
     }
-    background, border = tones.get(tone, tones["low"])
+    background = tones.get(tone, tones["low"])
     return """
         QFrame#{name} {{
             background-color: {bg};
-            border: 1px solid {bd};
+            border: none;
             border-radius: 16px;
         }}
-    """.format(name=object_name, bg=background, bd=border)
+    """.format(name=object_name, bg=background)
 
 
 def preview_surface_style() -> str:
@@ -646,8 +735,8 @@ def info_field_style() -> str:
     # chizib qo'yadi.
     return """
         QFrame#infoField {{
-            background-color: {surface_alt};
-            border: 1px solid {border};
+            background-color: {surface_container_low};
+            border: none;
             border-radius: 16px;
         }}
     """.format(**COLORS)
@@ -679,8 +768,8 @@ def code_field_style(height: int = 64) -> str:
     """
     return """
         QLineEdit {{
-            background-color: {surface_alt};
-            border: 1.5px solid {border};
+            background-color: {surface_container_low};
+            border: 1px solid {outline_variant};
             border-radius: 18px;
             padding: 0 18px;
             min-height: {height}px;
@@ -688,10 +777,11 @@ def code_field_style(height: int = 64) -> str:
             font-weight: 600;
             letter-spacing: 6px;
             color: {text};
-            selection-background-color: {primary_light};
+            selection-background-color: {primary_container};
+            selection-color: {on_primary_container};
         }}
         QLineEdit:hover {{
-            border-color: {border_strong};
+            border-color: {outline};
         }}
         QLineEdit:focus {{
             background-color: {surface};
@@ -703,17 +793,17 @@ def code_field_style(height: int = 64) -> str:
 def badge_style(kind: str = "success") -> str:
     """Kichik holat yorlig'i (chip)."""
     mapping = {
-        "success": (COLORS["success_soft"], COLORS["primary_dark"]),
-        "error": (COLORS["error_soft"], COLORS["error"]),
-        "warning": (COLORS["warning_soft"], COLORS["warning"]),
-        "info": (COLORS["info_soft"], "#0369A1"),
-        "muted": (COLORS["surface_alt"], COLORS["text_secondary"]),
+        "success": (COLORS["primary_container"], COLORS["on_primary_container"]),
+        "error": (COLORS["error_container"], COLORS["on_error_container"]),
+        "warning": (COLORS["warning_container"], COLORS["on_warning_container"]),
+        "info": (COLORS["tertiary_container"], COLORS["on_tertiary_container"]),
+        "muted": (COLORS["surface_container_high"], COLORS["on_surface_variant"]),
     }
     background, color = mapping.get(kind, mapping["muted"])
     return """
         background-color: {bg};
         color: {fg};
-        border-radius: 11px;
+        border-radius: 8px;
         padding: 4px 12px;
         font-size: 13px;
         font-weight: 600;
@@ -723,18 +813,18 @@ def badge_style(kind: str = "success") -> str:
 def message_style(kind: str = "error") -> str:
     """Forma ostidagi xabar qatori."""
     mapping = {
-        "error": (COLORS["error_soft"], COLORS["error"], "#FCA5A5"),
-        "success": (COLORS["success_soft"], COLORS["primary_dark"], "#86EFAC"),
-        "warning": (COLORS["warning_soft"], COLORS["warning"], "#FCD34D"),
-        "info": (COLORS["info_soft"], "#0369A1", "#7DD3FC"),
+        "error": (COLORS["error_container"], COLORS["on_error_container"]),
+        "success": (COLORS["primary_container"], COLORS["on_primary_container"]),
+        "warning": (COLORS["warning_container"], COLORS["on_warning_container"]),
+        "info": (COLORS["tertiary_container"], COLORS["on_tertiary_container"]),
     }
-    background, color, border = mapping.get(kind, mapping["error"])
+    background, color = mapping.get(kind, mapping["error"])
     return """
         background-color: {bg};
         color: {fg};
-        border: 1px solid {bd};
+        border: none;
         border-radius: 12px;
-        padding: 11px 16px;
+        padding: 12px 16px;
         font-size: 14px;
         font-weight: 600;
-    """.format(bg=background, fg=color, bd=border)
+    """.format(bg=background, fg=color)

@@ -136,10 +136,10 @@ class SeatBadge(QFrame):
             """
             QFrame#seatBadge {{
                 background-color: {bg};
-                border: 1px solid {border};
+                border: none;
                 border-radius: 16px;
             }}
-            """.format(bg=COLORS["primary_soft"], border="#BBF7D0")
+            """.format(bg=COLORS["primary_container"])
         )
         box = QVBoxLayout(self)
         box.setContentsMargins(18, 6, 18, 7)
@@ -149,7 +149,7 @@ class SeatBadge(QFrame):
         caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
         caption.setStyleSheet(
             "font-size: 10px; font-weight: 800; letter-spacing: 1.2px; "
-            "background: transparent; color: {};".format(COLORS["primary_dark"])
+            "background: transparent; color: {};".format(COLORS["on_primary_container"])
         )
         box.addWidget(caption)
 
