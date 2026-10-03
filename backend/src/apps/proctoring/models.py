@@ -381,6 +381,12 @@ class ProctoringEvent(models.Model):
         RDP_DETECTED = "rdp_detected", _("Masofaviy boshqaruv aniqlandi")
         VM_DETECTED = "vm_detected", _("Virtual mashina aniqlandi")
         PROCESS_BLACKLISTED = "process_blacklisted", _("Taqiqlangan dastur")
+        # Fleshka, tashqi disk, telefon, naushnik, modem... imtihon
+        # DAVOMIDA ulangan/uzilgan (client `services/peripherals.py`).
+        # Boshida ulangani ham `connected`, `payload.at_start` bilan.
+        # `payload.kind` jiddiylikni belgilaydi (client beradi).
+        PERIPHERAL_CONNECTED = "peripheral_connected", _("Qo'shimcha qurilma ulandi")
+        PERIPHERAL_REMOVED = "peripheral_removed", _("Qo'shimcha qurilma uzildi")
         # --- Yuz / obyekt ---
         FACE_NOT_FOUND = "face_not_found", _("Yuz topilmadi")
         FACE_MISMATCH = "face_mismatch", _("Yuz mos kelmadi")

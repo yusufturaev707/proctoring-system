@@ -36,6 +36,11 @@ export const EVENT_CATEGORY = {
   process_blacklisted: 'integrity',
   client_anomaly: 'integrity',
   multi_monitor: 'integrity',
+  // Fleshka, telefon, naushnik... - mashinaga tashqaridan nima kirdi.
+  // Uzilish ham shu turkumda: "qachon olib qo'yildi" ulanish bilan
+  // bir juft bo'lib o'qiladi.
+  peripheral_connected: 'integrity',
+  peripheral_removed: 'integrity',
   camera_lost: 'integrity',
   camera_blocked: 'integrity',
   // Kuzatuvning O'Z nosozligi ham butunlik masalasi: u "hech narsa
@@ -146,7 +151,10 @@ export function eventDetail(eventType, detail) {
       detail.repeats > 1 ? `${detail.key} (${detail.repeats} marta)` : String(detail.key),
     )
   }
-  if (detail.kind) parts.push(ANOMALY_KIND[detail.kind] || String(detail.kind))
+  if (detail.at_start === true) parts.push('imtihon boshida ulangan')
+  if (detail.kind) {
+    parts.push(ANOMALY_KIND[detail.kind] || PERIPHERAL_KIND[detail.kind] || String(detail.kind))
+  }
   if (detail.reason) parts.push(ANOMALY_KIND[detail.reason] || String(detail.reason))
   if (detail.host) parts.push(String(detail.host))
 
@@ -162,6 +170,7 @@ export function eventDetail(eventType, detail) {
     parts.unshift(detail.neutralized ? 'yopildi' : 'YOPIB BO‘LMADI')
   }
   if (detail.label) parts.push(String(detail.label))
+  if (Array.isArray(detail.drives) && detail.drives.length) parts.push(detail.drives.join(', '))
   if (detail.service) parts.push(`xizmat: ${detail.service}`)
   if (detail.process) parts.push(String(detail.process))
   // Dalil — "nega shu dastur deb qaror qilindi". Apellyatsiyada
@@ -226,6 +235,18 @@ const MODULE_LABEL = {
   // Klaviatura qulfi (client `lockdown`): yopishgan tugma yoki Windows
   // olib tashlagan hook — talabgorning harakati emas.
   keyboard: 'klaviatura qulfi',
+}
+
+/** `peripheral_*` — qurilma turi (client `services/peripherals.py:KINDS`). */
+const PERIPHERAL_KIND = {
+  storage: 'disk / fleshka',
+  phone: 'telefon',
+  network: 'tarmoq / modem',
+  audio: 'audio (naushnik)',
+  bluetooth: 'Bluetooth',
+  camera: 'kamera',
+  input: 'sichqoncha / klaviatura',
+  other: 'boshqa qurilma',
 }
 
 /** Client yuboradigan sabab kodlari — o'qiladigan matnga. */

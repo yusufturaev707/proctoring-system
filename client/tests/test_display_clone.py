@@ -102,6 +102,26 @@ class CompactTests(unittest.TestCase):
         self.assertEqual(ctypes.sizeof(dc._TARGET_DEVICE_NAME), 420)
 
 
+class StartupTests(unittest.TestCase):
+    """`disable_secondary` - ishga tushishdagi yo'l (`main._disable_extra_monitors`)."""
+
+    def test_duplicate_only_still_disables_clones(self):
+        # Noutbukda amalda topilgan xato: duplicate'da `list_displays`
+        # faqat asosiy manbani beradi va funksiya `disable_clones` ga
+        # yetmasdan qaytardi - monitor faqat imtihon sahifasida o'chardi.
+        primary = dc.Display(name=r"\\.\DISPLAY1", label="panel", is_primary=True)
+        clones = dc.DisplayReport()
+        clones.disabled.append(dc.Display(name="target #11", label="HP (duplicate)"))
+        with mock.patch.object(dc, "_IS_WINDOWS", True), \
+                mock.patch.object(dc, "list_displays", return_value=[primary]), \
+                mock.patch.object(dc, "disable_clones", return_value=clones) as disable, \
+                mock.patch.object(dc, "_apply") as apply:
+            report = dc.disable_secondary()
+        disable.assert_called_once()
+        apply.assert_not_called()
+        self.assertEqual([item.label for item in report.disabled], ["HP (duplicate)"])
+
+
 class WatcherTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

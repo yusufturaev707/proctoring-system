@@ -64,6 +64,9 @@ class WebcamSource(CameraSource):
 
         self.close()
 
+        if self._current_index() is None:
+            return self._fail(self._explain(lost=False))
+
         backend = cv2.CAP_DSHOW if sys.platform == "win32" else cv2.CAP_ANY
         capture = None
         try:
@@ -145,6 +148,45 @@ class WebcamSource(CameraSource):
             self._fourcc(capture) or "?",
         )
         return True
+
+    def _current_index(self) -> Optional[int]:
+        """
+        Qaysi indeks ochiladi — HAR OCHILISHDA qurilma yo'li bo'yicha.
+
+        Indeks DirectShow sanog'idagi O'RIN: kamera uzilsa qolganlari
+        siljiydi. `factory._resolve_index` uni faqat manba YARATILGANDA
+        to'g'rilaydi, qayta ulanish esa shu obyektning `open()` ini
+        chaqiradi. Eski indeks bilan noutbukda (ichki + USB kamera,
+        USB #0) USB uzilganda ichki kamera #0 ga surilib OCHILARDI va
+        "Kamera qayta ulandi" bo'lib, kuzatuv boshqa kamera bilan davom
+        etardi.
+
+        `None` — qurilma ro'yxatda yo'q, boshqalari bor: OCHILMAYDI
+        (qayta ulanish sikli o'zini kutadi). Ro'yxat bo'sh bo'lsa eski
+        indeks qoladi: bo'sh ro'yxat COM xatosi ham bo'lishi mumkin
+        (`dshow.enumerate_devices`), kamera umuman yo'q bo'lsa esa
+        `VideoCapture` baribir ochilmaydi.
+        """
+        if not self._device_path:
+            return self._index
+        from proctoring.camera.dshow import enumerate_devices
+
+        devices = enumerate_devices()
+        if not devices:
+            return self._index
+        for item in devices:
+            if getattr(item, "device_path", "") != self._device_path:
+                continue
+            if item.index != self._index:
+                log.warning(
+                    "[%s] kamera indeksi siljigan (%s -> %s), qurilma yo'li bo'yicha "
+                    "tuzatildi: %s",
+                    self.info.role, self._index, item.index, self.info.label,
+                )
+                self._index = item.index
+                self.info.index = item.index
+            return self._index
+        return None
 
     @staticmethod
     def _fourcc(capture) -> str:

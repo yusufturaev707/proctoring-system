@@ -688,9 +688,10 @@ class CameraConfigView(ClientBaseView):
                 # qoidaga tushardi. Rolni endi OPERATOR tanlaydi -
                 # u ikkala kadrni ekranda ko'rib turibdi.
                 #
-                # Server esa faqat BINODAGI kameralar ro'yxatini
-                # beradi: client ulardan birini tanlab, oqim uchun
-                # kredensial so'raydi (`camera/stream/`).
+                # Server esa faqat SHU KOMPYUTERGA panelda biriktirilgan
+                # kameralar ro'yxatini beradi (`Computer.cameras`;
+                # biriktirilmagan bo'lsa - bo'sh): client ulardan birini
+                # tanlab, oqim uchun kredensial so'raydi (`camera/stream/`).
                 "cameras": [
                     _camera_entry(camera)
                     for camera in device_services.cameras_for_computer(computer)
@@ -720,7 +721,7 @@ class CameraStreamView(ClientBaseView):
 
     C NIMANI BERADI VA NIMANI BERMAYDI - buni aniq aytish kerak:
 
-      BERADI: kredensial faqat kompyuter turgan BINODAGI kamera
+      BERADI: kredensial faqat SHU KOMPYUTERGA biriktirilgan kamera
         uchun beriladi (`cameras_for_computer`); har bir berish
         audit izida qoladi; client uni faqat xotirada saqlaydi.
 
@@ -750,9 +751,9 @@ class CameraStreamView(ClientBaseView):
         if device is None or computer is None:
             raise SessionNotFound("Qurilma aniqlanmadi")
 
-        # DOIRA - BINO. Kompyuter turgan binodan tashqaridagi kamera
-        # boshqa jadval va boshqa proktorga tegishli: uni bu yerdan
-        # ochish bitta buzilgan mashinadan butun tarmoqni ko'rish
+        # DOIRA - SHU KOMPYUTERGA BIRIKTIRILGAN kamera (ro'yxat bilan
+        # bir qoida). Boshqa joyning kamerasini bu yerdan ochish bitta
+        # buzilgan mashinadan binoning barcha kameralarini ko'rish
         # imkonini berardi.
         camera = device_services.camera_for_computer(computer, camera_id)
         if camera is None:
@@ -762,7 +763,7 @@ class CameraStreamView(ClientBaseView):
                     "data": None,
                     "error": {
                         "code": "camera_not_available",
-                        "message": "Bu kamera kompyuter turgan binoda topilmadi",
+                        "message": "Bu kamera shu kompyuterga biriktirilmagan",
                         "details": {"camera_id": camera_id},
                     },
                 },

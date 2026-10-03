@@ -140,6 +140,7 @@ def _serialize(setting) -> dict:
         "device": {
             "detect_monitor": setting.is_detect_monitor,
             "detect_camera": setting.is_detect_camera,
+            "detect_peripherals": setting.is_detect_peripherals,
         },
         "detection": {
             "enabled": setting.is_enable_detect,
@@ -477,7 +478,7 @@ def _default_config() -> dict:
             "camera_overlay": True,
             "camera_overlay_percent": 16,
         },
-        "device": {"detect_monitor": True, "detect_camera": True},
+        "device": {"detect_monitor": True, "detect_camera": True, "detect_peripherals": True},
         "detection": {"enabled": False, "model": "", "confidence": 0.5, "frame_skip": 20, "classes": []},
         # Sozlama umuman yo'q bo'lsa ham aniqlash YOQILGAN qoladi va
         # ro'yxatning bo'shligi "himoya yo'q" degani EMAS: client'da

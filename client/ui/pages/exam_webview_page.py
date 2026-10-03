@@ -98,6 +98,11 @@ _EXIT_BUDGET_S = 9.0
 #: Yordamchi qadamga bundan kam vaqt qolsa u o'tkazib yuboriladi -
 #: bunday timeout bilan so'rov baribir ulgurmasdi.
 _MIN_STEP_TIMEOUT_S = 0.5
+#: Yuz natijasi (`CameraWorker` yo'li) shundan eskiroq bo'lsa davriy
+#: FaceID uni solishtirmaydi (s). Natija sekundiga bir necha marta
+#: keladi; eskirgani - kamera uzilgan yoki qotgan. Ilgari uzilish
+#: paytida oxirgi embedding "mos" deb sanalaverardi.
+_FACE_RESULT_MAX_AGE_S = 5.0
 
 
 class DomainAllowlistInterceptor(QWebEngineUrlRequestInterceptor):
@@ -284,6 +289,8 @@ class ExamWebViewPage(QWidget):
         self._pending_camera: Optional[CameraWorker] = None
         self._last_embedding = None
         self._last_faces = 0
+        #: Oxirgi yuz natijasi qachon kelgan (`time.monotonic`, 0 - hali yo'q).
+        self._last_face_at = 0.0
         #: Oxirgi kadr (`CameraWorker` yo'li) - dalil rasmi uchun.
         self._last_frame = None
         #: U qachon kelgan (`time.monotonic`) - skrinshot ramkasiga
@@ -1129,6 +1136,11 @@ class ExamWebViewPage(QWidget):
         ko'rinadi. Sabab `payload` da qoladi va qarorni proktor chiqaradi.
         """
         log.warning("Kamera xatosi: %s", message)
+        # Uzilishdan oldingi natija UNUTILADI: aks holda davriy FaceID
+        # uni kamera yo'q paytda ham "mos" deb sanardi (`_current_face`).
+        self._last_embedding = None
+        self._last_faces = 0
+        self._last_face_at = 0.0
         self._monitor.push_event(
             "camera_lost", severity=3, payload={"reason": message[:300]}
         )
@@ -1182,6 +1194,7 @@ class ExamWebViewPage(QWidget):
             # solishtirishga BERILMAYDI, lekin "yuz yo'q" ham emas.
             self._last_embedding = None
             self._last_faces = 1
+        self._last_face_at = time.monotonic()
         for event_type, severity, payload in self._face_episodes.observe(
             state or "", time.monotonic(), faces=self._last_faces
         ):
@@ -1192,13 +1205,19 @@ class ExamWebViewPage(QWidget):
         """
         Solishtirish uchun oxirgi natija: `(embedding, yuzlar_soni)`.
 
+        `yuzlar_soni` `None` - YANGI natija yo'q (kamera uzilgan, qotgan
+        yoki hali kadr bermagan). Bu "yuz yo'q" (0) dan boshqa holat:
+        eski natijani solishtirish uzilish paytida ham "mos" berardi.
+
         AI kuzatuv ishlayotganda kamera unda va yuz modeli ham unda
         yuklangan. Ikkinchi modelni ochish xotirani ikki barobar yeb,
         hech qanday yangi ma'lumot bermasdi.
         """
         if self._supervisor.is_active:
             embedding, faces = self._supervisor.latest_identity
-            return embedding, int(faces or 0)
+            return embedding, None if faces is None else int(faces)
+        if time.monotonic() - self._last_face_at > _FACE_RESULT_MAX_AGE_S:
+            return None, None
         return self._last_embedding, int(self._last_faces or 0)
 
     def _face_frame(self) -> Optional[bytes]:
@@ -1294,6 +1313,13 @@ class ExamWebViewPage(QWidget):
             return
 
         embedding, faces = self._current_face()
+        if faces is None:
+            # Yangi natija yo'q - kamera uzilgan yoki qotgan. Bu na "mos",
+            # na "mos emas": uzilish `camera_lost` bilan qayd etilgan,
+            # tekshiruv soni ham oshmaydi.
+            self._status["face"] = "FaceID: kamera kadri yo'q"
+            self._update_status_tooltip()
+            return
         if embedding is None or faces != 1:
             # SOLISHTIRIB BO'LMADI - "MOS KELMADI" EMAS. Yuz yo'q, bir
             # nechta yoki juda uzoq: ilgari bu `face/periodic/` ga ball 0
@@ -2081,6 +2107,7 @@ class ExamWebViewPage(QWidget):
             self.web_view.setUrl(QUrl("about:blank"))
         self._last_embedding = None
         self._last_faces = 0
+        self._last_face_at = 0.0
         # Kadr havolasi ham bo'shatiladi: keyingi talabgorning
         # sessiyasida oldingisining rasmi dalil bo'lib ketmasligi kerak.
         self._last_frame = None

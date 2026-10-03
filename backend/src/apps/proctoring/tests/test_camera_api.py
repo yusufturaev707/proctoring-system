@@ -73,9 +73,10 @@ class CameraApiTestCase(TestCase):
             REMOTE_ADDR="8.8.8.8",
         )
 
-    def make_camera(self, **kwargs) -> Camera:
+    def make_camera(self, *, bind=True, **kwargs) -> Camera:
+        """`bind` - panelda shu kompyuterga biriktirilgan (`Computer.cameras`)."""
         index = Camera.objects.count() + 1
-        return Camera.objects.create(
+        camera = Camera.objects.create(
             zone=kwargs.pop("zone", self.zone),
             **{
                 "name": f"CAM-{index}",
@@ -84,6 +85,9 @@ class CameraApiTestCase(TestCase):
                 **kwargs,
             },
         )
+        if bind:
+            self.computer.cameras.add(camera)
+        return camera
 
 
 class CameraConfigTests(CameraApiTestCase):
@@ -127,14 +131,31 @@ class CameraConfigTests(CameraApiTestCase):
 
     def test_cameras_from_other_buildings_are_not_listed(self):
         """
-        DOIRA - BINO. Boshqa binodagi kamera bu xonani jismonan
-        ko'rmaydi va uning kaliti bu mashinaga kerak emas.
+        Boshqa binodagi kamera bu xonani jismonan ko'rmaydi - bog'lanish
+        qolgan bo'lsa ham (kamera keyin boshqa binoga ko'chirilgan).
         """
         other_zone = factories.make_zone()
         self.make_camera(name="Begona", zone=other_zone)
 
         payload = self.request("get", self.url).json()["data"]
         self.assertEqual(payload["cameras"], [])
+
+    def test_unbound_building_cameras_are_not_listed(self):
+        """
+        DOIRA - KOMPYUTER. Binodagi biriktirilmagan kamera (yoki boshqa
+        kompyuterniki) ro'yxatga tushmaydi; biriktirish yo'q - bo'sh
+        ro'yxat, "binodagilarning hammasi" zaxirasi yo'q.
+        """
+        self.make_camera(name="Biriktirilmagan", bind=False)
+        neighbour = factories.make_computer(zone=self.zone)
+        neighbour.cameras.add(self.make_camera(name="Qo'shniniki", bind=False))
+
+        payload = self.request("get", self.url).json()["data"]
+        self.assertEqual(payload["cameras"], [])
+
+        own = self.make_camera(name="O'ziniki")
+        payload = self.request("get", self.url).json()["data"]
+        self.assertEqual([item["id"] for item in payload["cameras"]], [own.pk])
 
     def test_exam_policy_overrides_global(self):
         setting = factories.make_setting()
@@ -165,8 +186,8 @@ class CameraStreamTests(CameraApiTestCase):
         super().setUp()
         self.url = reverse("client-camera-stream")
 
-    def _ip_camera(self, zone=None):
-        camera = self.make_camera(login="admin", zone=zone or self.zone)
+    def _ip_camera(self, zone=None, bind=True):
+        camera = self.make_camera(login="admin", zone=zone or self.zone, bind=bind)
         device_services.set_camera_password(camera, "s3cret")
         camera.save()
         return camera
@@ -184,11 +205,7 @@ class CameraStreamTests(CameraApiTestCase):
 
     def test_camera_from_another_building_is_rejected(self):
         """
-        Bu himoyaning asosiy qatlami.
-
-        Biriktirish olib tashlangach (rolni operator tanlaydi),
-        yagona chegara BINO bo'lib qoldi: buzilgan mashina o'z
-        binosidan tashqaridagi kameraning kalitini ololmaydi.
+        Bog'lanish qolgan, lekin kamera boshqa binoda - kalit berilmaydi.
         """
         other_zone = factories.make_zone()
         camera = self._ip_camera(zone=other_zone)
@@ -196,6 +213,19 @@ class CameraStreamTests(CameraApiTestCase):
 
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json()["error"]["code"], "camera_not_available")
+
+    def test_unbound_camera_in_the_building_is_rejected(self):
+        """
+        Bu himoyaning asosiy qatlami: ro'yxat bilan bir qoida. Aks holda
+        buzilgan mashina binodagi har qanday kameraning kalitini
+        `camera_id` ni sanab olardi.
+        """
+        camera = self._ip_camera(bind=False)
+        response = self.request("post", self.url, {"camera_id": camera.pk})
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["error"]["code"], "camera_not_available")
+        self.assertFalse(AuditLog.objects.filter(action="camera_credential_issue").exists())
 
     def test_inactive_camera_is_rejected(self):
         """Nofaol kamera - hisobdan chiqarilgan uskuna, kaliti kerak emas."""

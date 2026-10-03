@@ -17,6 +17,8 @@ export const EVENT_LABEL = {
   rdp_detected: 'Masofaviy boshqaruv',
   vm_detected: 'Virtual mashina',
   process_blacklisted: 'Taqiqlangan dastur',
+  peripheral_connected: 'Qo‘shimcha qurilma ulandi',
+  peripheral_removed: 'Qo‘shimcha qurilma uzildi',
   face_not_found: 'Yuz topilmadi',
   face_mismatch: 'Yuz mos kelmadi',
   multiple_faces: 'Bir nechta yuz',

@@ -67,7 +67,7 @@ class SettingAdmin(admin.ModelAdmin):
                 )
             },
         ),
-        ("Qurilma tekshiruvi", {"fields": ("is_detect_monitor", "is_detect_camera")}),
+        ("Qurilma tekshiruvi", {"fields": ("is_detect_monitor", "is_detect_camera", "is_detect_peripherals")}),
         (
             "Obyekt aniqlash (YOLO)",
             {

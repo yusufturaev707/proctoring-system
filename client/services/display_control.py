@@ -523,9 +523,10 @@ def disable_secondary() -> DisplayReport:
     primary = next((item for item in displays if item.is_primary), None)
     report.primary = primary.name if primary else ""
 
+    # `extra` bo'sh bo'lsa ham QAYTILMAYDI: duplicate rejimida ikkala
+    # monitor bitta manbada va `EnumDisplayDevices` faqat asosiysini
+    # ko'radi — ortiqcha monitor faqat pastdagi `disable_clones` da topiladi.
     extra = [item for item in displays if not item.is_primary]
-    if not extra:
-        return report
 
     applied = False
     for display in extra:

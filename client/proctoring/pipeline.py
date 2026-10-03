@@ -57,6 +57,20 @@ log = logging.getLogger(__name__)
 #: kechiktirmaydi (5 FPS = 200 ms).
 _TICK = 0.025
 
+#: Kadr shundan eskiroq bo'lsa tahlil qilinmaydi (soniya).
+#:
+#: Kamera uzilganda oqim oxirgi kadrni ushlab qoladi (`latest_frame`
+#: uni tozalamaydi). Vaqtsiz olinsa pipeline uzilish davomida o'sha
+#: MUZLAGAN kadrni tahlil qilardi: shaxs "mos", nigoh joyida, dalil
+#: buferi bir xil kadr bilan to'lardi. Oqim 10+ FPS beradi, ya'ni
+#: 2 s - bir necha o'tkazib yuborilgan kadr emas, uzilish.
+_FRAME_MAX_AGE_S = 2.0
+
+#: Shaxs natijasi shundan eskiroq bo'lsa davriy FaceID uni olmaydi.
+#: Modul sekundiga 2-15 marta ishlaydi; sekin mashinada to'rt model
+#: bitta kadrda bo'lsa ham bir necha soniya ichida yangilanadi.
+_IDENTITY_MAX_AGE_S = 5.0
+
 #: Modellar `models/` katalogida (`client/models/README.md`).
 _YOLO_DIR = "yolo"
 _POSE_DIR = "pose"
@@ -171,6 +185,8 @@ class ProctoringPipeline(QThread):
         # hech kim kutmaydigan xabar bilan to'ldirardi. Yozish
         # atomik (bitta nom bog'lash), shuning uchun qulf kerak emas.
         self._last_identity: tuple = (None, 0)
+        #: U qachon olingan (`time.monotonic`; `None` - hali yo'q).
+        self._last_identity_at: Optional[float] = None
 
         self._rates: dict = {}
         self._latency: dict = {}
@@ -235,8 +251,14 @@ class ProctoringPipeline(QThread):
         ocholmaydi). Shuning uchun davriy tekshiruvning etaloni ham
         shu yerdan olinadi - aks holda u sessiya davomida umuman
         ishlamasdi.
+
+        `(None, None)` - YANGI natija yo'q (kamera uzilgan yoki hali
+        kadr kelmagan); "yuz yo'q" `(None, 0)` dan farqli.
         """
-        return self._last_identity
+        identity, taken_at = self._last_identity, self._last_identity_at
+        if taken_at is None or time.monotonic() - taken_at > _IDENTITY_MAX_AGE_S:
+            return (None, None)
+        return identity
 
     @property
     def risk_state(self):
@@ -413,7 +435,7 @@ class ProctoringPipeline(QThread):
     # Sikl
     # ------------------------------------------------------------------
     def _tick(self, now: float) -> None:
-        frames = self._grab_frames()
+        frames = self._grab_frames(now)
         if not frames:
             return
 
@@ -437,18 +459,21 @@ class ProctoringPipeline(QThread):
 
         self._maybe_stats(now)
 
-    def _grab_frames(self) -> dict:
+    def _grab_frames(self, now: float) -> dict:
         """
         Har roldan ENG OXIRGI kadr.
 
         Eski kadrlar ATAYLAB tashlanadi: pipeline orqada qolsa,
         navbatni qayta ishlash kechikishni faqat oshirardi va
         ogohlantirish hodisadan o'nlab soniya keyin chiqardi.
+
+        `_FRAME_MAX_AGE_S` dan eski kadr ham olinmaydi - uzilgan
+        kameraning muzlagan kadri (o'sha konstanta izohi).
         """
         frames = {}
         for role in ("primary", "secondary"):
-            frame, _timestamp = self._manager.latest_frame(role) or (None, 0.0)
-            if frame is not None:
+            frame, timestamp = self._manager.latest_frame(role) or (None, 0.0)
+            if frame is not None and now - timestamp <= _FRAME_MAX_AGE_S:
                 frames[role] = frame
         return frames
 
@@ -481,6 +506,7 @@ class ProctoringPipeline(QThread):
                 primary.embedding if primary is not None else None,
                 identity.count if identity is not None else 0,
             )
+            self._last_identity_at = now
 
         if (
             self._gaze is not None

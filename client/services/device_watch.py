@@ -26,6 +26,11 @@ Nimalar kuzatiladi va NIMA UCHUN aynan shu usulda:
     tekshiruv. Ikkinchi monitor imtihon boshida ham, o'rtasida ulansa
     ham bir xil darajada muhim.
 
+  QO'SHIMCHA QURILMALAR - fleshka, tashqi disk, telefon, naushnik,
+    modem, Bluetooth, kamera, sichqoncha (`services/peripherals.py`),
+    ALOHIDA thread'da (`_PeripheralScanner`). Boshida ulanganlari ham
+    (`at_start`), keyin har ulanish/uzilish. Faqat qayd etadi.
+
   MASOFAVIY BOSHQARUV VA VIRTUALIZATSIYA - ALOHIDA thread'da
     skanerlanadi (`threat_scanner`). Jarayonlar ro'yxatini o'qish
     sekin mashinada 100 ms, imzolarni tekshirish esa undan ham
@@ -51,6 +56,7 @@ har bosish alohida tranzaksiya bo'lardi.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import Optional
 
@@ -78,6 +84,12 @@ _MONITOR_POLL_MS = 3_000
 #: YO'QOLMAYDI - ular sanaladi va keyingi hodisaning `payload` ida
 #: `repeats` sifatida ketadi.
 _HOTKEY_COOLDOWN_S = 15.0
+
+#: Qo'shimcha qurilmalar so'rovi (s). Asosiy qo'zg'atuvchi -
+#: `WM_DEVICECHANGE`; so'rov - zaxira va jakli naushnik uchun.
+_PERIPHERAL_POLL_S = 4.0
+#: Yangi narsa tasdiq kutayotganda (`PeripheralTracker._CONFIRM`).
+_PERIPHERAL_FAST_S = 1.5
 
 
 class _ThreatScanner(QThread):
@@ -201,6 +213,64 @@ class _ThreatScanner(QThread):
                 self.msleep(250)
 
 
+class _PeripheralScanner(QThread):
+    """
+    Qo'shimcha qurilmalar (`services/peripherals.py`) - fon thread'ida.
+
+    Bitta o'qish ~0.1 s (SetupAPI + disklar + Core Audio), UI thread'ida
+    WebView'ni tutardi. Ikki qo'zg'atuvchi: `WM_DEVICECHANGE` (`wake`,
+    darhol) va davriy so'rov - xabar kelmasa ham (jakli naushnik qurilma
+    xabari bermaydi). Yangi narsa tasdiq kutayotganda so'rov tezlashadi.
+    """
+
+    #: `[PeripheralEvent]`
+    found = pyqtSignal(list)
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._running = False
+        self._wake = threading.Event()
+
+    def start(self, *args, **kwargs) -> None:
+        # Bayroq `run()` dan OLDIN (CLAUDE.md tuzoq: `_ThreatScanner.start`).
+        self._running = True
+        super().start(*args, **kwargs)
+
+    def stop(self) -> None:
+        self._running = False
+        self._wake.set()
+
+    def wake(self) -> None:
+        self._wake.set()
+
+    def run(self) -> None:
+        from services import peripherals
+
+        peripherals.suppress_error_dialogs()
+        tracker = peripherals.PeripheralTracker()
+        try:
+            events = tracker.start(peripherals.snapshot(), time.monotonic())
+        except Exception:  # noqa: BLE001 - kuzatuv imtihonni to'xtatmaydi
+            log.warning("Qo'shimcha qurilmalar ro'yxati olinmadi", exc_info=True)
+            events = []
+        if events:
+            self.found.emit(events)
+
+        while self._running:
+            interval = _PERIPHERAL_FAST_S if tracker.has_pending else _PERIPHERAL_POLL_S
+            self._wake.wait(interval)
+            self._wake.clear()
+            if not self._running:
+                return
+            try:
+                events = tracker.update(peripherals.snapshot(), time.monotonic())
+            except Exception:  # noqa: BLE001
+                log.debug("Qo'shimcha qurilmalar skanerida xato", exc_info=True)
+                continue
+            if events:
+                self.found.emit(events)
+
+
 def _rules_from_config(rdp_config: dict) -> tuple:
     """
     Serverdagi `Setting.rdp_objects` yozuvlarini qoidaga aylantiradi.
@@ -315,6 +385,7 @@ class DeviceWatcher(QObject):
         self._window = None
         self._watch_fullscreen = False
         self._scanner: Optional[_ThreatScanner] = None
+        self._peripherals: Optional[_PeripheralScanner] = None
         self._app = QApplication.instance()
         #: Duplicate rejimi uchun zaxira so'rov (`_check_monitors`).
         self._monitor_timer: Optional[QTimer] = None
@@ -364,6 +435,23 @@ class DeviceWatcher(QObject):
             # boshlanishidan oldin ulangan bo'lsa, u keyin ulangandan
             # kam xavfli emas.
             self._check_monitors("startup")
+
+        # --- Qo'shimcha qurilmalar (fleshka, telefon, naushnik...) ---
+        #
+        # Standart `False` va bu ataylab: kalitni faqat `peripheral_*`
+        # turlarini biladigan server yuboradi. Eski server bitta noma'lum
+        # tur uchun BUTUN batch'ni 400 bilan rad etadi va client uni
+        # tashlaydi (`monitoring._requeue`) - ichidagi `rdp_detected` bilan.
+        if device.get("detect_peripherals", False):
+            self._peripherals = _PeripheralScanner(parent=self)
+            self._peripherals.found.connect(self._on_peripherals)
+            try:
+                from core.system_events import system_events
+
+                system_events().devices_changed.connect(self._peripherals.wake)
+            except Exception:  # noqa: BLE001 - davriy so'rov baribir ishlaydi
+                log.debug("devices_changed ulanmadi", exc_info=True)
+            self._peripherals.start()
 
         # --- Masofaviy boshqaruv / virtualizatsiya ---
         if rdp.get("enabled", True):
@@ -427,6 +515,21 @@ class DeviceWatcher(QObject):
                 self._scanner.terminate()
                 self._scanner.wait(1000)
             self._scanner = None
+
+        if self._peripherals is not None:
+            try:
+                from core.system_events import system_events
+
+                system_events().devices_changed.disconnect(self._peripherals.wake)
+            except Exception:  # noqa: BLE001 - ulanmagan bo'lishi mumkin
+                pass
+            self._peripherals.stop()
+            # Skaner `wake` bilan darhol uyg'onadi; bitta o'qish ~0.1 s.
+            if not self._peripherals.wait(3000):
+                log.warning("Qurilma skaneri tugamadi - terminate")
+                self._peripherals.terminate()
+                self._peripherals.wait(1000)
+            self._peripherals = None
 
         self._hotkey_state.clear()
         log.info("Qurilma kuzatuvi to'xtadi")
@@ -592,6 +695,29 @@ class DeviceWatcher(QObject):
     # ------------------------------------------------------------------
     # Bloklangan tugmalar
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Qo'shimcha qurilmalar
+    # ------------------------------------------------------------------
+    def _on_peripherals(self, events: list) -> None:
+        """Skaner topgani - log (mashinada) va hodisa (serverga, panelga)."""
+        if not self._active:
+            return
+        for item in events:
+            payload = item.payload
+            text = "{} ({}{})".format(
+                payload.get("label") or "?",
+                payload.get("kind") or "?",
+                ", imtihon boshida" if payload.get("at_start") else "",
+            )
+            drives = payload.get("drives")
+            if drives and drives != [payload.get("label")]:
+                text += " - " + ", ".join(drives)
+            if item.type == "peripheral_connected":
+                log.warning("Qo'shimcha qurilma ulandi: %s", text)
+            else:
+                log.info("Qo'shimcha qurilma uzildi: %s", text)
+            self.detected.emit(item.type, item.severity, dict(payload))
+
     def report_blocked_key(self, code: str) -> None:
         """
         `lockdown` observer'i - HOOK THREAD'idan chaqiriladi.

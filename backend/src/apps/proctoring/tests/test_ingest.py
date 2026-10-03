@@ -157,6 +157,16 @@ class BroadcastDetailTests(TestCase):
             detail, {"processes": ["AnyDesk.exe"], "count": 2, "repeats": 7}
         )
 
+    def test_peripheral_detail(self):
+        detail = ingest._broadcast_detail({
+            "kind": "storage", "label": "Kingston DataTraveler",
+            "drives": ["E: KINGSTON 14.4 GB"], "at_start": True, "serial": "60A44C4138",
+        })
+        self.assertEqual(detail, {
+            "kind": "storage", "label": "Kingston DataTraveler",
+            "drives": ["E: KINGSTON 14.4 GB"], "at_start": True,
+        })
+
     def test_drops_unknown_keys(self):
         """
         Ro'yxatda yo'q kalit UZATILMAYDI.
@@ -444,6 +454,33 @@ class PushEventsBatchTests(RedisStateMixin, TestCase):
 
         self._batch([{"type": ProctoringEvent.Type.FACE_NOT_FOUND, "severity": 2, "payload": {}}])
         self.assertGreater(int(session_state.get_state(self.session.pk).get("risk") or 0), 0)
+
+    def test_low_severity_peripheral_does_not_add_risk(self):
+        """
+        Sichqoncha/klaviatura (client jiddiyligi 1) va uzilish - bayonnoma.
+
+        Og'irlik turga bitta, qurilma esa har xil: fleshka (3) ball
+        qo'shadi, almashtirilgan sichqoncha esa yo'q.
+        """
+        from apps.proctoring.services import state as session_state
+
+        accepted = self._batch([
+            {"type": ProctoringEvent.Type.PERIPHERAL_CONNECTED, "severity": 1,
+             "payload": {"kind": "input", "label": "USB mouse"}},
+            {"type": ProctoringEvent.Type.PERIPHERAL_REMOVED, "severity": 1,
+             "payload": {"kind": "storage", "label": "Kingston"}},
+        ])
+        self.assertEqual(accepted, 2)
+        self.assertEqual(int(session_state.get_state(self.session.pk).get("risk") or 0), 0)
+
+        self._batch([{
+            "type": ProctoringEvent.Type.PERIPHERAL_CONNECTED, "severity": 3,
+            "payload": {"kind": "storage", "label": "Kingston", "drives": ["E: KINGSTON 14.4 GB"]},
+        }])
+        self.assertEqual(
+            int(session_state.get_state(self.session.pk).get("risk") or 0),
+            ingest.RISK_WEIGHTS[ProctoringEvent.Type.PERIPHERAL_CONNECTED],
+        )
 
     def test_client_event_id_is_truncated(self):
         """Uzun ID DB ustunini (`max_length=64`) buzmasligi kerak."""

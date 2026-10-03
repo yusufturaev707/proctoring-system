@@ -662,6 +662,7 @@ export default function Settings() {
                 <Section title="Qurilma tekshiruvi">
                   <Toggle label="Monitor tekshiruvi" checked={form.is_detect_monitor} onChange={set('is_detect_monitor')} disabled={!canManage} />
                   <Toggle label="Kamera tekshiruvi" checked={form.is_detect_camera} onChange={set('is_detect_camera')} disabled={!canManage} />
+                  <Toggle label="Qo‘shimcha qurilmalar (fleshka, telefon, naushnik…)" checked={form.is_detect_peripherals} onChange={set('is_detect_peripherals')} disabled={!canManage} />
                 </Section>
               </Grid>
             </Grid>

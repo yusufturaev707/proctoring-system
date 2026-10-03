@@ -56,6 +56,11 @@ RISK_WEIGHTS: dict[str, int] = {
     ProctoringEvent.Type.RDP_DETECTED: 30,
     ProctoringEvent.Type.VM_DETECTED: 25,
     ProctoringEvent.Type.PROCESS_BLACKLISTED: 15,
+    # Bitta og'irlik barcha qurilma turlariga (sichqoncha ham, fleshka
+    # ham) - farqni jiddiylik va `payload.kind` beradi. Uzilish - ball
+    # emas, faqat bayonnoma (standart 1 ham bo'lmasin).
+    ProctoringEvent.Type.PERIPHERAL_CONNECTED: 6,
+    ProctoringEvent.Type.PERIPHERAL_REMOVED: 0,
     ProctoringEvent.Type.FACE_NOT_FOUND: 6,
     ProctoringEvent.Type.FACE_MISMATCH: 12,
     ProctoringEvent.Type.MULTIPLE_FACES: 20,
@@ -163,7 +168,7 @@ def push_events_batch(*, session, events: list[dict]) -> int:
         # sanalgan epizodga faqat davomiylik qo'shadi (client
         # `behavior_analyzer._closed_event`, `face_presence`). Aks holda
         # cooldown'dan uzun har epizod ikki marta sanalardi.
-        if not _is_closing(item.get("payload")):
+        if _adds_risk(event_type, severity, item.get("payload")):
             _apply_risk(session.pk, event_type, risk_config)
         _broadcast(record)
         accepted += 1
@@ -227,6 +232,25 @@ def push_screenshot_meta(
 
 def _is_closing(payload) -> bool:
     return isinstance(payload, dict) and payload.get("closed") is True
+
+
+#: Qo'shimcha qurilma hodisasi ballga faqat shu jiddiylikdan qo'shiladi.
+#: Og'irlik turga bitta (`RISK_WEIGHTS`), qurilma esa har xil: sichqoncha,
+#: klaviatura, USB hub (client `peripherals.KIND_SEVERITY` - 1) faqat
+#: bayonnoma; fleshka (3), naushnik (2) - ball.
+_PERIPHERAL_RISK_MIN_SEVERITY = ProctoringEvent.Severity.MEDIUM
+_PERIPHERAL_TYPES = frozenset({
+    ProctoringEvent.Type.PERIPHERAL_CONNECTED,
+    ProctoringEvent.Type.PERIPHERAL_REMOVED,
+})
+
+
+def _adds_risk(event_type: str, severity: int, payload) -> bool:
+    if _is_closing(payload):
+        return False
+    if event_type in _PERIPHERAL_TYPES:
+        return int(severity) >= _PERIPHERAL_RISK_MIN_SEVERITY
+    return True
 
 
 def _apply_risk(session_id: int, event_type: str, config: dict | None) -> None:
@@ -361,6 +385,9 @@ _BROADCAST_DETAIL_KEYS = (
     "evidence",    # NEGA shu deb qaror qilindi (imzo, OriginalFilename)
     "service",     # qaysi Windows xizmati
     "process",     # qaysi jarayon
+    # --- Qo'shimcha qurilmalar (`kind` va `label` yuqorida) ---
+    "drives",      # peripheral_* - disk harflari ("E: KINGSTON 14.4 GB")
+    "at_start",    # peripheral_connected - imtihon boshida ulangan edi
 )
 
 #: Bitta matn maydonining eng ko'p uzunligi.

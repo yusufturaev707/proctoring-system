@@ -427,6 +427,10 @@ class Setting(SoftDeleteModel):
     )
     is_detect_monitor = models.BooleanField(_("Monitor tekshiruvi"), default=True)
     is_detect_camera = models.BooleanField(_("Kamera tekshiruvi"), default=True)
+    # Fleshka, tashqi disk, telefon, naushnik, modem va h.k. ulanishi -
+    # imtihon boshidan yakunigacha (client `services/peripherals.py`).
+    # Faqat QAYD ETADI, to'smaydi.
+    is_detect_peripherals = models.BooleanField(_("Qo'shimcha qurilmalar"), default=True)
     # SKRINSHOT TAYMER BILAN OLINMAYDI - faqat test platformasi buyurganda
     # (javob belgilandi -> client lokal xizmatiga `POST /api/capture_screen`).
     # Shuning uchun interval ham, dedup ham yo'q (`controls.0013`): har

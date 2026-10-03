@@ -330,8 +330,9 @@ Rollarni aralashtirish tahlilni jimgina buzadi — har hodisada `camera_role`.
 
 **Rolni operator tanlaydi, server emas.** `CameraAssignment` modeli olib
 tashlangan (`devices.0006_drop_camera_assignment`) — 500 mashinani qo'lda
-biriktirish amalda qilinmasdi. Serverda faqat inventarizatsiya (`Camera` —
-bino, manzil, kredensial). Manba: IP kamera (RTSP, kredensial
+biriktirish amalda qilinmasdi. Serverda inventarizatsiya (`Camera` —
+bino, manzil, kredensial) va **qaysi kamera qaysi kompyuterniki**
+(`Computer.cameras`, panelda; ROLSIZ). Manba: IP kamera (RTSP, kredensial
 `client/camera/stream/` dan) yoki lokal veb-kamera (OS indeksi; `Camera`
 qatori YARATILMAYDI).
 
@@ -366,8 +367,12 @@ ATAYLAB alohida. Har kartada uch segment (`roles.assign`): vazifani olgan
 qurilma eskisini oldingi egasiga beradi; YUZ ROLI BO'SH QOLMAYDI (o'rniga
 avval zaxira, keyin obyekt kamerasi ko'tariladi); yolg'iz kamerani o'chirib
 bo'lmaydi. Zaxiradagi IP kamera kredensiali `role="preview"` bilan
-so'raladi. Binodagi har bir faol IP kamera ishlatilishi mumkin
-(`camera/config/`, `camera/stream/`).
+so'raladi. **IP kamera faqat shu kompyuterga biriktirilgan bo'lsa**
+ishlatiladi (`camera/config/` ro'yxati va `camera/stream/` kredensiali —
+bitta qoida, `devices.services._computer_cameras`: biriktirilgan + faol +
+kompyuter binosida). Biriktirilmagan mashinada IP kamera YO'Q (faqat lokal
+veb-kamera) — "binodagilarning hammasi" zaxirasini qaytarmang: boshqa
+xonaning kamerasi tanlanardi.
 
 **`Setting` va `ProctoringPolicy` bir-birini takrorlamaydi**: obyekt
 aniqlashning "yoqilganmi/ishonch/klasslar" — `Setting`; siyosat faqat
@@ -815,6 +820,37 @@ Jiddiylik: yo'q qilingan — `HIGH`, qolgan — `CRITICAL` (darhol yoziladi);
 `.env`: `DISABLE_EXTRA_MONITORS` (standart = `KIOSK_MODE`),
 `RESTORE_MONITORS_ON_EXIT`.
 
+### Qo'shimcha qurilmalar (fleshka, telefon, naushnik...)
+
+Imtihon boshidan yakunigacha (`DeviceWatcher` hayoti) nima ulandi/uzildi —
+`peripheral_connected` / `peripheral_removed`, faqat QAYD (to'smaydi), log
+va panel (`integrity` turkumi). Client `services/peripherals.py`, fon
+thread'i `device_watch._PeripheralScanner` (`WM_DEVICECHANGE` →
+`system_events.devices_changed` + 4 s so'rov).
+
+| Manba | Nimani ko'radi |
+|---|---|
+| SetupAPI, `ContainerId` bo'yicha guruh | USB/SD shinadagi fizik qurilma (fleshka 4-5 tugun = BITTA qurilma) |
+| `GetLogicalDrives` | disk harfi (ichki kartaridardagi SD karta, tarmoq diski), kalitda tom seriyasi |
+| Core Audio (faol) | jakli naushnik, Bluetooth naushnik |
+
+* "Kompyuter" konteyneri (`ROOT_CONTAINER`) — ichki, tashlanadi; faqat
+  BT dagi konteyner tashlanadi (juftlangan BT ulanmagan paytda ham "bor"
+  — ulanishni audio manba ko'radi).
+* Tur ustuvorligi `KIND_SEVERITY` tartibida; **kamera audiodan oldin**
+  (veb-kamerada mikrofon bor). Jiddiylik: disk/telefon 3, tarmoq/kamera/
+  audio/BT 2, sichqoncha/boshqa 1; uzilish 0–1.
+* Boshida ulanganlar ham (`at_start`), lekin sichqoncha/klaviatura,
+  kamera, BT adapter emas; ichki qattiq disklar emas.
+* Yangi narsa 2-ko'rinishda tasdiqlanadi; disk/telefon disk harfini
+  kutadi (bitta hodisa, `drives` bilan); o'qilmagan manba "uzildi" EMAS.
+* Server ballni faqat jiddiylik ≥ 2 da qo'shadi
+  (`ingest._PERIPHERAL_RISK_MIN_SEVERITY`).
+* Panelda `Setting.is_detect_peripherals`; client faqat server
+  `device.detect_peripherals` ni yuborsa yoqadi (yuqoridagi batch qoidasi).
+* Aniqlanmaydi: telefonga ulangan mikronaushnik, cho'ntakdagi telefon,
+  faqat zaryad kabeli.
+
 ### "Client ishlab turibdi" (presence)
 
 `client/presence/` — client har 45 s da yengil signal yuboradi; oraliqni
@@ -929,8 +965,8 @@ requirements.txt` yozmang (UTF-16 qiladi).
 `HandshakeView` kameralarni **kredensialsiz** qaytaradi. Kredensial —
 `client/camera/stream/`, `camera_id` bo'yicha (`role` faqat audit uchun):
 
-* faqat kompyuter turgan binodagi faol kamera
-  (`devices.services.camera_for_computer`);
+* faqat shu kompyuterga biriktirilgan, faol, o'sha binodagi kamera
+  (`devices.services.camera_for_computer`, ro'yxat bilan bir qoida);
 * har berish `AuditLog` da (`camera_credential_issue`,
   `CAMERA_STREAM_GRANT_TTL` 15 daq takrorni to'sadi);
 * client faqat xotirada saqlaydi (`RtspSource` manzilni funksiya sifatida oladi).
@@ -1249,6 +1285,13 @@ qo'shimcha qatlam; AI qismi faqat `services/monitoring.py` buferiga yozadi.
   `DevicePath` — barqaror kalit (`ResolvedCamera.key`,
   `factory._resolve_index`). Virtual kamera aniqlash nomga tayanadi —
   xavfsizlik chegarasi emas.
+* **Qayta ulanish HAR OCHILISHDA indeksni yo'l bo'yicha qayta topadi**
+  (`WebcamSource._current_index`): kamera uzilsa qolganlari siljiydi va
+  eski indeks BOSHQA kamerani ochardi. Yo'l ro'yxatda yo'q — ochilmaydi.
+* **Uzilishda eski natija ishlatilmaydi**: pipeline `_FRAME_MAX_AGE_S`
+  dan eski kadrni tahlil qilmaydi (oqim muzlagan kadrni ushlab qoladi),
+  `latest_identity` / `_current_face` eskirganda `(None, None)` —
+  davriy FaceID uni "mos" ham, "mos emas" ham sanamaydi.
 
 ### Imtihon profili client'ga QACHON yetadi
 
@@ -1500,7 +1543,12 @@ Yangi domen xatosi — `DomainError` merosxo'ri; `code` React'da tarjima kaliti.
 * **Hodisa turkumlari faqat frontendda** (`utils/events.js`: `integrity` /
   `identity` / `behaviour` / `system`). Yangi hodisa turi —
   `utils/labels.js:EVENT_LABEL` VA `utils/events.js:EVENT_CATEGORY`
-  (`ProctoringEvent.Type` bilan to'liq mos, hozir 39 tur).
+  (`ProctoringEvent.Type` bilan to'liq mos, hozir 41 tur).
+  **Yangi turni client'da serverdan OLDIN yubormang**: `EventItemSerializer`
+  (`ChoiceField`) bitta noma'lum tur uchun BUTUN batch'ni 400 bilan rad
+  etadi va client uni tashlaydi — ichidagi boshqa hodisalar bilan. Yangi
+  tur client'da server sozlamadagi kalit bilan yoqiladi (namuna:
+  `device.detect_peripherals`, client standarti `False`).
 * **WebSocket `detail` — oq ro'yxat** (`ingest._BROADCAST_DETAIL_KEYS` va
   `utils/events.js:eventDetail` — ikkala tomonda qo'shing).
 * Sessiya tafsiloti: `components/session/ScreenshotGallery.jsx` (blob

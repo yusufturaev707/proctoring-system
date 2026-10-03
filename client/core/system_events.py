@@ -16,6 +16,11 @@ SHARTNOMA (boshqa qatlamlar shunga tayanadi):
     qo'shildi/olindi, ekran DPI/geometriyasi o'zgardi. Bitta monitor
     ulash o'nlab xabar beradi - `_DISPLAY_DEBOUNCE_MS`.
   * `power_suspending` - `PBT_APMSUSPEND` (qo'shimcha, diagnostika).
+  * `devices_changed` - `WM_DEVICECHANGE` (qurilma ulandi/uzildi,
+    `DBT_DEVNODES_CHANGED` barcha top-level oynalarga keladi). Bitta
+    fleshka o'nlab xabar beradi - `_DEVICES_DEBOUNCE_MS`. Bu faqat
+    "qayta qarang" signali: nima o'zgarganini `services/peripherals.py`
+    o'zi sanab topadi (va xabar kelmasa ham davriy so'raydi).
 
 IMPORT ARZON va QApplication'dan OLDIN xavfsiz: Qt klassi faqat birinchi
 `system_events()` chaqiruvida yaratiladi. Nativ manba (ilova darajasidagi
@@ -39,16 +44,22 @@ _WM_DPICHANGED = 0x02E0
 _PBT_APMSUSPEND = 0x0004
 _PBT_APMRESUMESUSPEND = 0x0007
 _PBT_APMRESUMEAUTOMATIC = 0x0012
+_WM_DEVICECHANGE = 0x0219
+_DBT_DEVNODES_CHANGED = 0x0007
+_DBT_DEVICEARRIVAL = 0x8000
+_DBT_DEVICEREMOVECOMPLETE = 0x8004
 
 #: Uyg'onishdan keyingi takroriy xabarlar oynasi.
 _RESUME_DEBOUNCE_MS = 3000
 #: Ekran o'zgarishi "tinchigan"idan keyin bitta signal.
 _DISPLAY_DEBOUNCE_MS = 700
+#: Qurilma xabarlari "tinchigan"idan keyin bitta signal.
+_DEVICES_DEBOUNCE_MS = 500
 
 
 def classify_message(message: int, wparam: int) -> str:
     """
-    Nativ xabar -> "resume" | "suspend" | "display" | "".
+    Nativ xabar -> "resume" | "suspend" | "display" | "devices" | "".
 
     Sof funksiya (testlanadi): qaror shu yerda, Qt'ga bog'liq qism esa
     faqat uni signalga aylantiradi.
@@ -61,6 +72,10 @@ def classify_message(message: int, wparam: int) -> str:
         return ""
     if message in (_WM_DISPLAYCHANGE, _WM_DPICHANGED):
         return "display"
+    if message == _WM_DEVICECHANGE and wparam in (
+        _DBT_DEVNODES_CHANGED, _DBT_DEVICEARRIVAL, _DBT_DEVICEREMOVECOMPLETE
+    ):
+        return "devices"
     return ""
 
 
@@ -75,12 +90,14 @@ def _create():
         power_resumed = pyqtSignal()
         power_suspending = pyqtSignal()
         display_changed = pyqtSignal()
+        devices_changed = pyqtSignal()
 
         def __init__(self) -> None:
             super().__init__()
             self._attached = False
             self._resume_timer = None
             self._display_timer = None
+            self._devices_timer = None
             self._screens_connected = set()
 
         # --------------------------------------------------------------
@@ -95,6 +112,10 @@ def _create():
             self._display_timer.setSingleShot(True)
             self._display_timer.setInterval(_DISPLAY_DEBOUNCE_MS)
             self._display_timer.timeout.connect(self._emit_display)
+            self._devices_timer = QTimer(self)
+            self._devices_timer.setSingleShot(True)
+            self._devices_timer.setInterval(_DEVICES_DEBOUNCE_MS)
+            self._devices_timer.timeout.connect(self.devices_changed.emit)
 
         def handle(self, kind: str) -> None:
             """Nativ filtr va Qt ekran signallaridan keladi (asosiy thread)."""
@@ -113,6 +134,8 @@ def _create():
                     self.power_suspending.emit()
                 elif kind == "display":
                     self._display_timer.start()
+                elif kind == "devices":
+                    self._devices_timer.start()
             except Exception:  # noqa: BLE001 - signal manbai hech qachon yiqilmaydi
                 log.debug("Tizim hodisasini qayta ishlashda xato", exc_info=True)
 

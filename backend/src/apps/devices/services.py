@@ -1063,7 +1063,7 @@ def build_rtsp_url(camera: Camera, *, with_credentials: bool = True) -> str:
 #:     ya'ni jurnal "har kadrda so'radi" bilan to'lib ketmaydi.
 #:
 #: HAQIQIY himoya boshqa joyda va u to'rt qatlam:
-#:   1. faqat SHU BINODAGI kamera (`cameras_for_computer`);
+#:   1. faqat SHU KOMPYUTERGA biriktirilgan kamera (`cameras_for_computer`);
 #:   2. faqat kamera tekshiruvi yoki faol sessiya paytida;
 #:   3. har bir berish `AuditLog` da qoladi;
 #:   4. ekspluatatsiya qoidasi - kamerada FAQAT O'QISH huquqiga ega
@@ -1114,45 +1114,50 @@ def issue_camera_stream(*, device, camera: Camera, transport: str = "") -> dict:
     }
 
 
+def _computer_cameras(computer):
+    """
+    Doira: panelda SHU KOMPYUTERGA biriktirilgan (`Computer.cameras`),
+    faol, o'chirilmagan va kompyuter BINOSIDAGI kamera.
+
+    Ilgari doira butun bino edi: biriktirilmagan mashinada ham binodagi
+    har bir kamera kamera tekshiruvi sahifasida chiqardi va kredensiali
+    berilardi - operator boshqa xonaning kamerasini "talabgor kamerasi"
+    qilib tanlashi mumkin edi. Biriktirish yo'q - IP kamera ham yo'q
+    (faqat lokal veb-kamera); bu ataylab, "binodagilarning hammasi"
+    zaxirasi qo'shilmaydi.
+
+    Bino sharti ortiqcha ko'rinadi (panel serializer'i boshqa binoning
+    kamerasini biriktirishga yo'l qo'ymaydi), lekin kredensial chegarasi bitta
+    validatorga tayanmasligi kerak: kamera keyin boshqa binoga
+    ko'chirilsa bog'lanish qoladi.
+    """
+    return computer.cameras.filter(
+        zone_id=computer.zone_id, is_active=True, deleted_at__isnull=True
+    )
+
+
 def cameras_for_computer(computer) -> list:
     """
-    Kompyuter ISHLATA OLADIGAN IP kameralar (bino doirasi).
+    Kompyuter ISHLATA OLADIGAN IP kameralar (`_computer_cameras`).
 
-    ILGARI BU BIRIKTIRISH EDI (`CameraAssignment`): administrator har
-    bir kompyuterga qaysi kamera qaysi rolda ishlashini qo'lda
-    yozardi. U olib tashlandi va sabab amaliyotda: 500 mashinani
-    qo'lda biriktirib chiqish kunlab vaqt oladi, rolni esa client
-    tomonda operator ALLAQACHON tanlaydi - u ikkala kadrni ekranda
-    ko'rib turibdi, administrator esa jadvalda faqat nomni ko'radi.
-
-    DOIRA QOLDI va u endi BINO: kredensial faqat kompyuter turgan
-    binoning kameralari uchun beriladi. Boshqa binoning kamerasi
-    boshqa jadval va boshqa proktorga tegishli, ya'ni bu yerda unga
-    ehtiyoj yo'q. "Hamma kameralar" doirasi esa bitta buzilgan
-    mashinadan butun tarmoqni ochib berardi.
+    Rol baribir serverdan kelmaydi (`CameraAssignment` olib tashlangan):
+    biriktirish faqat "qaysi kameralar", vazifani operator tanlaydi.
     """
     if computer is None or computer.zone_id is None:
         return []
-    return list(
-        Camera.objects.filter(
-            zone_id=computer.zone_id, is_active=True, deleted_at__isnull=True
-        ).order_by("name", "pk")
-    )
+    return list(_computer_cameras(computer).order_by("name", "pk"))
 
 
 def camera_for_computer(computer, camera_id):
-    """Bino doirasidagi BITTA kamera (`None` - doiradan tashqarida)."""
+    """
+    Doiradagi BITTA kamera (`None` - doiradan tashqarida).
+
+    Ro'yxat (`cameras_for_computer`) bilan AYNAN bir qoida - aks holda
+    ro'yxatda yo'q kameraning kredensiali `camera_id` bo'yicha olinardi.
+    """
     if computer is None or computer.zone_id is None or not camera_id:
         return None
-    return (
-        Camera.objects.filter(
-            pk=camera_id,
-            zone_id=computer.zone_id,
-            is_active=True,
-            deleted_at__isnull=True,
-        )
-        .first()
-    )
+    return _computer_cameras(computer).filter(pk=camera_id).first()
 
 
 # --------------------------------------------------------------------------
