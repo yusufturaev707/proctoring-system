@@ -38,6 +38,21 @@ dastur monitorni o'chirib, uni o'z holicha qoldirsa, mashina
 imtihondan keyin ham bitta ekranda qolardi va buni operator
 tuzatishi kerak bo'lardi. Shuning uchun asl `DEVMODE` xotirada
 saqlanadi va yopilishda qaytariladi.
+
+DUPLICATE (KLON) REJIMI — ALOHIDA YO'L. `EnumDisplayDevices` displey
+MANBALARINI (`DISPLAYn`) sanaydi, monitorlarni emas. Duplicate
+rejimida ikkala monitor BITTA manbadan tasvir oladi: ro'yxatda bitta
+yozuv, Qt'da ham bitta ekran — ikkinchi monitor (proyektor, yondagi
+odamga qaragan ekran) imtihon sahifasini to'liq ko'rsatib turardi va
+na o'chirilardi, na `multi_monitor` hodisasi chiqardi (noutbukda
+amalda shunday bo'ldi; extend rejimida esa ishlardi). Shuning uchun
+fizik monitorlar `QueryDisplayConfig` ning FAOL YO'LLARI (manba ->
+monitor) bo'yicha sanaladi (`active_targets`), bitta manbadagi
+ortiqcha yo'l esa `SetDisplayConfig` bilan o'chiriladi
+(`disable_clones`). Qoladigan monitor — noutbukning ichki paneli,
+bo'lmasa ro'yxatdagi birinchisi (`plan_clone_reduction`). Asl
+konfiguratsiya xotirada saqlanadi va `restore` uni qaytaradi.
+`SDC_TOPOLOGY_INTERNAL` ishlatilmadi — sababi yuqorida.
 """
 
 from __future__ import annotations
@@ -47,6 +62,7 @@ import logging
 import sys
 from ctypes import POINTER, byref, wintypes
 from dataclasses import dataclass, field
+from typing import Optional
 
 log = logging.getLogger(__name__)
 
@@ -166,6 +182,186 @@ class DISPLAY_DEVICEW(ctypes.Structure):
     ]
 
 
+# --- QueryDisplayConfig / SetDisplayConfig (duplicate rejimi) ---
+_QDC_ONLY_ACTIVE_PATHS = 0x00000002
+_SDC_USE_SUPPLIED_DISPLAY_CONFIG = 0x00000020
+_SDC_APPLY = 0x00000080
+_SDC_SAVE_TO_DATABASE = 0x00000200
+_SDC_ALLOW_CHANGES = 0x00000400
+#: `SAVE_TO_DATABASE` — `CDS_UPDATEREGISTRY` bilan bir xil sabab: saqlanmagan
+#: o'zgarishni Windows monitor qayta ulanganda yoki uyqudan keyin bekor
+#: qilib, nusxani imtihon o'rtasida qaytarardi.
+_SDC_FLAGS = (
+    _SDC_APPLY | _SDC_USE_SUPPLIED_DISPLAY_CONFIG | _SDC_SAVE_TO_DATABASE | _SDC_ALLOW_CHANGES
+)
+_ERROR_SUCCESS = 0
+_ERROR_INSUFFICIENT_BUFFER = 122
+_MODE_IDX_INVALID = 0xFFFFFFFF
+_MODE_INFO_TYPE_SOURCE = 1
+_DEVICE_INFO_GET_TARGET_NAME = 2
+#: Noutbukning ichki paneli: `INTERNAL`, `DISPLAYPORT_EMBEDDED`, `UDI_EMBEDDED`.
+_INTERNAL_OUTPUTS = frozenset({0x80000000, 11, 13})
+
+
+class _LUID(ctypes.Structure):
+    _fields_ = [("LowPart", wintypes.DWORD), ("HighPart", ctypes.c_long)]
+
+
+class _PATH_SOURCE_INFO(ctypes.Structure):
+    _fields_ = [
+        ("adapterId", _LUID),
+        ("id", ctypes.c_uint32),
+        ("modeInfoIdx", ctypes.c_uint32),
+        ("statusFlags", ctypes.c_uint32),
+    ]
+
+
+class _RATIONAL(ctypes.Structure):
+    _fields_ = [("Numerator", ctypes.c_uint32), ("Denominator", ctypes.c_uint32)]
+
+
+class _PATH_TARGET_INFO(ctypes.Structure):
+    _fields_ = [
+        ("adapterId", _LUID),
+        ("id", ctypes.c_uint32),
+        ("modeInfoIdx", ctypes.c_uint32),
+        ("outputTechnology", ctypes.c_uint32),
+        ("rotation", ctypes.c_uint32),
+        ("scaling", ctypes.c_uint32),
+        ("refreshRate", _RATIONAL),
+        ("scanLineOrdering", ctypes.c_uint32),
+        ("targetAvailable", wintypes.BOOL),
+        ("statusFlags", ctypes.c_uint32),
+    ]
+
+
+class DISPLAYCONFIG_PATH_INFO(ctypes.Structure):
+    _fields_ = [
+        ("sourceInfo", _PATH_SOURCE_INFO),
+        ("targetInfo", _PATH_TARGET_INFO),
+        ("flags", ctypes.c_uint32),
+    ]
+
+
+class DISPLAYCONFIG_MODE_INFO(ctypes.Structure):
+    """
+    Rejim yozuvi. Union (manba/monitor/tasvir rejimi) XOM BAYT sifatida:
+    yozuvlar o'zgartirilmasdan qayta uzatiladi, o'qiladigani esa faqat
+    manba o'lchami (`_source_size`). Union'ning eng katta varianti
+    (`DISPLAYCONFIG_TARGET_MODE`) 48 bayt, tuzilma jami 64 bayt.
+    """
+
+    _fields_ = [
+        ("infoType", ctypes.c_uint32),
+        ("id", ctypes.c_uint32),
+        ("adapterId", _LUID),
+        ("mode", ctypes.c_uint32 * 12),
+    ]
+
+
+class _DEVICE_INFO_HEADER(ctypes.Structure):
+    _fields_ = [
+        ("type", ctypes.c_uint32),
+        ("size", ctypes.c_uint32),
+        ("adapterId", _LUID),
+        ("id", ctypes.c_uint32),
+    ]
+
+
+class _TARGET_DEVICE_NAME(ctypes.Structure):
+    _fields_ = [
+        ("header", _DEVICE_INFO_HEADER),
+        ("flags", ctypes.c_uint32),
+        ("outputTechnology", ctypes.c_uint32),
+        ("edidManufactureId", ctypes.c_uint16),
+        ("edidProductCodeId", ctypes.c_uint16),
+        ("connectorInstance", ctypes.c_uint32),
+        ("monitorFriendlyDeviceName", wintypes.WCHAR * 64),
+        ("monitorDevicePath", wintypes.WCHAR * 128),
+    ]
+
+
+@dataclass
+class DisplayTarget:
+    """Bitta FAOL yo'l: manba (`source`) -> fizik monitor (`target`)."""
+
+    adapter: tuple                # (LowPart, HighPart) — manba LUID'i
+    source_id: int
+    target_id: int
+    output_technology: int
+    name: str = ""                # EDID'dagi monitor nomi
+    width: int = 0                # manba o'lchami (nusxada ikkalasida bir xil)
+    height: int = 0
+
+    @property
+    def internal(self) -> bool:
+        return self.output_technology in _INTERNAL_OUTPUTS
+
+    @property
+    def source_key(self) -> tuple:
+        return (self.adapter, self.source_id)
+
+    def as_display(self) -> "Display":
+        return Display(
+            name="target #{}".format(self.target_id),
+            label="{} (duplicate)".format(self.name or "monitor"),
+            width=self.width,
+            height=self.height,
+        )
+
+
+def plan_clone_reduction(targets: list) -> list:
+    """
+    O'chiriladigan yo'llarning INDEKSLARI (sof funksiya, testlanadi).
+
+    Bitta manbaga ulangan har guruhda BITTA monitor qoladi: noutbukning
+    ichki paneli (talabgor aynan uning oldida o'tiradi), u bo'lmasa —
+    ro'yxatdagi birinchisi. Turli manbalar (extend) bu yerda
+    tegilmaydi — ular `disable_secondary` ning o'z yo'li.
+    """
+    groups: dict = {}
+    for index, target in enumerate(targets):
+        groups.setdefault(target.source_key, []).append(index)
+    drop: list = []
+    for indexes in groups.values():
+        if len(indexes) < 2:
+            continue
+        keep = next((i for i in indexes if targets[i].internal), indexes[0])
+        drop.extend(i for i in indexes if i != keep)
+    return sorted(drop)
+
+
+def compact_config(paths, modes, keep: list):
+    """
+    Faqat `keep` yo'llari va ular ishlatadigan rejimlar — qayta indekslangan.
+
+    `SetDisplayConfig(SDC_USE_SUPPLIED_DISPLAY_CONFIG)` ga berilmagan yo'l
+    faolsizlantiriladi. Rejimlar ham qisqartiriladi: ishlatilmaydigan
+    (o'chirilgan monitorniki) rejim qolsa ba'zi drayverlar
+    `ERROR_INVALID_PARAMETER` qaytaradi.
+    """
+    new_modes: list = []
+    remap: dict = {}
+
+    def take(index: int) -> int:
+        if index == _MODE_IDX_INVALID or index >= len(modes):
+            return _MODE_IDX_INVALID
+        if index not in remap:
+            remap[index] = len(new_modes)
+            new_modes.append(modes[index])
+        return remap[index]
+
+    new_paths = (DISPLAYCONFIG_PATH_INFO * len(keep))()
+    for slot, index in enumerate(keep):
+        ctypes.memmove(byref(new_paths[slot]), byref(paths[index]), ctypes.sizeof(DISPLAYCONFIG_PATH_INFO))
+        new_paths[slot].sourceInfo.modeInfoIdx = take(paths[index].sourceInfo.modeInfoIdx)
+        new_paths[slot].targetInfo.modeInfoIdx = take(paths[index].targetInfo.modeInfoIdx)
+    mode_array = (DISPLAYCONFIG_MODE_INFO * max(1, len(new_modes)))()
+    for slot, mode in enumerate(new_modes):
+        ctypes.memmove(byref(mode_array[slot]), byref(mode), ctypes.sizeof(DISPLAYCONFIG_MODE_INFO))
+    return new_paths, mode_array, len(new_modes)
+
+
 @dataclass
 class Display:
     """Bitta ekran — ro'yxat va log uchun."""
@@ -231,6 +427,25 @@ if _IS_WINDOWS:
         wintypes.DWORD, ctypes.c_void_p,
     ]
     _user32.ChangeDisplaySettingsExW.restype = ctypes.c_long
+    _user32.GetDisplayConfigBufferSizes.argtypes = [
+        ctypes.c_uint32, POINTER(ctypes.c_uint32), POINTER(ctypes.c_uint32)
+    ]
+    _user32.GetDisplayConfigBufferSizes.restype = ctypes.c_long
+    _user32.QueryDisplayConfig.argtypes = [
+        ctypes.c_uint32,
+        POINTER(ctypes.c_uint32), POINTER(DISPLAYCONFIG_PATH_INFO),
+        POINTER(ctypes.c_uint32), POINTER(DISPLAYCONFIG_MODE_INFO),
+        ctypes.c_void_p,
+    ]
+    _user32.QueryDisplayConfig.restype = ctypes.c_long
+    _user32.SetDisplayConfig.argtypes = [
+        ctypes.c_uint32, POINTER(DISPLAYCONFIG_PATH_INFO),
+        ctypes.c_uint32, POINTER(DISPLAYCONFIG_MODE_INFO),
+        ctypes.c_uint32,
+    ]
+    _user32.SetDisplayConfig.restype = ctypes.c_long
+    _user32.DisplayConfigGetDeviceInfo.argtypes = [POINTER(_DEVICE_INFO_HEADER)]
+    _user32.DisplayConfigGetDeviceInfo.restype = ctypes.c_long
 else:  # pragma: no cover - loyiha Windows uchun
     _user32 = None
 
@@ -240,6 +455,11 @@ else:  # pragma: no cover - loyiha Windows uchun
 # Modul darajasida, chunki o'chirish `main()` da (Qt'dan oldin), qaytarish
 # esa dastur yopilishida bajariladi - ikkalasi orasida umumiy obyekt yo'q.
 _saved: dict = {}
+
+#: Duplicate o'chirilishidan OLDINGI faol konfiguratsiya: (yo'llar, rejimlar).
+#: Faqat BIRINCHI o'chirishda yoziladi — imtihon davomidagi takroriy
+#: o'chirish asl holatni "allaqachon qisqartirilgan" bilan almashtirmasin.
+_saved_topology = None
 
 
 # --------------------------------------------------------------------------
@@ -331,6 +551,84 @@ def disable_secondary() -> DisplayReport:
         # har bir monitorni alohida qo'llash ekranning bir necha marta
         # qorayib-yonishiga olib kelardi.
         _apply()
+
+    # Extend uzilgandan KEYIN: endi faqat asosiy manba qolgan va uning
+    # nusxalari (duplicate) shu yerda ko'rinadi.
+    clones = disable_clones()
+    report.disabled.extend(clones.disabled)
+    report.failed.extend(clones.failed)
+    return report
+
+
+def active_targets() -> Optional[list]:
+    """
+    Hozir tasvir ko'rsatayotgan FIZIK monitorlar (`DisplayTarget`).
+
+    `None` — aniqlab bo'lmadi (Windows emas yoki API xatosi);
+    chaqiruvchi Qt'ning ekranlar soniga qaytadi.
+    """
+    config = _query_active()
+    return None if config is None else _targets_of(config)
+
+
+def _targets_of(config) -> list:
+    paths, count, modes = config
+    targets = []
+    for index in range(count):
+        path = paths[index]
+        width, height = _source_size(modes, path.sourceInfo.modeInfoIdx)
+        targets.append(DisplayTarget(
+            adapter=(path.sourceInfo.adapterId.LowPart, path.sourceInfo.adapterId.HighPart),
+            source_id=int(path.sourceInfo.id),
+            target_id=int(path.targetInfo.id),
+            output_technology=int(path.targetInfo.outputTechnology),
+            name=_target_name(path),
+            width=width,
+            height=height,
+        ))
+    return targets
+
+
+def active_monitor_count() -> Optional[int]:
+    """Fizik monitorlar soni (duplicate'dagilar ham) yoki `None`."""
+    targets = active_targets()
+    return None if targets is None else len(targets)
+
+
+def disable_clones() -> DisplayReport:
+    """
+    Duplicate rejimidagi ortiqcha monitorlarni o'chiradi.
+
+    Imtihon DAVOMIDA ham xavfsiz (`DeviceWatcher`): manba o'zgarmaydi,
+    ya'ni oynamiz turgan ekran va Qt'ning ekranlar ro'yxati joyida
+    qoladi — extend'dagi uzishdan farqi shu.
+    """
+    global _saved_topology
+    report = DisplayReport()
+    config = _query_active()
+    if config is None:
+        report.checked = False
+        return report
+    # Yo'llar va monitorlar BITTA so'rovdan: indekslar mos kelishi shart.
+    paths, count, modes = config
+    targets = _targets_of(config)
+    drop = plan_clone_reduction(targets)
+    if not drop:
+        return report
+
+    keep = [index for index in range(count) if index not in drop]
+    new_paths, new_modes, mode_count = compact_config(paths, modes, keep)
+    original = (paths, count, modes)
+    result = _user32.SetDisplayConfig(len(keep), new_paths, mode_count, new_modes, _SDC_FLAGS)
+    dropped = [targets[index].as_display() for index in drop]
+    if result != _ERROR_SUCCESS:
+        log.warning("Duplicate monitorni o'chirib bo'lmadi (SetDisplayConfig %s): %s",
+                    result, ", ".join(item.describe() for item in dropped))
+        report.failed.extend(dropped)
+        return report
+    if _saved_topology is None:
+        _saved_topology = original
+    report.disabled.extend(dropped)
     return report
 
 
@@ -341,8 +639,14 @@ def restore() -> None:
     Uzish registrda saqlanadi, ya'ni qaytarmaslik monitorni
     imtihondan KEYIN ham o'chirilgan holda qoldirardi va operator
     uni Windows sozlamalaridan qo'lda qaytarishga majbur bo'lardi.
+
+    Tartib uzishning teskarisi: avval duplicate (asosiy manba
+    konfiguratsiyasi), keyin extend'dagi uzilgan manbalar.
     """
-    if not _IS_WINDOWS or not _saved:
+    if not _IS_WINDOWS:
+        return
+    _restore_topology()
+    if not _saved:
         return
 
     restored = []
@@ -393,6 +697,75 @@ def _detach(name: str) -> int:
     return _user32.ChangeDisplaySettingsExW(
         name, byref(mode), None, _CDS_UPDATEREGISTRY | _CDS_NORESET, None
     )
+
+
+def _restore_topology() -> None:
+    global _saved_topology
+    if _saved_topology is None:
+        return
+    paths, count, modes = _saved_topology
+    _saved_topology = None
+    result = _user32.SetDisplayConfig(count, paths, len(modes), modes, _SDC_FLAGS)
+    if result != _ERROR_SUCCESS:
+        # Odatda sabab — monitor imtihon davomida uzilgan: qaytariladigan
+        # narsa yo'q, Windows qolganini o'zi joylashtiradi.
+        log.warning("Duplicate monitor qaytarilmadi (SetDisplayConfig %s)", result)
+        return
+    log.info("Duplicate monitor(lar) qaytarildi")
+
+
+def _query_active():
+    """`(yo'llar, yo'llar soni, rejimlar)` yoki `None`."""
+    if not _IS_WINDOWS:
+        return None
+    for _attempt in range(3):
+        path_count = ctypes.c_uint32()
+        mode_count = ctypes.c_uint32()
+        if _user32.GetDisplayConfigBufferSizes(
+            _QDC_ONLY_ACTIVE_PATHS, byref(path_count), byref(mode_count)
+        ) != _ERROR_SUCCESS:
+            return None
+        paths = (DISPLAYCONFIG_PATH_INFO * max(1, path_count.value))()
+        modes = (DISPLAYCONFIG_MODE_INFO * max(1, mode_count.value))()
+        result = _user32.QueryDisplayConfig(
+            _QDC_ONLY_ACTIVE_PATHS, byref(path_count), paths, byref(mode_count), modes, None
+        )
+        if result == _ERROR_INSUFFICIENT_BUFFER:
+            # So'rovlar orasida monitor ulandi/uzildi - qaytadan o'lchaymiz.
+            continue
+        if result != _ERROR_SUCCESS:
+            log.debug("QueryDisplayConfig xatosi: %s", result)
+            return None
+        # Rejimlar AYNAN qaytgan soncha: `len(modes)` keyin to'g'ridan-
+        # to'g'ri `SetDisplayConfig` ga soni sifatida uzatiladi (`restore`).
+        exact = (DISPLAYCONFIG_MODE_INFO * mode_count.value)()
+        ctypes.memmove(exact, modes, ctypes.sizeof(DISPLAYCONFIG_MODE_INFO) * mode_count.value)
+        return paths, int(path_count.value), exact
+    return None
+
+
+def _source_size(modes, index: int) -> tuple:
+    if index == _MODE_IDX_INVALID or index >= len(modes):
+        return 0, 0
+    mode = modes[index]
+    if mode.infoType != _MODE_INFO_TYPE_SOURCE:
+        return 0, 0
+    # DISPLAYCONFIG_SOURCE_MODE: width, height, pixelFormat, position.
+    return int(mode.mode[0]), int(mode.mode[1])
+
+
+def _target_name(path) -> str:
+    info = _TARGET_DEVICE_NAME()
+    info.header.type = _DEVICE_INFO_GET_TARGET_NAME
+    info.header.size = ctypes.sizeof(_TARGET_DEVICE_NAME)
+    info.header.adapterId = path.targetInfo.adapterId
+    info.header.id = path.targetInfo.id
+    try:
+        if _user32.DisplayConfigGetDeviceInfo(byref(info.header)) != _ERROR_SUCCESS:
+            return ""
+    except OSError:
+        return ""
+    return info.monitorFriendlyDeviceName or ""
 
 
 def _apply() -> int:

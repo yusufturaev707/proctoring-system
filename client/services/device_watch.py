@@ -54,7 +54,7 @@ import logging
 import time
 from typing import Optional
 
-from PyQt6.QtCore import QEvent, QObject, Qt, QThread, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QApplication
 
 log = logging.getLogger(__name__)
@@ -65,6 +65,10 @@ log = logging.getLogger(__name__)
 #: ulanishi shuncha vaqt oladi, ya'ni aniqlash kechikmaydi; ayni paytda
 #: skanerlash yuki (~200 jarayon) sezilarli bo'lmaydi.
 _PROCESS_SCAN_MS = 15_000
+
+#: Fizik monitorlar zaxira so'rovi (ms). Duplicate'ga o'tish har doim
+#: `WM_DISPLAYCHANGE` bermaydi (o'lcham o'zgarmasa); so'rov ~0.2 ms.
+_MONITOR_POLL_MS = 3_000
 
 #: Bitta tugma uchun hodisa oralig'i (s).
 #:
@@ -312,6 +316,10 @@ class DeviceWatcher(QObject):
         self._watch_fullscreen = False
         self._scanner: Optional[_ThreatScanner] = None
         self._app = QApplication.instance()
+        #: Duplicate rejimi uchun zaxira so'rov (`_check_monitors`).
+        self._monitor_timer: Optional[QTimer] = None
+        #: Oxirgi ko'rilgan monitorlar soni - hodisa faqat O'ZGARISHDA.
+        self._monitor_count: Optional[int] = None
 
         #: Bloklangan tugmalar: kod -> (oxirgi xabar vaqti, sanoq).
         self._hotkey_state: dict = {}
@@ -337,12 +345,25 @@ class DeviceWatcher(QObject):
         if device.get("detect_monitor", True):
             self._app.screenAdded.connect(self._on_screens_changed)
             self._app.screenRemoved.connect(self._on_screens_changed)
-            screens = len(self._app.screens())
-            if screens > 1:
-                # Boshlanishdagi holat ham hodisa: ikkinchi monitor
-                # imtihon boshlanishidan oldin ulangan bo'lsa, u
-                # keyin ulangandan kam xavfli emas.
-                self._emit_multi_monitor(screens, "startup")
+            # DUPLICATE rejimi Qt'da KO'RINMAYDI: ikkala monitor bitta
+            # manbada, `screens()` da bitta ekran, `screenAdded` chiqmaydi
+            # (proyektor ulanganda Windows ko'pincha aynan duplicate'ni
+            # tanlaydi). Shuning uchun `WM_DISPLAYCHANGE` va zaxira
+            # sifatida davriy so'rov - `QueryDisplayConfig` ~0.2 ms.
+            try:
+                from core.system_events import system_events
+
+                system_events().display_changed.connect(self._on_screens_changed)
+            except Exception:  # noqa: BLE001 - so'rov baribir ishlaydi
+                log.debug("display_changed ulanmadi", exc_info=True)
+            self._monitor_timer = QTimer(self)
+            self._monitor_timer.setInterval(_MONITOR_POLL_MS)
+            self._monitor_timer.timeout.connect(self._on_screens_changed)
+            self._monitor_timer.start()
+            # Boshlanishdagi holat ham hodisa: ikkinchi monitor imtihon
+            # boshlanishidan oldin ulangan bo'lsa, u keyin ulangandan
+            # kam xavfli emas.
+            self._check_monitors("startup")
 
         # --- Masofaviy boshqaruv / virtualizatsiya ---
         if rdp.get("enabled", True):
@@ -378,6 +399,17 @@ class DeviceWatcher(QObject):
             self._app.screenRemoved.disconnect(self._on_screens_changed)
         except TypeError:
             pass
+        try:
+            from core.system_events import system_events
+
+            system_events().display_changed.disconnect(self._on_screens_changed)
+        except Exception:  # noqa: BLE001 - ulanmagan bo'lishi mumkin
+            pass
+        if self._monitor_timer is not None:
+            self._monitor_timer.stop()
+            self._monitor_timer.deleteLater()
+            self._monitor_timer = None
+        self._monitor_count = None
 
         if self._window is not None and self._watch_fullscreen:
             self._window.removeEventFilter(self)
@@ -438,17 +470,64 @@ class DeviceWatcher(QObject):
     def _on_screens_changed(self, _screen=None) -> None:
         if not self._active or self._app is None:
             return
-        screens = len(self._app.screens())
-        if screens > 1:
-            self._emit_multi_monitor(screens, "changed")
+        self._check_monitors("changed")
 
-    def _emit_multi_monitor(self, count: int, reason: str) -> None:
+    def _check_monitors(self, reason: str) -> None:
+        """
+        Monitorlar soni = max(Qt ekranlari, FIZIK monitorlar).
+
+        Fizik soni `display_control.active_monitor_count` dan: duplicate
+        rejimida u Qt'nikidan katta. Hodisa faqat son O'ZGARGANDA va
+        birdan ko'p bo'lganda - davriy so'rov har 3 soniyada bir xil
+        hodisani takrorlamasligi uchun.
+
+        Duplicate imtihon DAVOMIDA ham o'chiriladi (`DISABLE_EXTRA_MONITORS`):
+        manba o'zgarmaydi, ya'ni oynamiz va Qt ekrani joyida qoladi.
+        Extend esa bu yerda uzilmaydi - oyna turgan ekran o'zgarishi
+        mumkin; u ishga tushishda (`main._disable_extra_monitors`) uziladi.
+        """
+        from services import display_control
+
+        screens = len(self._app.screens())
+        try:
+            physical = display_control.active_monitor_count()
+        except Exception:  # noqa: BLE001 - Qt soni baribir bor
+            log.debug("Fizik monitorlarni sanab bo'lmadi", exc_info=True)
+            physical = None
+        count = max(screens, physical or 0)
+        if count == self._monitor_count:
+            return
+        self._monitor_count = count
+        if count <= 1:
+            return
+
+        clone = physical is not None and physical > screens
+        disabled = False
+        if clone:
+            from config import DISABLE_EXTRA_MONITORS
+
+            if DISABLE_EXTRA_MONITORS:
+                report = display_control.disable_clones()
+                disabled = bool(report.disabled)
+                for item in report.disabled:
+                    log.warning("Duplicate monitor o'chirildi: %s", item.describe())
+                for item in report.failed:
+                    log.error("Duplicate monitor o'chmadi: %s", item.describe())
+            else:
+                log.warning("Duplicate monitor bor, o'chirish o'chiq (DISABLE_EXTRA_MONITORS=0)")
+        self._emit_multi_monitor(
+            count, reason, physical=physical, mode="duplicate" if clone else "extend",
+            disabled=disabled,
+        )
+
+    def _emit_multi_monitor(self, count: int, reason: str, **extra) -> None:
         self.detected.emit(
             "multi_monitor",
             3,
             {
                 "count": count,
                 "reason": reason,
+                **extra,
                 "screens": [
                     {
                         "name": screen.name(),

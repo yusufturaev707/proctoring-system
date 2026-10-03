@@ -801,6 +801,16 @@ Jiddiylik: yo'q qilingan — `HIGH`, qolgan — `CRITICAL` (darhol yoziladi);
 * `CDS_UPDATEREGISTRY` bilan — asl `DEVMODE` saqlanadi va chiqishda
   QAYTARILADI (`finally`). Admin huquqi kerak emas.
 * `SetDisplayConfig(SDC_TOPOLOGY_INTERNAL)` faqat noutbukda ishlaydi.
+* **Duplicate (klon) rejimi — alohida yo'l**: ikkala monitor BITTA manbada,
+  ya'ni `EnumDisplayDevices` ham, Qt `screens()` ham bitta ekran ko'radi.
+  Monitorlar `QueryDisplayConfig` faol yo'llari bo'yicha sanaladi
+  (`display_control.active_targets`), ortiqchasi `SetDisplayConfig`
+  (`SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_SAVE_TO_DATABASE`) bilan o'chadi
+  (`disable_clones`; qoladi — noutbuk ichki paneli, bo'lmasa birinchisi),
+  asl konfiguratsiya `restore` da qaytadi. `DeviceWatcher` sonni
+  `max(Qt, fizik)` dan oladi (`display_changed` + 3 s so'rov) va duplicate'ni
+  imtihon DAVOMIDA ham o'chiradi (manba o'zgarmaydi — oyna joyida);
+  extend esa faqat ishga tushishda uziladi.
 
 `.env`: `DISABLE_EXTRA_MONITORS` (standart = `KIOSK_MODE`),
 `RESTORE_MONITORS_ON_EXIT`.

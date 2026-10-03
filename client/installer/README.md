@@ -408,3 +408,13 @@ Tavsiyalar (false-positive'ni kamaytiradi):
 * Inno Setup'da siqilgan hajm ~2.1 GB dan oshsa `DiskSpanning=yes`
   kerak bo'ladi (bir nechta `.bin`). Hozirgi GPU nashri chegaradan
   past.
+
+
+
+## GPU uchun bitta parametrni qo'shishni maslahat beraman:
+
+installer\build-gpu-install.bat -Clean -RequireGpuSmoke
+installer\build-cpu-install.bat -Clean
+
+- -RequireGpuSmoke — .bat buni o'zi qo'shmaydi. Usiz GPU build'da CUDA ishlamay qolsa, build baribir "tayyor" deydi va installer jimgina CPU'da ishlaydi. Bu parametr bilan bunday holatda build yiqiladi. Uni GPU'li mashinada ishlating — hozirgi kompyuteringiz (GTX 1660 SUPER) mos keladi, men aynan shu yerda tekshirganman.
+- -Clean — reliz uchun PyInstaller keshini tozalaydi, eski fayllar build'ga aralashmaydi.
