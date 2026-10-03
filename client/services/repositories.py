@@ -520,10 +520,12 @@ class ProctoringRepository:
     def heartbeat(self, **metrics) -> dict:
         return self._api.post("/client/heartbeat/", json_body=metrics, retries=0)
 
-    def send_events(self, events: list[dict]) -> dict:
+    def send_events(self, events: list[dict], *, timeout: Optional[float] = None) -> dict:
         # `client_event_id` dublikatni serverda to'sadi — batch'ni qayta
         # yuborish xavfsiz (navbat buni ishlatadi).
-        return self._api.post("/client/events/", json_body={"events": events}, retries=0)
+        return self._api.post(
+            "/client/events/", json_body={"events": events}, retries=0, timeout=timeout
+        )
 
     def periodic_face(self, *, score: int, faces_detected: int = 1,
                       image: Optional[bytes] = None,

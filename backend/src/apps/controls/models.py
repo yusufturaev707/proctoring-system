@@ -368,6 +368,24 @@ class Setting(SoftDeleteModel):
         help_text=_("Urinish shu vaqtdan oldin muvaffaqiyatsiz deb yopilmaydi"),
     )
 
+    # --- FaceID: test davomida yuz JUDA UZOQ (client `face_presence`) ---
+    #
+    # Yuz kadrda bor, lekin solishtirish uchun kichik - davriy tekshiruv
+    # "solishtirib bo'lmadi" deydi va serverga hech narsa yubormaydi.
+    # Usiz talabgor kameradan uzoq o'tirib shaxs tekshiruvini jimgina
+    # chetlab o'tardi. Chegaralar `ProctoringPolicy` da EMAS: bu AI
+    # o'chiq yo'lning qoidasi, siyosat esa o'sha paytda ko'pincha yo'q.
+    faceid_far_warn_s = models.PositiveSmallIntegerField(
+        _("Yuz uzoqda — ogohlantirish (s)"), default=10,
+        validators=[MinValueValidator(1), MaxValueValidator(600)],
+        help_text=_("Shuncha uzluksiz uzoq o'tirsa - past jiddiylikdagi hodisa"),
+    )
+    faceid_far_unverified_s = models.PositiveSmallIntegerField(
+        _("Yuz uzoqda — shaxs tasdiqlanmadi (s)"), default=120,
+        validators=[MinValueValidator(1), MaxValueValidator(3600)],
+        help_text=_("Shuncha vaqt shaxsni solishtirib bo'lmasa - o'rta jiddiylikdagi hodisa"),
+    )
+
     # --- Qurilma ---
     # Standart `True` (`controls.0012_client_runtime_settings`). Ilgari
     # maydon bor edi, lekin client uni O'QIMASDI va ekranni `.env` dagi

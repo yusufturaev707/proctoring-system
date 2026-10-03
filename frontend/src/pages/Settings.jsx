@@ -514,6 +514,29 @@ export default function Settings() {
                 </Section>
               </Grid>
               <Grid item xs={12} md={6}>
+                {/* Yuz kadrda bor, lekin solishtirish uchun kichik — davriy
+                    tekshiruv "solishtirib bo'lmadi" deydi va serverga hech
+                    narsa ketmaydi. Usiz talabgor kameradan uzoq o'tirib shaxs
+                    tekshiruvini jimgina chetlab o'tardi (client
+                    `face_presence.py`). */}
+                <Section title="Test davomida: yuz uzoqda">
+                  <TextField
+                    label="Ogohlantirish (soniya)" type="number"
+                    value={form.faceid_far_warn_s}
+                    onChange={setNumber('faceid_far_warn_s')} disabled={!canManage}
+                    inputProps={{ min: 1, max: 600 }}
+                    helperText="Shuncha uzluksiz uzoq o‘tirsa — past jiddiylikdagi hodisa. Suyanib o‘tirish tabiiy, juda kichik qilmang"
+                  />
+                  <TextField
+                    label="Shaxs tasdiqlanmadi (soniya)" type="number"
+                    value={form.faceid_far_unverified_s}
+                    onChange={setNumber('faceid_far_unverified_s')} disabled={!canManage}
+                    inputProps={{ min: 1, max: 3600 }}
+                    helperText="Shuncha vaqt yuzni solishtirib bo‘lmasa — o‘rta jiddiylikdagi hodisa. Ogohlantirishdan kam bo‘lmaydi"
+                  />
+                </Section>
+              </Grid>
+              <Grid item xs={12} md={6}>
                 <Section title="Server auditi (ishlamaydi)">
                   {/* Maydon SAQLANGAN, lekin uni hech kim o'qimaydi:
                       server ballni qayta hisoblay olmaydi — buning

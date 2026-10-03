@@ -483,6 +483,12 @@ class MainWindow(QMainWindow):
             # `completed` yo'q).
             self._close_held_session()
         self._go_to_candidate()
+        # Chromium SHU YERDA oldindan ishga tushadi: operator JSHSHIR
+        # yozayotganda kamera ham, animatsiya ham yo'q va bir lahzalik
+        # band bo'lish sezilmaydi. Aks holda u yuz tasdig'idan keyin,
+        # talabgor "Test ochilmoqda" ekraniga qarab turganda bo'lardi.
+        if self._webview_page is not None:
+            QTimer.singleShot(400, self._webview_page.prewarm_browser)
 
     def _close_held_session(self) -> None:
         log.info("Ochiq sessiya yopilmoqda: operator boshqa imtihonni tanladi")

@@ -79,5 +79,30 @@ $task = New-ScheduledTask -Action $taskAction -Trigger $trigger -Principal $prin
     -Description "Proctoring Client: foydalanuvchi kirganda imtihon kuzatuv dasturini ishga tushiradi."
 
 Register-ScheduledTask -TaskName $TaskName -InputObject $task -Force | Out-Null
+
+# QO'LDA ISHGA TUSHIRISH RUXSATI. Administrator yaratgan vazifani oddiy
+# huquqli jarayon O'QIY OLADI, lekin `schtasks /Run` "Access is denied"
+# (kod 1) oladi. Client esa yorliqdan oddiy huquqda ochilib, o'zini
+# aynan shu vazifa orqali administrator huquqi bilan qayta ochadi
+# (core/elevation.py). Authenticated Users ga GRGX (o'qish + ishga
+# tushirish) beriladi. Bu UAC'ni chetlab o'tish EMAS: vazifa faqat shu
+# o'rnatilgan .exe ni ochadi (Program Files - yozish faqat admin) va
+# yuqori huquqni faqat administratorlar guruhidagi hisob oladi
+# (RunLevel Highest); oddiy hisob oddiy huquq oladi.
+try {
+    $service = New-Object -ComObject "Schedule.Service"
+    $service.Connect()
+    $registered = $service.GetFolder("\").GetTask($TaskName)
+    $sddl = $registered.GetSecurityDescriptor(0xF)
+    if ($sddl -notmatch "\(A;;GRGX;;;AU\)") {
+        $registered.SetSecurityDescriptor($sddl + "(A;;GRGX;;;AU)", 0)
+    }
+    Write-Host "Vazifani foydalanuvchi ishga tushira oladi (GRGX;AU)"
+} catch {
+    # Avtostart baribir ishlaydi - faqat yorliqdan ochilganda yuqori
+    # huquq bo'lmaydi (client log'ida "Vazifa ishga tushmadi").
+    Write-Warning ("Vazifa ruxsati o'rnatilmadi: " + $_.Exception.Message)
+}
+
 Write-Host ("Vazifa ro'yxatga olindi: " + $TaskName + " -> " + $ExePath)
 exit 0

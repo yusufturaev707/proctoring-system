@@ -120,3 +120,54 @@ class ForeignRdpScanTests(unittest.TestCase):
 
     def test_allow_list_skips(self):
         self.assertEqual(ts.scan(allow=["rdp_foreign_session"]).findings, [])
+
+
+class NeutralizeAccessDeniedTests(unittest.TestCase):
+    """
+    Administrator huquqisiz SYSTEM jarayoni (`remoting_host.exe`).
+
+    `psutil.wait_procs` bunday jarayonni ocholmaydi va `AccessDenied`
+    bilan yiqiladi; ilgari shu istisno butun hisobotni yo'qotib,
+    Chrome Remote Desktop imtihonni to'smasdan o'tib ketardi.
+    """
+
+    def report(self):
+        finding = ts.Finding(
+            code="chrome_remote_desktop", label="Chrome Remote Desktop",
+            category="remote", blocking=True, kind="process",
+            pid=7152, name="remoting_host.exe",
+        )
+        return ts.ThreatReport(findings=[finding], elevated=False)
+
+    def test_unkillable_process_survives_and_blocks(self):
+        import psutil
+
+        process = mock.Mock()
+        process.kill.side_effect = psutil.AccessDenied(pid=7152)
+        report = self.report()
+        with mock.patch.object(psutil, "Process", return_value=process), \
+                mock.patch.object(psutil, "wait_procs", side_effect=psutil.AccessDenied(pid=7152)) as wait:
+            ts.neutralize(report)
+        wait.assert_not_called()
+        self.assertEqual(report.survivors, report.findings)
+        self.assertIn("administrator", report.findings[0].reason)
+        self.assertEqual(report.events()[0][1], 4)
+
+    def test_wait_failure_does_not_lose_result(self):
+        import psutil
+
+        process = mock.Mock()
+        process.is_running.return_value = False
+        report = self.report()
+        with mock.patch.object(psutil, "Process", return_value=process), \
+                mock.patch.object(psutil, "wait_procs", side_effect=psutil.AccessDenied(pid=7152)):
+            ts.neutralize(report)
+        self.assertTrue(report.findings[0].neutralized)
+
+    def test_sweep_keeps_report_when_neutralize_fails(self):
+        report = self.report()
+        with mock.patch.object(ts, "scan", side_effect=[report, self.report()]), \
+                mock.patch.object(ts, "neutralize", side_effect=RuntimeError("boom")):
+            result = ts.sweep()
+        self.assertIs(result, report)
+        self.assertEqual(len(result.survivors), 1)

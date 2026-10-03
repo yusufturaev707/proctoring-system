@@ -428,6 +428,23 @@ class PushEventsBatchTests(RedisStateMixin, TestCase):
         hot = session_state.get_state(self.session.pk)
         self.assertLessEqual(hot["risk"], 40)
 
+    def test_closing_event_does_not_add_risk(self):
+        """Epizod yopilishi (`closed`) hodisa sifatida yoziladi, lekin ballga qo'shilmaydi."""
+        from apps.proctoring.services import state as session_state
+
+        accepted = self._batch(
+            [{
+                "type": ProctoringEvent.Type.FACE_NOT_FOUND,
+                "severity": 0,
+                "payload": {"closed": True, "duration_ms": 1_800_000},
+            }]
+        )
+        self.assertEqual(accepted, 1)
+        self.assertEqual(int(session_state.get_state(self.session.pk).get("risk") or 0), 0)
+
+        self._batch([{"type": ProctoringEvent.Type.FACE_NOT_FOUND, "severity": 2, "payload": {}}])
+        self.assertGreater(int(session_state.get_state(self.session.pk).get("risk") or 0), 0)
+
     def test_client_event_id_is_truncated(self):
         """Uzun ID DB ustunini (`max_length=64`) buzmasligi kerak."""
         self._batch(

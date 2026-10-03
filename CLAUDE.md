@@ -240,6 +240,20 @@ dan. `FACE_MATCH_THRESHOLD` (42) — faqat sozlama kelmaganda.
   `_best_score` faqat muvaffaqiyatsiz urinishda.
 * **Hujjat tasdig'ida faqat «Davom etish»** (sarlavha, matn, "Rad etish"
   yo'q — 1366x768 da rasmni siqardi). `_on_reject` kodi va endpoint joyida.
+* **"Yuz yo'q" / "bir nechta yuz" — epizod, kadr EMAS**
+  (`services/face_presence.py:FaceEpisodes`, AI o'chiq yo'l). Qoida AI
+  qatlamidagi bilan bir xil (`config.proctoring.temporal`): `no_face_warn_s`
+  → jiddiylik 2, `no_face_suspicious_s` → 3, bir nechta yuz 1 s → 3,
+  uzoq yuz (`far`) `Setting.faceid_far_warn_s` (10) → `face_too_far` 1,
+  `faceid_far_unverified_s` (120) → 2 (shaxs solishtirilmayapti; bu ikkisi
+  `Setting` da, siyosatda EMAS — AI o'chiq yo'lda siyosat ko'pincha yo'q);
+  epizod yuz 1 s qaytgandagina tugaydi. Ilgari har
+  kadr (≈10/s) hodisa edi. Hodisa bergan epizod yopilganda — o'sha tur,
+  jiddiylik 0, `closed: true` + `duration_ms` (AI `_closed_event` bilan
+  bir xil); server `closed` ni ballga QO'SHMAYDI (`ingest._is_closing`).
+  Davriy FaceID yuzsiz/ko'p yuzli/uzoq kadrda `face/periodic/` YUBORMAYDI
+  ("solishtirib bo'lmadi", `_run_face_check`) — aks holda har oraliqda
+  jurnal qatori + JPEG + `face_fails` va oxiri `high_suspicion_identity`.
 * **`faceid_max_fail` — chetlashtirish EMAS, xabar**: server
   `high_suspicion_identity` KRITIK hodisasini AYNAN chegaraga yetilganda
   bir marta yuboradi, sessiyani to'xtatmaydi. Qaror proktorda
@@ -849,6 +863,18 @@ boshqa imtihon tanlansa sessiya yopiladi), «Boshqa talabgor» (sessiya
 Majburiylik clientga oldindan aytiladi —
 `proctoring.camera.check_required` (`policy.check_readiness` to'siq qiladi).
 
+**"Test ochilmoqda" ekrani** (`ui/widgets/launch_screen.py`, MD3, to'liq
+QPainter) — `ExamWebViewPage.start()` dan platformaning BIRINCHI
+`LoadSucceeded` igacha; qadamlar: kuzatuv → brauzer → platforma
+(`loadProgress` foizi). Xato ekrani chiqqanda (`described` bor, to'silgan
+host, renderer qulashi), rad javobi, `stop`/`finish` da yopiladi;
+`ERR_ABORTED` (yo'naltirish) uni yopmaydi; 45 s xavfsizlik chegarasi.
+Statik qatlam `QPixmap` da keshlanadi, har kadrda faqat qadamlar va
+progress (`update(rect)`) — Chromium bilan bitta thread. Chromium konteksti
+operator JSHSHIR yozayotganda oldindan ko'tariladi
+(`ExamWebViewPage.prewarm_browser`, `_on_exam_selected`; birinchi profil
+0.4–1.5 s, keyingilari ~1 ms).
+
 ### IP kamera holati va paneldagi jonli ko'rish
 
 **Holat haqiqiy RTSP `DESCRIBE` bilan** (`devices/camera_probe.py`,
@@ -1073,9 +1099,16 @@ Yozuv, skrinshot va klip **testga ajratilgan vaqt** davomida
 chaqiruvga chidamli) — kuzatuvning o'zi (heartbeat, hodisalar, davriy
 FaceID) davom etadi. Vaqt kelmasa cheklov yo'q; qo'shimcha vaqt oynani uzaytiradi.
 
-**Yozuv manzili `session/finish/` dan OLDIN, bitta fon chaqiruvida**
-(`exam_webview_page.finish` → `_finish_with_recording`) — token yakunda
-bekor bo'ladi. Qayd xatosi yakunni to'smaydi.
+**Hodisalar va yozuv manzili `session/finish/` dan OLDIN, bitta fon
+chaqiruvida** (`exam_webview_page.finish` → `_finish_with_recording`:
+hodisalar → yozuv → yakun) — token yakunda bekor bo'ladi, `monitor.stop()`
+esa yakundan keyin. Navbat UI thread'ida olinadi
+(`_collect_final_events`): avval manbalar yopiladi (supervisor —
+`stop_pipeline` sinxron, yuz epizodlari), keyin
+`SessionMonitor.drain_for_finish` (taymerlar to'xtaydi). Xatolar yakunni
+to'smaydi. Chiqishda umumiy byudjet `_EXIT_BUDGET_S` (9 s,
+`MainWindow._await` 10 s): yordamchi qadamlar yakunga to'liq timeout
+qoldiradi, vaqt qolmasa o'tkazib yuboriladi.
 
 **Chetlashtirilgan sessiya — tokensiz yo'l** (`recordings.session_without_token`):
 client har qaydda `session_id` (public_id) ham yuboradi; server qabul qiladi:
@@ -1284,8 +1317,22 @@ ProctoringClientSetup-1.0.0-gpu.exe /VERYSILENT [/INVENTORY_CODE=INV-001]
 * **Versiya bitta joyda — `client/version.py`**.
 * **`.env` o'rnatilgan dasturda `%ProgramData%\ProctoringClient\.env`**
   (`core/bundle_paths.env_file_candidates`: `PROCTORING_ENV_FILE` →
-  ProgramData → `.exe` yoni). Frozen rejimda `load_dotenv(override=True)`.
-  Qaysi fayl o'qilgani log'da (`main._log_env_file`).
+  ProgramData → `.exe` yoni). Qaysi fayl o'qilgani log'da (`main._log_env_file`).
+* **O'rnatilgan dasturda jarayon muhiti ISHONCHSIZ** (`core/env_guard.py`) —
+  talabgor `setx` bilan foydalanuvchi o'zgaruvchisini adminsiz yozadi:
+  * `config` FAQAT `.env` faylidan + kod standartidan (`config._getenv`,
+    `env_guard.config_source`); `os.getenv` ni `config.py` da ishlatmang.
+    `override=True` yetmasdi — faylda yo'q kalit (`KIOSK_MODE`) muhitdan
+    o'qilardi;
+  * `main.py` boshida (Qt/log/`config` dan OLDIN) `sanitize_process_env`:
+    `QTWEBENGINE*`, `QT_QPA_*`, `CUDA_PATH*`, `SSL_CERT_FILE/DIR`,
+    `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `INSIGHTFACE_ROOT` o'chiriladi
+    (`.env` dagisi keyin `load_dotenv` bilan qaytadi); `SystemRoot`,
+    `windir`, `ProgramData`, `ALLUSERSPROFILE` Windows API'dagi qiymatga
+    qaytariladi (foydalanuvchi o'zgaruvchisi tizimnikini soyalaydi);
+  * `PROCTORING_ENV_FILE` faqat MASHINA darajasida (HKLM), REG_EXPAND_SZ da
+    faqat `%ProgramData%` ochiladi;
+  * dev rejimda hammasi o'chiq — muhit odatdagidek ustun.
 * Shablon `.env.example` EMAS — `installer/env.production.template`. Mavjud
   `.env` ustiga yozilmaydi (`/FORCEENV` — `.bak` bilan). `%APPDATA%\
   ProctoringClient` uninstall'da o'chirilmaydi.
@@ -1294,15 +1341,33 @@ ProctoringClientSetup-1.0.0-gpu.exe /VERYSILENT [/INVENTORY_CODE=INV-001]
   (`ProctoringClientCheck.exe`, `smoke_check.py`) provayderni inferensiyadan
   keyin o'qiydi.
 * Avtostart — Task Scheduler (`installer/autostart.ps1`), `HKLM\Run` emas.
+* **Administrator huquqi — vazifa orqali, manifest emas** (`uac_admin=False`
+  qoladi — UAC oynasi kioskni to'xtatardi). Oddiy huquqda ochilgan nusxa
+  (yorliq, `.exe`) mutex'dan keyin o'zini `schtasks /Run` bilan qayta
+  ochadi va chiqadi (`core/elevation.py`): faqat frozen, argumentsiz,
+  token `Limited` va vazifa AYNAN shu `.exe` ni ochsa. Yangi nusxa 15 s
+  ichida mutex'ni egallamasa — oddiy huquqda davom etadi. Oddiy (standard
+  user) hisobda yuqori huquq yo'q. Vazifa nomi `.iss` `TaskName` =
+  `elevation.TASK_NAME`. Vazifaga `(A;;GRGX;;;AU)` ruxsati SHART
+  (`autostart.ps1`) — usiz oddiy huquqli jarayon vazifani o'qiydi, lekin
+  `/Run` "Access is denied" (kod 1) oladi.
 * **Bitta nusxa** — `core/single_instance.py` (mutex `Local\ProctoringClient.SingleInstance`,
   `main()` ning birinchi qadami; `--keyboard-hook`/`--watchdog` olmaydi).
   Ikkinchi nusxa JIMGINA yopilmaydi (`notify_running`): birinchisining
-  oynasi bor — oldinga chiqaradi, hali yuklanmoqda — "kuting" xabari
-  (4 s, o'zi yopiladi, bir vaqtda bitta). Birinchi nusxa QApplication
-  paydo bo'lishi bilan splash ko'rsatadi (`ui/widgets/startup_splash.py`) —
-  tozalash bosqichlaridan KEYIN (ular paytida o'z oynamiz ko'rinmaydi,
-  `main._close_other_apps` izohi). Asosiy oyna sarlavhasi = `APP_NAME`
-  (ikkinchi nusxa shu bo'yicha qidiradi), splash'niki boshqa.
+  oynasi bor — oldinga chiqaradi, splash ko'rinib turibdi — hech narsa,
+  aks holda "kuting" xabari (4 s, o'zi yopiladi, bir vaqtda bitta).
+  Asosiy oyna sarlavhasi = `APP_NAME` (ikkinchi nusxa shu bo'yicha
+  qidiradi), splash'niki boshqa.
+* **Splash — nativ, mutex'dan keyin darhol** (`core/early_splash.py`,
+  ~0.15 s): ctypes, o'z thread'i va xabar sikli (asosiy thread band
+  bo'lsa ham chiziladi, progress yuguradi), Qt'siz, fokus olmaydi; asosiy
+  oyna birinchi chizilgach yopiladi (`QTimer.singleShot(0, ...)`).
+  Vazifa orqali qayta ochishda eski nusxa splash'ni yangisi mutex'ni
+  olgandan keyin yopadi — uzilish yo'q. Klass nomi
+  `single_instance.SPLASH_CLASS_NAME`. Qt splash
+  (`ui/widgets/startup_splash.py`) — faqat nativ ishlamasa. `ApiClient`
+  tozalash bilan parallel fon thread'ida yaratiladi
+  (`main._prewarm_api_client`, TLS to'plami ~0.3 s).
 * Yangilash imtihondan TASHQARIDA (o'rnatuvchi `taskkill /F` qiladi).
 * Build mashinasida `ProctoringClient.exe` ni `.env` SIZ ochmang — standart
   to'liq kiosk.
@@ -1539,6 +1604,10 @@ Yangi domen xatosi — `DomainError` merosxo'ri; `code` React'da tarjima kaliti.
   `faceid_page._fit_photo` rasmni karta balandligidan o'lchaydi; yangi
   element qo'shganda 1366x768 da tekshiring.
 * **(client) Kamera nomini PnP ro'yxatidan olmang** — `camera/dshow.py`.
+* **(client) Otasiz vidjetda `setVisible(True)`/`show()` chaqirmang**
+  (`__init__` ichida ham) — Qt uni ALOHIDA OYNA qilib ochadi: ishga
+  tushishda chap yuqorida kichik oyna miltillardi (`BrandLogo`). Faqat
+  yashiring; ko'rinish otadan meros qoladi.
 * **(client) `onnxruntime-gpu` nashri CUDA versiyasiga qadalgan** — nomos
   nashr jimgina CPU'da ishlaydi.
 * **(client) `ctypes` da `argtypes` ham SHART** — usiz 64-bit deskriptor

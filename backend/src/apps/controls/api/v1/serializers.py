@@ -206,6 +206,16 @@ class SettingSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"faceid_interval": "3 soniyadan kam interval clientni va serverni ortiqcha yuklaydi"}
             )
+        far_warn = attrs.get("faceid_far_warn_s", getattr(self.instance, "faceid_far_warn_s", 10))
+        far_unverified = attrs.get(
+            "faceid_far_unverified_s", getattr(self.instance, "faceid_far_unverified_s", 120)
+        )
+        if far_unverified < far_warn:
+            # Ikkinchi bosqich birinchisidan oldin kela olmaydi - client
+            # baribir tenglashtirardi, panel esa boshqa narsani ko'rsatardi.
+            raise serializers.ValidationError(
+                {"faceid_far_unverified_s": "Ogohlantirish vaqtidan kam bo'lmasligi kerak"}
+            )
         return attrs
 
 

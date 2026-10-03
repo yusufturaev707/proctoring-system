@@ -176,8 +176,13 @@ class _ThreatScanner(QThread):
                     )
                     # Imtihon DAVOMIDA - begona RDP seansi ham yakunlanadi
                     # (imtihondan tashqarida faqat qayd etiladi).
-                    threat_scanner.neutralize(partial, end_rdp_sessions=True)
-                    self.found.emit(fresh)
+                    # `finally`: yo'q qilish yiqilsa ham hodisa ketadi -
+                    # aks holda `_seen` uni "ko'rilgan" deb belgilab
+                    # qo'ygan va keyingi tsikllar ham jim qolardi.
+                    try:
+                        threat_scanner.neutralize(partial, end_rdp_sessions=True)
+                    finally:
+                        self.found.emit(fresh)
             except Exception:
                 # Skanerlashda xato (huquq, WMI, o'chib ketgan jarayon).
                 # Kuzatuv to'xtamaydi - keyingi tsiklda qayta uriniladi.

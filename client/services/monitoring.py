@@ -183,6 +183,30 @@ class SessionMonitor(QObject):
         self._workers.wait_all(10_000)
         log.info("Sessiya nazorati to'xtadi")
 
+    def drain_for_finish(self) -> list:
+        """
+        Yakundan OLDIN: navbatdagi BARCHA hodisalar - chaqiruvchi ularni
+        `session/finish/` dan OLDIN, o'sha fon chaqiruvida yuboradi
+        (`ExamWebViewPage._finish_with_recording`).
+
+        Ilgari oxirgi bufer `stop()` da yuborilardi, `stop()` esa
+        yakun javobidan KEYIN chaqiriladi - server tokenni o'sha zahoti
+        bekor qiladi va so'rov `session_not_found` olardi. Oxirgi
+        ~5 soniyadagi hodisalar va ochiq hodisalarning yopilishi
+        (davomiylik) shu tariqa jimgina yo'qolardi.
+
+        Taymerlar TO'XTAYDI: yakun so'rovi bilan parallel flush tartibni
+        buzardi, heartbeat esa yakundan keyin `session_not_found` olib,
+        sahifani "sessiya serverda yakunlandi" yo'liga burib yuborardi.
+        Sessiya faol qoladi - `stop()` keyin kelgan hodisalarni
+        odatdagidek yuborishga urinadi.
+        """
+        self._heartbeat_timer.stop()
+        self._flush_timer.stop()
+        events = list(self._queue)
+        self._queue.clear()
+        return events
+
     # ------------------------------------------------------------------
     def set_face_checks(self, total: int) -> None:
         """Yuz tekshiruvlari sonini yangilaydi (keyingi heartbeat bilan ketadi)."""

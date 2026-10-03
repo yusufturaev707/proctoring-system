@@ -286,9 +286,20 @@ class SecondInstanceNoticeTests(unittest.TestCase):
         from core import single_instance as s
 
         with mock.patch.object(s, "_find_main_window", return_value=0), \
+                mock.patch.object(s, "_splash_visible", return_value=False), \
                 mock.patch.object(s, "_show_starting_notice", return_value=True), \
                 mock.patch.object(s.sys, "platform", "win32"):
             self.assertEqual(s.notify_running("ProctoringClient"), "notice")
+
+    def test_visible_splash_needs_no_notice(self):
+        from core import single_instance as s
+
+        with mock.patch.object(s, "_find_main_window", return_value=0), \
+                mock.patch.object(s, "_splash_visible", return_value=True), \
+                mock.patch.object(s, "_show_starting_notice") as notice, \
+                mock.patch.object(s.sys, "platform", "win32"):
+            self.assertEqual(s.notify_running("ProctoringClient"), "splash")
+        notice.assert_not_called()
 
     def test_failure_is_swallowed(self):
         from core import single_instance as s

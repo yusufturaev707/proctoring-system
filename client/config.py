@@ -8,6 +8,9 @@ dev rejimda `client/.env`. Sabab: bitta build har bir imtihon
 markazida boshqa server manzili bilan ishlashi kerak — qayta
 kompilyatsiya qilmasdan.
 
+O'RNATILGAN dasturda qiymat FAQAT shu fayldan, jarayon muhitidan
+EMAS (`core/env_guard.py`): `os.getenv` emas, `_getenv` ishlating.
+
 IKKI QATLAM (`CLAUDE.md`: "Client sozlamalari: .env va panel"):
 
   * FAQAT SHU YERDA — serverga ulanishdan OLDIN kerak bo'ladigan
@@ -30,9 +33,10 @@ import os
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 
 from core.bundle_paths import env_file_path, is_frozen, resource_root, writable_root
+from core.env_guard import config_source
 from version import APP_NAME, __version__ as APP_VERSION
 
 #: Yuklangan `.env` fayli (yoki `None`). `main` uni log'ga yozadi:
@@ -40,19 +44,34 @@ from version import APP_NAME, __version__ as APP_VERSION
 #: o'qilgani. Frozen rejimda `None` deyarli har doim o'rnatish nosozligi.
 ENV_FILE: Path | None = env_file_path()
 
-# O'RNATILGAN dasturda `.env` MUHITDAN USTUN (`override=True`), dev'da
-# esa aksincha. Sabab kiosk himoyasi: ProgramData'dagi faylni oddiy
-# foydalanuvchi faqat o'qiy oladi, foydalanuvchi darajasidagi muhit
-# o'zgaruvchisini esa istalgan talabgor yoza oladi
-# (`setx KIOSK_MODE false`) va `override=False` bilan u administrator
-# faylidan ustun turardi. Dev'da esa terminaldagi `set X=...` bilan
-# vaqtincha almashtirish qulay va xavfsiz.
+# O'RNATILGAN dasturda sozlama FAQAT `.env` FAYLIDAN (va kod
+# standartidan), jarayon muhitidan EMAS (`core/env_guard.py`). Sabab
+# kiosk himoyasi: ProgramData'dagi faylni oddiy foydalanuvchi faqat
+# o'qiy oladi, foydalanuvchi darajasidagi muhit o'zgaruvchisini esa
+# istalgan talabgor yoza oladi (`setx KIOSK_MODE 0`). Ilgari
+# `override=True` bilan kifoyalanilgan edi, lekin u faqat faylda BOR
+# kalitlarni himoya qiladi - faylda yozilmagan `KIOSK_MODE`,
+# `FULLSCREEN`, `SCREENSHOT_ENABLED` muhitdan o'qilardi.
+#
+# `load_dotenv(override=True)` frozen'da QOLADI: `config` emas,
+# kutubxonalar (httpx: `HTTPS_PROXY`, `SSL_CERT_FILE`) o'qiydigan
+# qiymatlarni administrator faylda bera olishi kerak.
+#
+# Dev'da esa terminaldagi `set X=...` fayldan ustun - qulay va xavfsiz.
+_FILE_VALUES: dict = dict(dotenv_values(ENV_FILE)) if ENV_FILE is not None else {}
 if ENV_FILE is not None:
     load_dotenv(dotenv_path=ENV_FILE, override=is_frozen())
+_SOURCE = config_source(_FILE_VALUES, os.environ, frozen=is_frozen())
+
+
+def _getenv(name: str, default=None):
+    """`os.getenv` o'rniga - frozen'da faqat `.env` fayli."""
+    value = _SOURCE.get(name)
+    return default if value is None else value
 
 
 def _env_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
+    raw = _getenv(name)
     if raw is None:
         return default
     return raw.strip().lower() in ("1", "true", "yes", "on")
@@ -60,14 +79,14 @@ def _env_bool(name: str, default: bool) -> bool:
 
 def _env_int(name: str, default: int) -> int:
     try:
-        return int(os.getenv(name, default))
+        return int(_getenv(name, default))
     except (TypeError, ValueError):
         return default
 
 
 def _env_float(name: str, default: float) -> float:
     try:
-        return float(os.getenv(name, default))
+        return float(_getenv(name, default))
     except (TypeError, ValueError):
         return default
 
@@ -76,7 +95,7 @@ def _env_list(name: str, default: str = "") -> list:
     """Vergul bilan ajratilgan ro'yxat (kichik harfda, bo'shlari tashlanadi)."""
     return [
         item.strip().lower()
-        for item in os.getenv(name, default).split(",")
+        for item in _getenv(name, default).split(",")
         if item.strip()
     ]
 
@@ -85,7 +104,7 @@ def _env_list(name: str, default: str = "") -> list:
 # spec, o'rnatuvchi va dastur bitta manbadan o'qiydi.
 
 # ── Backend ──────────────────────────────────────────────────────────
-API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api/v1").rstrip("/")
+API_BASE_URL = _getenv("API_BASE_URL", "http://127.0.0.1:8000/api/v1").rstrip("/")
 API_TIMEOUT = _env_float("API_TIMEOUT", 30.0)
 # ── [C3] Tarmoq qatlami (services/api_client.py) ─────────────────────
 # Ulanish (TCP + TLS) uchun ALOHIDA, qisqa timeout: server/tarmoq yo'q
@@ -103,9 +122,9 @@ API_CONNECT_TIMEOUT = min(_env_float("API_CONNECT_TIMEOUT", 10.0), API_TIMEOUT)
 # chunki nginx HTTP va WS ni bitta host ostida beradi. DEV'da esa
 # MAJBURIY: u yerda WebSocket alohida process'da, boshqa portda
 # (`uvicorn config.asgi:application --port 8001`) ishlaydi.
-WS_BASE_URL = os.getenv("WS_BASE_URL", "").strip().rstrip("/")
+WS_BASE_URL = _getenv("WS_BASE_URL", "").strip().rstrip("/")
 
-_ssl_raw = os.getenv("API_SSL_VERIFY", "1").strip()
+_ssl_raw = _getenv("API_SSL_VERIFY", "1").strip()
 API_SSL_VERIFY: bool | str
 if _ssl_raw in ("0", "false", "False", "no"):
     API_SSL_VERIFY = False
@@ -124,10 +143,10 @@ DEVICE_ID_FILE = writable_root() / "device_id.json"
 # yuboriladi va server uni ikkinchi belgi sifatida ishlatadi (MAC birinchi).
 # Ommaviy o'rnatishda uni har bir mashinaning `.env` iga yozib qo'yish
 # qulay: shunda MAC manzilini oldindan bazaga kiritish shart emas.
-INVENTORY_CODE = os.getenv("INVENTORY_CODE", "").strip()
+INVENTORY_CODE = _getenv("INVENTORY_CODE", "").strip()
 
 # ── InsightFace ──────────────────────────────────────────────────────
-FACE_MODEL_NAME = os.getenv("FACE_MODEL_NAME", "buffalo_l")
+FACE_MODEL_NAME = _getenv("FACE_MODEL_NAME", "buffalo_l")
 FACE_MODEL_ROOT = resource_root()          # ичида models/<name>/ izlanadi
 FACE_DET_SIZE = (640, 640)
 # Detektor ishonchi LOKAL va bu ataylab: u model YUKLANAYOTGANDA
@@ -170,7 +189,7 @@ FACE_REQUIRE_GPU = _env_bool("FACE_REQUIRE_GPU", False)
 # `CUDA_PATH` dan o'zi topadi. Bu qiymat nostandart o'rnatish uchun
 # - masalan kutubxonalar tarmoq diskida yoki boshqa versiyadagi
 # Toolkit yonida turgan holat.
-CUDA_DLL_DIR = os.getenv("CUDA_DLL_DIR", "").strip()
+CUDA_DLL_DIR = _getenv("CUDA_DLL_DIR", "").strip()
 
 # Yuz bbox kengligi shundan kichik bo'lsa — solishtirilmaydi
 # ("Yaqinroq keling"). ArcFace yuzni 112x112 ga tekislaydi, shuning uchun
@@ -217,6 +236,12 @@ FACE_MATCH_STREAK = _env_int("FACE_MATCH_STREAK", 3)
 # kamerada bir nechta kadr bilan qaror qabul qilardi.
 FACE_FAIL_STREAK = _env_int("FACE_FAIL_STREAK", 15)
 FACE_FAIL_MIN_SECONDS = _env_float("FACE_FAIL_MIN_SECONDS", 8.0)
+
+# Test davomida yuz JUDA UZOQ (`services/face_presence.py`): shuncha
+# soniyadan keyin past jiddiylikdagi hodisa, ikkinchisidan keyin -
+# "shaxs solishtirilmayapti". Egasi `Setting.faceid_far_*`.
+FACE_FAR_WARN_S = _env_float("FACE_FAR_WARN_S", 10.0)
+FACE_FAR_UNVERIFIED_S = _env_float("FACE_FAR_UNVERIFIED_S", 120.0)
 
 # ── Kamera ───────────────────────────────────────────────────────────
 # Zaxira indeks: kamera taqsimoti hali aniqlanmagan holat uchun
@@ -320,7 +345,7 @@ LOCAL_ARCHIVE_ENABLED = _env_bool("LOCAL_ARCHIVE_ENABLED", True)
 # avtomatik tanlov umuman ishlamaydi: administrator diskni o'zi
 # tanlagan bo'lsa, yangi disk ulangan kuni fayllar boshqa joyga
 # ketmasligi kerak.
-LOCAL_ARCHIVE_ROOT = os.getenv("LOCAL_ARCHIVE_ROOT", "").strip()
+LOCAL_ARCHIVE_ROOT = _getenv("LOCAL_ARCHIVE_ROOT", "").strip()
 
 # Mashinadagi yozuvlar necha kun saqlanadi.
 #

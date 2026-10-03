@@ -91,6 +91,7 @@ class BrandLogo(QLabel):
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setStyleSheet("background: transparent;")
         self.setAccessibleName("Logotip")
+        self._hidden_for_missing = False
         self._render()
 
     def set_logo_height(self, height: int) -> None:
@@ -100,7 +101,19 @@ class BrandLogo(QLabel):
 
     def _render(self) -> None:
         pixmap = logo_pixmap(self._height, tint=self._tint, dpr=self.devicePixelRatioF())
-        self.setVisible(not pixmap.isNull())
+        # `setVisible(True)` CHAQIRILMAYDI: `__init__` da vidjetning
+        # otasi hali yo'q va Qt uni ALOHIDA OYNA qilib ochardi - ishga
+        # tushishda ekranning chap yuqorisida kichik oyna miltillab
+        # turardi (har logotip uchun ~70 ms nativ oyna). Ko'rinish
+        # otadan meros qoladi; faylsiz holatda yashiriladi, fayl
+        # topilganda esa faqat O'ZIMIZ yashirgan bo'lsak qaytariladi.
+        if pixmap.isNull():
+            self._hidden_for_missing = True
+            self.hide()
+        elif self._hidden_for_missing:
+            self._hidden_for_missing = False
+            if self.parentWidget() is not None:
+                self.show()
         self.setPixmap(pixmap)
         if not pixmap.isNull():
             self.setFixedSize(pixmap.deviceIndependentSize().toSize())

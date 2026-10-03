@@ -101,7 +101,9 @@ def _prepare_like_main() -> None:
     import bo'lardi. `main.py` o'zgarsa, bu funksiya ham yangilanadi.
     """
     from core.bundle_paths import resource_root
+    from core.env_guard import sanitize_process_env
 
+    sanitize_process_env()
     os.environ.setdefault("INSIGHTFACE_ROOT", str(resource_root()))
     stub = types.ModuleType("insightface.app.mask_renderer")
     stub.MaskRenderer = type("MaskRenderer", (), {})

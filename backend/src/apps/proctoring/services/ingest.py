@@ -159,7 +159,12 @@ def push_events_batch(*, session, events: list[dict]) -> int:
         else:
             pipeline_records.append(record)
 
-        _apply_risk(session.pk, event_type, risk_config)
+        # YOPILISH hodisasi (`closed`) ballga QO'SHILMAYDI: u allaqachon
+        # sanalgan epizodga faqat davomiylik qo'shadi (client
+        # `behavior_analyzer._closed_event`, `face_presence`). Aks holda
+        # cooldown'dan uzun har epizod ikki marta sanalardi.
+        if not _is_closing(item.get("payload")):
+            _apply_risk(session.pk, event_type, risk_config)
         _broadcast(record)
         accepted += 1
 
@@ -218,6 +223,10 @@ def push_screenshot_meta(
     # bo'lishi mumkin. Bu eng oson aniqlanadigan spoofing belgisi.
     if sha256:
         check_frozen_frames(session, sha256, question_id=question_id)
+
+
+def _is_closing(payload) -> bool:
+    return isinstance(payload, dict) and payload.get("closed") is True
 
 
 def _apply_risk(session_id: int, event_type: str, config: dict | None) -> None:

@@ -49,11 +49,12 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from config import CAMERA_FRAME_MAX_AGE_S, FACE_MATCH_THRESHOLD
+from config import CAMERA_FRAME_MAX_AGE_S, EVENT_BATCH_MAX, FACE_MATCH_THRESHOLD
 from services import local_archive, net_policy, runtime_settings
 from services.app_state import AppState
 from services.camera_worker import CameraWorker, encode_jpeg, retire_camera
 from services.face_engine import FaceEngine, similarity_score
+from services.face_presence import FaceEpisodes
 from services.device_watch import DeviceWatcher
 from services.lockdown import lockdown
 from services.monitoring import SessionMonitor
@@ -76,6 +77,7 @@ from ui.pages.webview_errors import (
     webengine_process_problem,
 )
 from ui.widgets.indicators import BusyOverlay, Snackbar
+from ui.widgets.launch_screen import STEP_BROWSER, STEP_PLATFORM, LaunchScreen
 
 log = logging.getLogger(__name__)
 
@@ -90,6 +92,12 @@ _BAR_MARGIN = 18
 #: yashirilgan va operator dastur yopilishini kutyapti. Server javob
 #: bermasa sessiyani `close_stale_sessions` baribir yopadi.
 _EXIT_REQUEST_TIMEOUT_S = 4.0
+#: Chiqishdagi yakun zanjirining umumiy byudjeti (s) - `MainWindow`
+#: workerni 10 s kutadi, bir soniya zaxira bilan.
+_EXIT_BUDGET_S = 9.0
+#: Yordamchi qadamga bundan kam vaqt qolsa u o'tkazib yuboriladi -
+#: bunday timeout bilan so'rov baribir ulgurmasdi.
+_MIN_STEP_TIMEOUT_S = 0.5
 
 
 class DomainAllowlistInterceptor(QWebEngineUrlRequestInterceptor):
@@ -190,6 +198,11 @@ class ExamWebViewPage(QWidget):
         self._workers = WorkerHolder()
         #: Test platformasi ochilgan va sessiya hali yakunlanmagan.
         self._exam_open = False
+        #: Sessiya serverda YOPILGAN yoki yopilmoqda (`session/finish/`
+        #: yuborildi, chetlashtirildi, muddati tugadi). Bunda server
+        #: kuzatuvni o'zi yakunlagan (`session._complete_proctoring`) va
+        #: token bekor - `proctoring/stop/` faqat 404 olardi.
+        self._session_closed = False
         #: Test sahifasi ochilgan payt (monoton soat) — yakunlash
         #: dialogida "test qancha davom etdi" degan qator uchun.
         self._opened_at: Optional[float] = None
@@ -285,8 +298,12 @@ class ExamWebViewPage(QWidget):
         # bila olmaydi.
         self._face_checks = 0
         self._passed_since_last = 0
+        #: "Yuz yo'q" / "bir nechta yuz" - epizod bo'yicha (`services/face_presence.py`).
+        self._face_episodes = FaceEpisodes()
         self._interceptor: Optional[DomainAllowlistInterceptor] = None
         self._profile: Optional[QWebEngineProfile] = None
+        #: Chromium'ni oldindan qizdiruvchi sahifa (`prewarm_browser`).
+        self._warm_page: Optional[QWebEnginePage] = None
         #: WebView tiklash holati (renderer qulashi, sahifa ochilmasligi).
         #: `test_link` faqat xotirada — qayta kirish uchun.
         self._login_url = ""
@@ -359,6 +376,9 @@ class ExamWebViewPage(QWidget):
 
         self._build_floating_bar()
         self.overlay = BusyOverlay(self)
+        # "Test ochilmoqda" - yuz tasdig'idan platformaning birinchi
+        # muvaffaqiyatli yuklanishigacha (`ui/widgets/launch_screen.py`).
+        self._launch = LaunchScreen(self)
 
         # XABAR SUZADI, LAYOUTDA EMAS. Ilgari bu yerda `MessageBar`
         # turardi va u ko'ringanda BUTUN test sahifasini pastga
@@ -465,10 +485,13 @@ class ExamWebViewPage(QWidget):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self.overlay.setGeometry(self.rect())
+        self._launch.setGeometry(self.rect())
         self._error_panel.setGeometry(self.rect())
         if self._error_panel.isVisible():
             self._error_panel.raise_()
         self._place_floating_bar()
+        if self._launch.isVisible():
+            self._launch.raise_()
         self.message.reposition()
         # Qoplama paneldan YUQORIDA qoladi: kutish ekrani butun
         # sahifani yopishi kerak va uning ustidan chiqib turgan tugma
@@ -521,7 +544,15 @@ class ExamWebViewPage(QWidget):
                 ),
             )
             return
-        self.overlay.start("Kuzatuv ishga tushirilmoqda...")
+        candidate = self._state.candidate
+        exam = self._state.selected_exam
+        self._launch.begin(" · ".join(
+            part for part in (
+                candidate.display_name if candidate else "",
+                exam.name if exam else "",
+            ) if part
+        ))
+        self._session_closed = False
         self._pending_access = access
         self._pending_camera = camera
         self._arm_local_archive()
@@ -738,7 +769,10 @@ class ExamWebViewPage(QWidget):
         return self._repo.proctoring_start(ai_profile=profile.name)
 
     def _on_proctoring_started(self, result) -> None:
-        self.overlay.stop()
+        # Ekran YOPILMAYDI - keyingi qadamlar (Chromium, kamera,
+        # platforma) yana soniyalar oladi va ilgari aynan shu yerda
+        # talabgor bo'sh oq ekranga qarab qolardi.
+        self._launch.advance(STEP_BROWSER)
         log.info(
             "Kuzatuv faollashdi (kamera tekshiruvi: %s)",
             ((result or {}).get("camera_check") or {}).get("status", "-"),
@@ -756,7 +790,7 @@ class ExamWebViewPage(QWidget):
         (`camera_check_failed`). Ikkalasida ham operator imtihon
         tanlash ekraniga qaytib, kamerani tuzatishi kerak.
         """
-        self.overlay.stop()
+        self._launch.dismiss()
         self._pending_access = None
         self._release_pending_camera()
         log.warning("Kuzatuv boshlanmadi (%s): %s", code or "-", message)
@@ -836,6 +870,7 @@ class ExamWebViewPage(QWidget):
             self._attach_camera(camera)
 
         self._monitor.start(self._state.config)
+        self._face_episodes = FaceEpisodes.from_config(self._state.config)
         self._report_startup_threats()
         self._face_checks = 0
         self._passed_since_last = 0
@@ -872,6 +907,37 @@ class ExamWebViewPage(QWidget):
         # ham), lekin hodisa yozadigan sessiya faqat shu yerda bor.
         lockdown.set_observer(self._watcher.report_blocked_key)
         lockdown.set_issue_observer(self._watcher.report_keyboard_issue)
+
+    def prewarm_browser(self) -> None:
+        """
+        Chromium'ni imtihondan OLDIN ishga tushiradi. Takroriy chaqiruv - no-op.
+
+        Birinchi `QWebEngineProfile`/`QWebEnginePage` jarayon bo'yicha
+        Chromium kontekstini ko'taradi: UI thread'ida 0.4 s (tez
+        mashinada) - 1.5 s (sekin). Bu bir martalik narx va u ilgari
+        yuz tasdig'idan keyin, `_configure_profile` da to'lanardi.
+        Keyingi profillar ~1 ms.
+
+        Imtihon profiliga TEGMAYDI: alohida off-the-record profil,
+        hech narsa yuklanmaydi (renderer jarayoni ochilmaydi, tarmoqqa
+        chiqilmaydi). Sessiya profili har imtihonda baribir YANGI
+        (`_configure_profile` izohi).
+
+        Profil sahifaning BOLASI: sahifa avval o'chadi, keyin profil -
+        teskarisida Qt "Release of profile requested but WebEnginePage
+        still not deleted" deb ogohlantiradi.
+        """
+        if self.web_view is None or self._warm_page is not None:
+            return
+        started = time.monotonic()
+        try:
+            profile = QWebEngineProfile()
+            self._warm_page = QWebEnginePage(profile, self)
+            profile.setParent(self._warm_page)
+        except Exception:  # noqa: BLE001 - imtihon boshida baribir quriladi
+            log.debug("Brauzerni oldindan ishga tushirib bo'lmadi", exc_info=True)
+            return
+        log.info("Brauzer oldindan ishga tushirildi (%.0f ms)", (time.monotonic() - started) * 1000)
 
     def _configure_profile(self, policy: dict) -> None:
         """
@@ -914,6 +980,7 @@ class ExamWebViewPage(QWidget):
         # qolardi: kiosk rejimida F5 ham, manzil satri ham yo'q.
         page.renderProcessTerminated.connect(self._on_render_terminated)
         page.loadingChanged.connect(self._on_loading_changed)
+        page.loadProgress.connect(self._launch.set_progress)
 
         # Profil Python tomonda referenssiz qolsa yig'ib yuboriladi va
         # sahifa "Render process terminated" bilan qulaydi.
@@ -953,11 +1020,13 @@ class ExamWebViewPage(QWidget):
         self._load_retry.success()
 
         if not login_url:
+            self._launch.dismiss()
             self.message.show_message("Test havolasi berilmadi", "error")
             return
 
         if delivery != "url":
             log.error("Kutilmagan `delivery` qiymati: %s", delivery)
+            self._launch.dismiss()
             self.message.show_message(
                 "Server test havolasini kutilmagan shaklda yubordi — "
                 "administratorga murojaat qiling",
@@ -968,6 +1037,7 @@ class ExamWebViewPage(QWidget):
         # LOG'GA MANZIL YOZILMAYDI: havola ichida bir martalik token
         # bor va log fayli imtihon mashinasida qoladi.
         log.info("Test platformasi ochilmoqda: %s", urlparse(login_url).hostname or "-")
+        self._launch.advance(STEP_PLATFORM)
         self.web_view.load(QUrl(login_url))
 
     # ------------------------------------------------------------------
@@ -1086,7 +1156,16 @@ class ExamWebViewPage(QWidget):
         Har kadr uchun so'rov yuborish daqiqasiga ~600 so'rov degani va
         `client_ingest` chegarasini bir zumda yeb qo'yadi. Taymer esa
         siyosatdagi oraliqda bir marta solishtiradi.
+
+        "Yuz yo'q" va "bir nechta yuz" HODISASI ham kadr bo'yicha emas -
+        EPIZOD bo'yicha (`FaceEpisodes`): ilgari har "yuz yo'q" kadri
+        hodisa edi va talabgor egilganda panelga sekundiga o'nlab
+        "Yuz topilmadi" tushardi.
         """
+        if self._session_closed:
+            # Yakun yuborildi, kamera esa `stop()` gacha ishlab turibdi -
+            # yangi epizod ochilsa uning hodisasi hech qayerga yetmasdi.
+            return
         state = result.get("state")
         if state == "ok":
             self._last_embedding = result.get("embedding")
@@ -1094,17 +1173,20 @@ class ExamWebViewPage(QWidget):
         elif state == "none":
             self._last_embedding = None
             self._last_faces = 0
-            self._monitor.push_event("face_not_found", severity=2)
         elif state == "multiple":
             self._last_embedding = None
             self._last_faces = len(result.get("bboxes") or []) or 2
-            self._monitor.push_event("multiple_faces", severity=3)
         else:
             # "far" - yuz bor, lekin juda uzoq. Embedding ishonchsiz
             # (ArcFace uni 112x112 ga cho'zadi), shuning uchun u
             # solishtirishga BERILMAYDI, lekin "yuz yo'q" ham emas.
             self._last_embedding = None
             self._last_faces = 1
+        for event_type, severity, payload in self._face_episodes.observe(
+            state or "", time.monotonic(), faces=self._last_faces
+        ):
+            payload["camera_role"] = "primary"
+            self._monitor.push_event(event_type, severity=severity, payload=payload)
 
     def _current_face(self) -> tuple:
         """
@@ -1212,15 +1294,30 @@ class ExamWebViewPage(QWidget):
             return
 
         embedding, faces = self._current_face()
+        if embedding is None or faces != 1:
+            # SOLISHTIRIB BO'LMADI - "MOS KELMADI" EMAS. Yuz yo'q, bir
+            # nechta yoki juda uzoq: ilgari bu `face/periodic/` ga ball 0
+            # bilan ketardi - har oraliqda jurnal qatori + JPEG + HIGH
+            # hodisa + `face_fails`, ya'ni joyidan turgan talabgor
+            # `high_suspicion_identity` ("boshqa odam") olardi. Yo'qlik
+            # o'z kanalida, epizod bo'yicha yozilgan (`FaceEpisodes` /
+            # AI qatlamidagi `no_face`, `multiple_faces`). Seriya ham
+            # uzilmaydi va davom etmaydi - kirishdagi qoida bilan bir xil.
+            self._status["face"] = (
+                "FaceID: yuz ko'rinmayapti" if faces == 0
+                else "FaceID: bir nechta yuz" if faces > 1
+                else "FaceID: yaqinroq keling"
+            )
+            self._update_status_tooltip()
+            return
+
         self._face_checks += 1
         self._monitor.set_face_checks(self._face_checks)
 
         threshold = self._face_threshold()
-        score = 0
-        if embedding is not None and faces == 1:
-            score = FaceEngine.compare(reference, embedding)
+        score = FaceEngine.compare(reference, embedding)
 
-        if score >= threshold and faces == 1:
+        if score >= threshold:
             self._passed_since_last += 1
             self._status["face"] = "FaceID: mos ({}%)".format(score)
             self._update_status_tooltip()
@@ -1396,6 +1493,7 @@ class ExamWebViewPage(QWidget):
         self._warning_dialog().show_warning(
             reason or "Sessiya proktor tomonidan to'xtatildi", 4, timeout_s=0
         )
+        self._session_closed = True
         self.stop()
         self.session_lost.emit("terminated")
 
@@ -1454,6 +1552,7 @@ class ExamWebViewPage(QWidget):
             self._open_platform(access)
         except Exception:
             log.exception("Test sahifasini ochib bo'lmadi")
+            self._launch.dismiss()
             self._exam_open = True
             if self._opened_at is None:
                 self._opened_at = time.monotonic()
@@ -1473,6 +1572,8 @@ class ExamWebViewPage(QWidget):
         if self._error_panel.isVisible():
             self._error_panel.raise_()
         self._place_floating_bar()
+        if self._launch.isVisible():
+            self._launch.raise_()
         self.message.raise_()
         if self.overlay.isVisible():
             self.overlay.raise_()
@@ -1495,6 +1596,7 @@ class ExamWebViewPage(QWidget):
                 log.info("Renderer to'xtadi (%s) - imtihon ochiq emas", status_name)
                 return
             log.warning("Test sahifasi jarayoni to'xtadi: %s (kod %s)", status_name, exit_code)
+            self._launch.dismiss()
             self._monitor.push_event(
                 "client_anomaly",
                 severity=2,
@@ -1540,6 +1642,8 @@ class ExamWebViewPage(QWidget):
         status = info.status()
         url = info.url()
         if status == QWebEngineLoadingInfo.LoadStatus.LoadSucceededStatus:
+            # Platforma chizildi - "Test ochilmoqda" silliq yo'qoladi.
+            self._launch.finish()
             if self._usable(url):
                 self._last_good_url = QUrl(url)
             self._load_retry.success()
@@ -1556,6 +1660,7 @@ class ExamWebViewPage(QWidget):
             # Allowlist to'sdi: bu tarmoq xatosi EMAS va qayta yuklash
             # uni o'zgartirmaydi — testga qaytish yo'lini beramiz.
             log.info("Ruxsat etilmagan sahifaga o'tish to'sildi: %s", blocked_host or "-")
+            self._launch.dismiss()
             self._retry_url = QUrl(self._last_good_url)
             self._error_panel.show_error(
                 "Bu sahifa imtihon uchun ruxsat etilmagan",
@@ -1572,7 +1677,11 @@ class ExamWebViewPage(QWidget):
             "Test sahifasi ochilmadi: %s %s (%s)", domain, code, url.host() or "-"
         )
         if described is None:
+            # Xato emas (masalan yo'naltirishda bekor qilingan yuklanish,
+            # ERR_ABORTED) - keyingi yuklanish keladi, ekran qoladi.
             return
+        # Xato ekrani "Test ochilmoqda" o'rnini oladi - ostida qolmasin.
+        self._launch.dismiss()
         title, text, auto_retry = described
         self._retry_url = QUrl(url) if self._usable(url) else QUrl()
         delay = self._load_retry.failure() if auto_retry else None
@@ -1710,13 +1819,19 @@ class ExamWebViewPage(QWidget):
         (`session_not_found`) olar, fayl mashinada qolar, panelda esa
         «Mashinadagi yozuvlar» doim bo'sh turardi. Ikki alohida fon
         chaqiruvi ham yetmasdi: ularning tartibi kafolatlanmagan.
+
+        NAVBATDAGI HODISALAR ham xuddi shu sababdan shu chaqiruvda,
+        yakundan OLDIN ketadi (`_collect_final_events`).
         """
         self._exam_open = False
+        self._session_closed = True
+        self._launch.dismiss()
         self.overlay.start("Yakunlanmoqda...")
         recording = self._stop_capture(register=False)
         fields = self._recording_fields(recording) if recording is not None else None
+        events = self._collect_final_events()
         worker = ApiWorker(
-            self._finish_with_recording, fields, reason, None, completed, parent=self
+            self._finish_with_recording, fields, reason, None, completed, events, parent=self
         )
         worker.succeeded.connect(
             lambda result: self._after_finish(result if isinstance(result, dict) else {})
@@ -1758,11 +1873,14 @@ class ExamWebViewPage(QWidget):
         if not self._exam_open:
             return None
         self._exam_open = False
+        self._session_closed = True
         log.info("Dasturdan chiqilmoqda - ochiq sessiya yakunlanadi (%s)", reason)
         recording = self._stop_capture(register=False)
         fields = self._recording_fields(recording) if recording is not None else None
+        events = self._collect_final_events()
         worker = ApiWorker(
-            self._finish_with_recording, fields, reason, _EXIT_REQUEST_TIMEOUT_S, parent=self
+            self._finish_with_recording, fields, reason, _EXIT_REQUEST_TIMEOUT_S, False, events,
+            parent=self,
         )
         worker.succeeded.connect(lambda _: log.info("Sessiya chiqishda yakunlandi"))
         worker.failed.connect(
@@ -1774,12 +1892,64 @@ class ExamWebViewPage(QWidget):
         self._workers.run(worker)
         return worker
 
+    def _collect_final_events(self) -> list:
+        """
+        UI THREAD'IDA, yakun so'rovidan OLDIN: yuborilmagan hodisalar.
+
+        Avval hodisa MANBALARI yopiladi, chunki ular yakunda yana
+        yozuv beradi: AI kuzatuv ochiq hodisalarni davomiylik bilan
+        yopadi (`stop_pipeline` - sinxron, shu thread'da), yuz epizodlari
+        ham. Keyin navbat olinadi. Shundan keyin kelgan hodisa (kamera
+        natijasi, oyna fokusi) yakunga yetib bormaydi - u endi imtihonga
+        tegishli emas. `stop()` ularni baribir yuborishga urinadi.
+
+        `supervisor.stop()` va `stop()` dagi takror chaqiruv xavfsiz.
+        """
+        self._face_timer.stop()
+        self._supervisor.stop()
+        if not self._monitor.is_active:
+            return []
+        for event_type, severity, payload in self._face_episodes.close_all(time.monotonic()):
+            payload["camera_role"] = "primary"
+            self._monitor.push_event(event_type, severity=severity, payload=payload)
+        return self._monitor.drain_for_finish()
+
     def _finish_with_recording(self, fields: Optional[dict], reason: str,
-                               timeout: Optional[float] = None, completed: bool = False):
-        """FON THREAD'IDA: avval yozuv manzili, keyin yakun."""
+                               timeout: Optional[float] = None, completed: bool = False,
+                               events: Optional[list] = None):
+        """
+        FON THREAD'IDA: hodisalar -> yozuv manzili -> yakun.
+
+        Uchalasi BITTA chaqiruvda va shu tartibda: oldingi ikkitasi
+        sessiya tokenini talab qiladi, u esa yakunda bekor bo'ladi.
+        Ular yakunni TO'SMAYDI - xatosi log'ga yoziladi, yakun baribir
+        yuboriladi.
+
+        `timeout` berilsa (dasturdan chiqish) - umumiy BYUDJET
+        `_EXIT_BUDGET_S`: chaqiruvchi workerni chegaralangan vaqt kutadi
+        (`MainWindow._await`, 10 s) va undan oshsa thread to'xtatiladi.
+        Yordamchi qadamlar yakun uchun to'liq `timeout` ni qoldiradi -
+        uch so'rov x 4 s byudjetdan oshib, AYNAN yakun kesilib qolardi,
+        holbuki u eng muhimi (sessiyani yopadi, talabgorni bo'shatadi).
+        """
+        deadline = time.monotonic() + _EXIT_BUDGET_S if timeout is not None else None
+
+        def side_timeout() -> Optional[float]:
+            if deadline is None:
+                return None
+            return min(timeout, deadline - time.monotonic() - timeout)
+
+        if events:
+            self._send_final_events(events, side_timeout)
+
+        if fields is not None:
+            step_timeout = side_timeout()
+            if step_timeout is not None and step_timeout < _MIN_STEP_TIMEOUT_S:
+                log.warning("Ekran yozuvi qayd etilmadi (vaqt qolmadi) - fayl mashinada qoldi")
+                fields = None
         if fields is not None:
             try:
-                self._repo.register_recording(**fields, timeout=timeout)
+                self._repo.register_recording(**fields, timeout=step_timeout)
             except Exception as exc:
                 # Yakunni TO'SMAYDI: fayl baribir mashinada qoladi va
                 # u sessiya papkasida (`<sessiya>_<jshshir>_<mac>/`)
@@ -1793,12 +1963,47 @@ class ExamWebViewPage(QWidget):
                 )
         return self._repo.finish_session(reason=reason, completed=completed, timeout=timeout)
 
+    def _send_final_events(self, events: list, side_timeout) -> None:
+        """
+        FON THREAD'IDA: yakundan oldingi hodisalar, `EVENT_BATCH_MAX` lik bo'laklarda.
+
+        Qayta urinish YO'Q: yakun kutib turibdi. Tarmoq xatosida qolgan
+        bo'laklar ham yuborilmaydi (ular ham o'sha xatoni olardi);
+        "zaharli" bo'lak (400) esa faqat o'zi tashlanadi. Yo'qotish
+        log'da - soni va turlari, payload'siz (`SessionMonitor._requeue`
+        bilan bir xil qoida).
+        """
+        for start in range(0, len(events), EVENT_BATCH_MAX):
+            batch = events[start:start + EVENT_BATCH_MAX]
+            step_timeout = side_timeout()
+            if step_timeout is not None and step_timeout < _MIN_STEP_TIMEOUT_S:
+                self._log_lost_events(events[start:], "vaqt qolmadi")
+                return
+            try:
+                self._repo.send_events(batch, timeout=step_timeout)
+            except Exception as exc:
+                code = getattr(exc, "code", "") or type(exc).__name__
+                if net_policy.is_poison_payload(int(getattr(exc, "status", 0) or 0)):
+                    self._log_lost_events(batch, code)
+                    continue
+                self._log_lost_events(events[start:], code)
+                return
+        log.info("Yakundan oldin %s ta hodisa yuborildi", len(events))
+
+    @staticmethod
+    def _log_lost_events(events: list, reason: str) -> None:
+        log.warning(
+            "Yakundan oldin %s ta hodisa yuborilmadi (%s): %s",
+            len(events), reason, sorted({str(item.get("type")) for item in events}),
+        )
+
     def _after_finish(self, result: dict) -> None:
         self.overlay.stop()
         self.stop()
         self.session_finished.emit(result)
 
     def _on_session_lost(self, reason: str) -> None:
+        self._session_closed = True
         self.stop()
         self.session_lost.emit(reason)
 
@@ -1806,6 +2011,7 @@ class ExamWebViewPage(QWidget):
     def stop(self) -> None:
         """Nazoratni to'xtatadi va WebView'ni tozalaydi."""
         self._exam_open = False
+        self._launch.dismiss()
         self._notify_proctoring_stop()
         self._face_timer.stop()
         # Kanal BIRINCHI yopiladi: aks holda sessiya yakunlangach
@@ -1827,6 +2033,15 @@ class ExamWebViewPage(QWidget):
         # Monitordan keyin to'xtatilsa, "telefon ko'rindi" yozuvi
         # davomiyliksiz qolardi.
         self._supervisor.stop()
+        # Ochiq yuz epizodi DAVOMIYLIGI bilan yopiladi (monitor oxirgi
+        # buferni yuborishidan OLDIN) - supervisor'ning `close_all` i
+        # bilan bir xil sabab.
+        closing = self._face_episodes.close_all(time.monotonic())
+        if self._monitor.is_active:
+            # Faol emas - navbatdagi hodisa KEYINGI sessiyaga ketib qolardi.
+            for event_type, severity, payload in closing:
+                payload["camera_role"] = "primary"
+                self._monitor.push_event(event_type, severity=severity, payload=payload)
         self._monitor.stop()
         # Arxiv konteksti TOZALANADI: keyingi talabgorning kadrlari
         # oldingisining papkasiga tushib qolmasligi kerak.
@@ -1882,11 +2097,15 @@ class ExamWebViewPage(QWidget):
         Kuzatuv holatini serverda yakunlaydi.
 
         BEST-EFFORT va sessiya tokeni hali bekor qilinmagan paytda
-        yuboriladi (`stop()` ning boshida). Javob kutilmaydi:
-        server holatni `session/finish/` da ham, yakunlash
-        vazifasida ham baribir yopadi - bu chaqiruv faqat uni
-        ERTAROQ va aniqroq qiladi.
+        yuboriladi (`stop()` ning boshida). Javob kutilmaydi.
+
+        FAQAT sessiya TIRIK qolganda (masalan, operator chiqib ketdi):
+        yakun, chetlashtirish va muddat tugashi kuzatuvni serverda
+        o'zi yopadi (`session._complete_proctoring`) va tokenni bekor
+        qiladi - ulardan keyingi chaqiruv har safar 404 olardi.
         """
+        if self._session_closed:
+            return
         if self._pending_access is not None:
             # Kuzatuv umuman boshlanmagan (start rad etilgan).
             return

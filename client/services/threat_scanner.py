@@ -637,22 +637,36 @@ def neutralize(report: ThreatReport, *, end_rdp_sessions: bool = False) -> Threa
         except Exception as exc:
             finding.reason = str(exc)[:120]
             continue
-        victims.append((finding, process))
         try:
             process.kill()
         except psutil.NoSuchProcess:
             finding.neutralized = True
+            continue
         except psutil.AccessDenied:
             finding.reason = (
                 "huquq yetmadi (administrator kerak)"
                 if not report.elevated
                 else "himoyalangan jarayon"
             )
+            # Kutish ro'yxatiga QO'SHILMAYDI: o'ldirilmagan jarayon
+            # tirik, kutishning ma'nosi yo'q. Bundan muhimi —
+            # `wait_procs` SYSTEM jarayonini (`remoting_host.exe`)
+            # `SYNCHRONIZE` huquqi bilan ocholmaydi va `AccessDenied`
+            # bilan yiqiladi; shu istisno butun hisobotni yo'qotib,
+            # Chrome Remote Desktop'ni jimgina o'tkazib yuborgan.
+            continue
         except Exception as exc:
             finding.reason = str(exc)[:120]
+            continue
+        victims.append((finding, process))
 
     if victims:
-        psutil.wait_procs([process for _, process in victims], timeout=_KILL_TIMEOUT)
+        try:
+            psutil.wait_procs([process for _, process in victims], timeout=_KILL_TIMEOUT)
+        except psutil.Error:
+            # Kutish — faqat qulaylik; natijani pastdagi tekshiruv
+            # har jarayon uchun alohida aniqlaydi.
+            log.debug("Jarayonlar tugashini kutib bo'lmadi", exc_info=True)
         for finding, process in victims:
             if finding.neutralized:
                 continue
@@ -795,7 +809,16 @@ def sweep(*, allow=(), allow_virtual_host: bool = False, dry_run: bool = False) 
     if dry_run or not report.findings:
         return report
 
-    neutralize(report)
+    try:
+        neutralize(report)
+    except Exception:
+        # Yo'q qilishdagi xato TOPILMANI yo'qotmasligi kerak: hisobot
+        # qaytmasa to'siq ham bo'lmaydi va tahdid jimgina o'tib ketadi.
+        # Yo'q qilinmaganlar qayta tekshiruvda `survivors` bo'lib qoladi.
+        log.exception("Tahdidlarni yo'q qilishda kutilmagan xato")
+        for finding in report.findings:
+            if not finding.neutralized and not finding.reason:
+                finding.reason = "yo'q qilishda xato"
 
     rescan = scan(allow=allow, allow_virtual_host=allow_virtual_host)
     still_here = {

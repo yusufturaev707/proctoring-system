@@ -133,8 +133,17 @@ def machine_config_root() -> Path:
 
     Katalog YARATILMAYDI (`writable_root` dan farqli): bu o'qish uchun
     manba, uni o'rnatuvchi yaratadi.
+
+    Frozen: katalog Windows API'dan (`env_guard.trusted_system_dirs`),
+    muhitdan EMAS — foydalanuvchi `setx ProgramData ...` bilan
+    administrator faylini o'z papkasidagi fayl bilan almashtirardi.
     """
-    base = os.environ.get("ProgramData") or os.environ.get("ALLUSERSPROFILE")
+    base = None
+    if is_frozen():
+        from core.env_guard import trusted_system_dirs
+
+        base = trusted_system_dirs().get("ProgramData")
+    base = base or os.environ.get("ProgramData") or os.environ.get("ALLUSERSPROFILE")
     if not base:
         # Muhit buzilgan holat (xizmat yoki qisqartirilgan muhit bilan
         # ishga tushirish). Windows'da standart joy o'zgarmaydi.
@@ -142,11 +151,30 @@ def machine_config_root() -> Path:
     return Path(base) / APP_DIR_NAME
 
 
+def explicit_env_file() -> str:
+    """
+    `PROCTORING_ENV_FILE` qiymati — yoki bo'sh satr.
+
+    Frozen: FAQAT mashina darajasidan (HKLM, `core/env_guard.machine_env`).
+    Foydalanuvchi darajasidagi `setx PROCTORING_ENV_FILE ...` ni istalgan
+    talabgor yoza oladi va u administrator faylini (kiosk, server manzili,
+    TLS) butunlay almashtirardi. Dev: jarayon muhitidan, odatdagidek.
+    """
+    if is_frozen():
+        from core.env_guard import machine_env
+
+        return machine_env(ENV_FILE_VAR) or ""
+    explicit = (os.environ.get(ENV_FILE_VAR) or "").strip()
+    return str(Path(os.path.expandvars(explicit)).expanduser()) if explicit else ""
+
+
 def env_file_candidates() -> list[Path]:
     """
     `.env` qidiriladigan joylar — USTUNLIK TARTIBIDA.
 
-      1. `PROCTORING_ENV_FILE` — ochiq ko'rsatilgan yo'l har doim ustun;
+      1. `PROCTORING_ENV_FILE` — ochiq ko'rsatilgan yo'l har doim ustun
+         (o'rnatilgan dasturda faqat mashina darajasida berilgani —
+         `explicit_env_file`);
       2. frozen: `%ProgramData%\\ProctoringClient\\.env` — o'rnatuvchi
          yozadigan asosiy joy;
       3. frozen: `.exe` yonidagi `.env` — o'rnatuvchisiz ("portable")
@@ -164,9 +192,9 @@ def env_file_candidates() -> list[Path]:
     """
     candidates: list[Path] = []
 
-    explicit = (os.environ.get(ENV_FILE_VAR) or "").strip()
+    explicit = explicit_env_file()
     if explicit:
-        candidates.append(Path(os.path.expandvars(explicit)).expanduser())
+        candidates.append(Path(explicit))
 
     if is_frozen():
         candidates.append(machine_config_root() / ".env")

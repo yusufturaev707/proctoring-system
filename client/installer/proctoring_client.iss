@@ -212,6 +212,12 @@ Source: "{#VcRedist}"; DestName: "vc_redist.x64.exe"; Flags: dontcopy
 ; kutib qoladi (`core/bundle_paths.writable_root`).
 
 [Icons]
+; Yorliqlar `.exe` ni OCHADI, `schtasks /Run` ni emas: oddiy huquqda
+; ochilgan client o'zini {#TaskName} vazifasi (RunLevel Highest) orqali
+; administrator huquqi bilan QAYTA ochadi (`core/elevation.py`). Yorliq
+; schtasks.exe ga qaratilsa konsol oynasi miltillardi, vazifa o'chirilgan
+; mashinada esa hech narsa ochilmasdi. Vazifa nomi `elevation.TASK_NAME`
+; bilan AYNAN bir xil bo'lishi shart.
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"
 Name: "{autoprograms}\{#AppName} - diagnostika"; Filename: "{sys}\cmd.exe"; Parameters: "/k ""{app}\{#CheckExeName}"""; WorkingDir: "{app}"; Check: CheckExeExists
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
@@ -221,6 +227,8 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "
 ; undan ochilgan client ham yuqori huquqni meros qilib olardi. Standart
 ; belgisiz - kiosk client ishga tushishi bilan boshqa oynalarni yopadi
 ; (CLOSE_OTHER_APPS), o'rnatayotgan administrator buni kutmaydi.
+; Oddiy huquqda ochilgan client avtostart vazifasi orqali o'zini
+; administrator huquqi bilan qayta ochadi (`core/elevation.py`).
 Filename: "{app}\{#AppExeName}"; Description: "{cm:RunAfterInstall}"; Flags: nowait postinstall skipifsilent runasoriginaluser unchecked
 
 [UninstallRun]

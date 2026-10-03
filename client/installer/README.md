@@ -328,6 +328,17 @@ ochiq qoladi.
 `PROCTORING_ENV_FILE` → `%ProgramData%\ProctoringClient\.env` →
 `.exe` yonidagi `.env` (o'rnatuvchisiz nusxa) → dev'da `client/.env`.
 
+**O'rnatilgan dastur sozlamani FAQAT `.env` faylidan oladi** — muhit
+o'zgaruvchilari (`set`/`setx KIOSK_MODE=...`) e'tiborsiz qoladi, aks
+holda talabgor administrator huquqisiz kioskni o'chira olardi
+(`core/env_guard.py`). `PROCTORING_ENV_FILE` faqat MASHINA darajasida
+qabul qilinadi (`setx /M PROCTORING_ENV_FILE "D:\cfg\.env"`, administrator).
+`QTWEBENGINE_*`, `SSL_CERT_FILE` va shu kabi kutubxona o'zgaruvchilari
+ham o'chiriladi; korporativ CA kerak bo'lsa uni `.env` ga yozing
+(`API_SSL_VERIFY=<CA fayl yo'li>` yoki `SSL_CERT_FILE=`). Proxy
+(`HTTPS_PROXY`, `NO_PROXY`) muhitdan ham o'qiladi — ataylab: soxta CA'siz
+proxy TLS trafigini o'qiy olmaydi, korporativ tarmoqda esa u kerak.
+
 `device_id` saqlanishi SHART: u serverdagi qurilma yozuvining kaliti,
 yo'qolsa qayta o'rnatilgan mashina administrator tasdig'ini
 qaytadan kutadi.

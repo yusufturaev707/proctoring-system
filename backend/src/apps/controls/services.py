@@ -118,6 +118,9 @@ def _serialize(setting) -> dict:
             "match_streak": setting.faceid_match_streak,
             "fail_streak": setting.faceid_fail_streak,
             "fail_min_seconds": setting.faceid_fail_min_seconds,
+            # Test davomida yuz juda uzoq (`client/services/face_presence.py`).
+            "far_warn_s": setting.faceid_far_warn_s,
+            "far_unverified_s": setting.faceid_far_unverified_s,
         },
         "capture": {
             "screen_record": setting.is_screen_record,
@@ -458,6 +461,8 @@ def _default_config() -> dict:
             "match_streak": 3,
             "fail_streak": 15,
             "fail_min_seconds": 8,
+            "far_warn_s": 10,
+            "far_unverified_s": 120,
         },
         "capture": {
             # Modeldagi standart bilan bir xil (`True`): sozlamasi yo'q

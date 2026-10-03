@@ -46,6 +46,10 @@ class SettingAdmin(admin.ModelAdmin):
             },
         ),
         (
+            "FaceID: test davomida yuz uzoqda",
+            {"fields": ("faceid_far_warn_s", "faceid_far_unverified_s")},
+        ),
+        (
             "Skrinshot",
             {
                 "fields": (

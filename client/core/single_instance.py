@@ -37,6 +37,7 @@ MUTEX_NAME = "Local\\ProctoringClient.SingleInstance"
 
 _ERROR_ALREADY_EXISTS = 183
 _ERROR_ACCESS_DENIED = 5
+_SYNCHRONIZE = 0x00100000
 
 _handle = None
 
@@ -83,6 +84,59 @@ def acquire(name: str = MUTEX_NAME) -> bool:
         return True
 
 
+def release() -> None:
+    """
+    Mutex'ni bo'shatadi - faqat administrator nusxasiga joy berish uchun
+    (`core/elevation.relaunch_via_task`): yangi nusxa uni band ko'rsa
+    "boshqa nusxa ishlayapti" deb chiqib ketardi.
+    """
+    global _handle
+    if _handle is None or sys.platform != "win32":
+        _handle = None
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        kernel32.CloseHandle(_handle)
+    except Exception:  # noqa: BLE001
+        log.debug("Mutex yopilmadi", exc_info=True)
+    _handle = None
+
+
+def is_held(name: str = MUTEX_NAME) -> bool:
+    """
+    Mutex'ni BOSHQA jarayon egallaganmi - o'zi yaratmasdan.
+
+    `acquire` bu savolga yaramaydi: mutex yo'q bo'lsa uni YARATADI va
+    endigina ochilayotgan administrator nusxasi uni band deb chiqib
+    ketardi. `ERROR_ACCESS_DENIED` - yuqori huquqli nusxa yaratgan, ya'ni band.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenMutexW.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR)
+        kernel32.OpenMutexW.restype = wintypes.HANDLE
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        kernel32.CloseHandle.restype = wintypes.BOOL
+
+        handle = kernel32.OpenMutexW(_SYNCHRONIZE, False, name)
+        if handle:
+            kernel32.CloseHandle(handle)
+            return True
+        return ctypes.get_last_error() == _ERROR_ACCESS_DENIED
+    except Exception:  # noqa: BLE001
+        log.debug("Mutex holatini tekshirib bo'lmadi", exc_info=True)
+        return False
+
+
 #: Ikkinchi nusxalarning "kuting" xabari bir vaqtda BITTA bo'lsin.
 NOTICE_MUTEX_NAME = "Local\\ProctoringClient.StartingNotice"
 
@@ -127,6 +181,11 @@ def notify_running(app_name: str) -> str:
         if hwnd:
             _activate(hwnd)
             return "activated"
+        if _splash_visible():
+            # Nativ splash ekranda (`core/early_splash.py`, doim ustda) -
+            # u o'zi "ishga tushmoqda" deydi; ustiga ikkinchi xabar
+            # oynasi faqat chalg'itardi.
+            return "splash"
         return "notice" if _show_starting_notice(app_name) else "none"
     except Exception:  # noqa: BLE001
         log.debug("Ikkinchi nusxa xabari ko'rsatilmadi", exc_info=True)
@@ -181,6 +240,21 @@ def _process_image(pid: int) -> str:
         return buffer.value.replace("/", "\\").rsplit("\\", 1)[-1].lower()
     finally:
         kernel32.CloseHandle(handle)
+
+
+#: `core/early_splash.py` dagi oyna klassi - ikkalasi bir xil bo'lishi shart.
+SPLASH_CLASS_NAME = "ProctoringClientEarlySplash"
+
+
+def _splash_visible() -> bool:
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = _user32()
+    user32.FindWindowW.argtypes = (wintypes.LPCWSTR, wintypes.LPCWSTR)
+    user32.FindWindowW.restype = wintypes.HWND
+    hwnd = user32.FindWindowW(SPLASH_CLASS_NAME, None)
+    return bool(hwnd) and bool(user32.IsWindowVisible(hwnd))
 
 
 def _find_main_window(app_name: str) -> int:

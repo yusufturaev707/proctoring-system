@@ -36,6 +36,8 @@ RUNTIME_FIELDS = {
     ("face", "fail_streak"): "faceid_fail_streak",
     ("face", "fail_min_seconds"): "faceid_fail_min_seconds",
     ("face", "interval"): "faceid_interval",
+    ("face", "far_warn_s"): "faceid_far_warn_s",
+    ("face", "far_unverified_s"): "faceid_far_unverified_s",
     ("capture", "screen_record"): "is_screen_record",
     ("capture", "record_fps"): "screen_record_fps",
     ("capture", "record_width"): "screen_record_width",
@@ -88,6 +90,8 @@ class ConfigShapeTests(TestCase):
             faceid_match_streak=5,
             faceid_fail_streak=20,
             faceid_fail_min_seconds=12,
+            faceid_far_warn_s=15,
+            faceid_far_unverified_s=300,
             is_screen_record=False,
             screen_record_fps=3,
             screen_record_width=1280,
@@ -151,10 +155,20 @@ class SettingApiValidationTests(TestCase):
             ("screen_record_pip_percent", 50),
             ("screenshot_pip_percent", 2),
             ("event_batch_interval", 0),
+            ("faceid_far_warn_s", 0),
+            ("faceid_far_unverified_s", 3601),
         ):
             with self.subTest(field=field):
                 response = self._patch(**{field: value})
                 self.assertEqual(response.status_code, 400, response.content)
+
+    def test_far_unverified_not_before_warning(self):
+        response = self._patch(faceid_far_warn_s=60, faceid_far_unverified_s=30)
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("faceid_far_unverified_s", response.content.decode())
+        # Faqat birinchisini o'zgartirish ham saqlangan ikkinchisi bilan solishtiriladi.
+        self.assertEqual(self._patch(faceid_far_warn_s=200).status_code, 400)
+        self.assertEqual(self._patch(faceid_far_warn_s=60, faceid_far_unverified_s=60).status_code, 200)
 
     def test_change_reaches_client_config(self):
         """Saqlash keshni tozalaydi - client keyingi so'rovda yangi qiymatni oladi."""

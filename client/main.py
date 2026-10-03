@@ -38,7 +38,14 @@ if __name__ == "__main__" and ("--watchdog" in sys.argv or "--watchdog-launch" i
 
 from core import crash_guard
 from core.bundle_paths import resource_root
+from core.env_guard import sanitize_process_env
 from core.logging_setup import setup_logging
+
+# MUHITNI TOZALASH - log, `config` va Qt'dan OLDIN (`core/env_guard.py`):
+# talabgor `setx` bilan yozgan `QTWEBENGINE_*`, `SSL_CERT_FILE`,
+# `ProgramData` va hokazo o'rnatilgan dasturga ta'sir qilmasligi kerak.
+# Dev rejimda hech narsa qilmaydi.
+_env_ignored = sanitize_process_env()
 
 os.environ.setdefault("INSIGHTFACE_ROOT", str(resource_root()))
 
@@ -52,6 +59,11 @@ _stub.MaskRenderer = type("MaskRenderer", (), {})
 sys.modules.setdefault("insightface.app.mask_renderer", _stub)
 
 log = setup_logging()
+if _env_ignored:
+    # Faqat NOMLAR: qiymatda yo'l yoki manzil bo'lishi mumkin. Odatda
+    # bo'sh; bo'lmasa - kimdir mashinada muhitni o'zgartirgan.
+    log.warning("Muhit o'zgaruvchilari e'tiborsiz qoldirildi/tiklandi: %s",
+                ", ".join(_env_ignored))
 # Nativ qulash (access violation, abort) izi - ochiq deskriptorga.
 _native_log = crash_guard.enable_native_crash_log()
 if _native_log:
@@ -288,6 +300,49 @@ def _begin_state(restart_count: int):
     return store, crash
 
 
+def _show_early_splash():
+    """
+    Nativ splash (`core/early_splash.py`) - mutex olingan zahoti.
+
+    Mutex'dan OLDIN emas: ikkinchi nusxa splash ko'rsatmasligi kerak
+    (unga `notify_running` javob beradi). `None` - ko'rsatilmadi, `main`
+    Qt splash'ga qaytadi.
+    """
+    try:
+        from core.bundle_paths import resource_path
+        from core.early_splash import EarlySplash
+        from version import APP_NAME as _APP_NAME
+
+        splash = EarlySplash(_APP_NAME, logo_path=str(resource_path("resources/images/logo.png")))
+        return splash if splash.show() else None
+    except Exception:  # noqa: BLE001 - bezak, ishga tushishni to'smaydi
+        log.debug("Nativ splash ko'rsatilmadi", exc_info=True)
+        return None
+
+
+def _prewarm_api_client() -> None:
+    """
+    `ApiClient` ni FON thread'ida yaratadi - tozalash bosqichlari bilan parallel.
+
+    Uning konstruktori (httpx + TLS sertifikatlar to'plamini o'qish)
+    ~0.3 s oladi va ilgari asosiy oyna qurilayotganda UI thread'ida
+    bajarilardi (`PreflightPage` -> `AuthService`). Singleton qulf bilan
+    himoyalangan (`core/singleton.py`): oyna undan oldin so'rasa, shu
+    nusxa tayyor bo'lishini kutadi, ikkinchisi yaratilmaydi.
+    """
+    import threading
+
+    def work() -> None:
+        try:
+            from services.api_client import ApiClient
+
+            ApiClient()
+        except Exception:  # noqa: BLE001 - oyna o'zi qayta urinadi
+            log.debug("ApiClient oldindan yaratilmadi", exc_info=True)
+
+    threading.Thread(target=work, name="prewarm-api", daemon=True).start()
+
+
 def main() -> int:
     # BITTA NUSXA - tozalash bosqichlaridan OLDIN: ikkinchi nusxaning
     # `app_closer` i birinchisining oynasini "begona dastur" deb yopardi.
@@ -306,13 +361,41 @@ def main() -> int:
         )
         return 0
 
+    # ADMINISTRATOR HUQUQI - mutex'dan KEYIN (boshqa nusxa ishlayotgan
+    # bo'lsa yuqorida chiqib ketilgan), tozalashdan OLDIN: SYSTEM
+    # xizmatlarini to'xtatish faqat administrator nusxasida ishlaydi.
+    # Yorliq yoki `.exe` dan oddiy huquqda ochilgan nusxa o'zini avtostart
+    # vazifasi orqali qayta ochadi va chiqadi (`core/elevation.py`).
+    #
+    # SPLASH ENG BIRINCHI: qayta ochish ham, tozalash ham soniyalar oladi
+    # va shu paytda ekran bo'sh qolmasligi kerak. Qayta ochilganda yangi
+    # nusxa o'z splash'ini mutex'ni olgan zahoti ko'rsatadi, bu nusxa esa
+    # aynan shundan KEYIN yopiladi - ekranda uzilish bo'lmaydi.
+    early = _show_early_splash()
+    from core import elevation
+
+    if elevation.relaunch_via_task(
+        release_mutex=single_instance.release,
+        mutex_held=single_instance.is_held,
+        reacquire_mutex=single_instance.acquire,
+    ):
+        if early is not None:
+            early.close()
+        return 0
+
+    _prewarm_api_client()
+
     wd_args = watchdog.parse_args(sys.argv)
     store, previous_crash = _begin_state(wd_args["restart_count"])
 
+    if early is not None:
+        early.set_text("Kompyuter imtihonga tayyorlanmoqda…")
     _disable_extra_monitors()
     _purge_archive()
     _close_other_apps()
     _sweep_threats()
+    if early is not None:
+        early.set_text("Dastur modullari yuklanmoqda…")
 
     from PyQt6.QtCore import Qt
     from PyQt6.QtGui import QFont
@@ -340,21 +423,21 @@ def main() -> int:
     app.setFont(QFont("Segoe UI", 10))
     app.setStyleSheet(GLOBAL_STYLESHEET)
 
-    # SPLASH - QApplication paydo bo'lgan zahoti, og'ir modullardan
-    # (`main_window`: kamera, AI, WebEngine sahifalari) OLDIN. Tozalash
-    # bosqichlaridan keyin va bu ataylab (`_close_other_apps` izohi):
-    # o'sha paytdagi bosishlarga ikkinchi nusxaning "kuting" xabari
-    # javob beradi (`single_instance.notify_running`).
+    # QT SPLASH - faqat ZAXIRA: nativ splash (`early`) ko'rsatilmagan
+    # bo'lsa. Ikkalasi birga bo'lsa ikki xil oyna almashinib miltillardi.
+    # QApplication paydo bo'lgan zahoti, og'ir modullardan (`main_window`:
+    # kamera, AI, WebEngine sahifalari) OLDIN.
     splash = None
-    try:
-        from ui.widgets.startup_splash import StartupSplash
+    if early is None:
+        try:
+            from ui.widgets.startup_splash import StartupSplash
 
-        splash = StartupSplash(APP_NAME, APP_VERSION, steps=3)
-        splash.show()
-        splash.set_text("Dastur modullari yuklanmoqda…")
-    except Exception:  # noqa: BLE001 - splash bezak, ishga tushishni to'smaydi
-        log.warning("Ishga tushish oynasi ko'rsatilmadi", exc_info=True)
-        splash = None
+            splash = StartupSplash(APP_NAME, APP_VERSION, steps=3)
+            splash.show()
+            splash.set_text("Dastur modullari yuklanmoqda…")
+        except Exception:  # noqa: BLE001 - splash bezak, ishga tushishni to'smaydi
+            log.warning("Ishga tushish oynasi ko'rsatilmadi", exc_info=True)
+            splash = None
 
     from main_window import MainWindow
 
@@ -378,6 +461,8 @@ def main() -> int:
 
     if splash is not None:
         splash.set_text("Oyna tayyorlanmoqda…")
+    if early is not None:
+        early.set_text("Oyna tayyorlanmoqda…")
     window = MainWindow(
         state_store=store,
         previous_crash=previous_crash,
@@ -387,6 +472,12 @@ def main() -> int:
     if splash is not None:
         splash.close()
         splash.deleteLater()
+    if early is not None:
+        # Hodisa sikli boshlangach - asosiy oyna birinchi marta chizilgandan
+        # keyin. Darhol yopilsa oralig'ida bir lahza ish stoli ko'rinardi.
+        from PyQt6.QtCore import QTimer
+
+        QTimer.singleShot(0, early.close)
     log.info("%s v%s ishga tushdi", APP_NAME, APP_VERSION)
     _log_env_file()
     try:
