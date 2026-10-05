@@ -3,8 +3,20 @@ import ResourcePage from '../../components/data/ResourcePage'
 import { regionZoneFilters, useRegionOptions, useZoneOptions, zonesOfRegion } from './shared'
 import { allowedIps as allowedIpsApi } from '../../api/endpoints'
 
+/** «IP yoki tarmoq — aynan bittasi» (server: `clean_allowlist_entry`). */
+function exactlyOneAddress(_value, form) {
+  const hasIp = Boolean(String(form.ip_address || '').trim())
+  const hasNetwork = Boolean(String(form.network || '').trim())
+  if (hasIp === hasNetwork) return 'IP manzil YOKI tarmoqdan aynan bittasini kiriting'
+  return null
+}
+
 /**
- * Ruxsat etilgan tashqi (NAT) IP'lar.
+ * Ruxsat etilgan manzillar: bitta tashqi (NAT) IP YOKI tarmoq (CIDR).
+ *
+ * Tarmoq — server binoning ICHIDA turganda (u clientlarni LAN manzili
+ * bilan ko'radi) yoki binolar bitta VPN tarmog'ida bo'lganda: har bino
+ * o'z subnet'i bilan, BINOGA bog'langan holda. Tarmoqlar kesishmaydi.
  *
  * Bu ro'yxat ikki vazifani bajaradi va shuning uchun u shunchaki
  * "xavfsizlik sozlamasi" emas:
@@ -29,21 +41,28 @@ export default function AllowedIpsPage() {
   return (
     <ResourcePage
       title="Ruxsat etilgan IP'lar"
-      subtitle="Imtihon markazlarining tashqi (NAT) manzillari"
+      subtitle="Imtihon markazlarining tashqi (NAT) manzillari va ichki/VPN tarmoqlari"
       queryKey="allowed-ips"
       api={allowedIpsApi}
       permission="controls.ip_manage"
-      searchPlaceholder="IP yoki nom bo‘yicha…"
+      searchPlaceholder="IP, tarmoq yoki nom bo‘yicha…"
       defaultSort={{ field: 'ip_address', sort: 'asc' }}
       defaults={{ is_active: true }}
-      getRowLabel={(row) => row?.ip_address}
+      getRowLabel={(row) => row?.ip_address || row?.network}
       // Ro'yxat bo'sh bo'lsa tekshiruv O'CHIRILGAN hisoblanadi. Oxirgi
       // qatorni o'chirish — butun tarmoq cheklovini olib tashlash demak.
       deleteConfirmPhrase
       deleteDescription="IP o‘chirilsa, shu manzildan ulanayotgan clientlar ishlamay qoladi. Ro‘yxat butunlay bo‘shab qolsa, tekshiruv o‘chirilgan hisoblanadi."
       formMaxWidth="md"
       columns={[
-        { field: 'ip_address', headerName: 'Tashqi IP', width: 165 },
+        {
+          field: 'ip_address', headerName: 'Manzil', width: 180,
+          exportValue: (value, row) => value || row?.network || '',
+          renderCell: (params) =>
+            params.value
+              ? params.value
+              : <Chip size="small" variant="outlined" label={`Tarmoq ${params.row.network}`} />,
+        },
         { field: 'name', headerName: 'Nomi', flex: 1, minWidth: 170, sortable: false },
         {
           field: 'region_name', headerName: 'Viloyat', width: 165, sortable: false,
@@ -76,9 +95,14 @@ export default function AllowedIpsPage() {
       ]}
       fields={[
         {
-          name: 'ip_address', label: 'Tashqi IP manzil', required: true,
-          pattern: 'ipv4', colSpan: 6,
-          helperText: 'Binoning internetga chiqish manzili (LAN IP emas)',
+          name: 'ip_address', label: 'Tashqi IP manzil',
+          pattern: 'ipv4', colSpan: 6, validate: exactlyOneAddress,
+          helperText: 'Bino internet orqali ulansa: uning tashqi (NAT) manzili',
+        },
+        {
+          name: 'network', label: 'yoki tarmoq (CIDR)',
+          pattern: 'cidr4', colSpan: 6, validate: exactlyOneAddress,
+          helperText: 'Server bino ichida yoki VPN bo‘lsa: bino tarmog‘i, masalan 192.168.0.0/24',
         },
         {
           name: 'name', label: 'Nomi', maxLength: 255, colSpan: 6,
@@ -105,7 +129,7 @@ export default function AllowedIpsPage() {
         },
         { name: 'is_active', label: 'Faol', type: 'boolean', colSpan: 12 },
       ]}
-      formDescription="Bir binoga bir nechta manzil qo‘shish mumkin (rezerv kanal). Har bir IP butun tizimda faqat bir marta uchraydi."
+      formDescription="IP yoki tarmoqdan aynan bittasini kiriting. Bir binoga bir nechta yozuv qo‘shish mumkin (rezerv kanal, bir nechta subnet). Har bir IP butun tizimda bir marta uchraydi, tarmoqlar o‘zaro kesishmaydi."
     />
   )
 }

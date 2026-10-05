@@ -1529,7 +1529,15 @@ biznes-mantiq) / `api/v1/{serializers,views,urls}.py`. View'lar yupqa.
 * **`ALLOW_PRIVATE_SOURCE_IP`**: server bino ichida/dev'da LAN/loopback
   manzilni ko'radi — `false` bilan hamma rad (belgisi: preflight o'tadi,
   keyin 403 `ip_not_allowed`). `local.py` da `true`, production'da `false`.
-  Faqat xususiy manzilga tegishli.
+  Faqat xususiy manzilga tegishli. **Production'da uning o'rniga TARMOQ
+  yozuvi** (`AllowedPublicIp.network`, CIDR, binoga bog'langan): server
+  joylashgan bino (LAN) va kelajakdagi VPN (har bino o'z subnet'i) uchun.
+  Yozuv — IP YOKI tarmoq (`allowed_ip_one_kind`); aniq IP tarmoqdan ustun;
+  tarmoqlar kesishmaydi, /8 dan keng emas — qoida bitta joyda
+  (`controls.services.clean_allowlist_entry`, panel + Django admin).
+  Preflight'da server ko'rgan manzil FAQAT tarmoq yozuviga mos kelsa
+  hisoblanadi; binoni aniqlash (`resolve_zone_by_public_ip`) ham tarmoq
+  bo'yicha.
 * **`REQUIRE_ALLOWED_IP`** (standart `true`): `AllowedPublicIp` bo'sh bo'lsa
   hech kim kirmaydi; `false` da bo'sh ro'yxat = tekshiruv o'chiq.
 * **Kiosk rejimi** (`KIOSK_MODE`, standart = `FULLSCREEN`): ramkasiz + doim

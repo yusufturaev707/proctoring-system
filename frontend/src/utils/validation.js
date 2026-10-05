@@ -11,6 +11,9 @@
 const MAC_RE = /^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$/
 const IPV4_RE = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/
 const PINFL_RE = /^\d{14}$/
+// IPv4 tarmoq (CIDR). Prefiks 8..31 — server ham shuni talab qiladi
+// (`controls.services.clean_allowlist_entry`: /32 — bu IP, /8 dan keng — rad).
+const CIDR4_RE = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}\/([89]|[12]\d|3[01])$/
 // Machine UUID (SMBIOS). `{...}` qavs ham qabul qilinadi (registrdan
 // ko'chirilganda shunday bo'ladi) - `normalizeMachineUuid` olib tashlaydi.
 const UUID_RE = /^\{?[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}?$/
@@ -19,6 +22,7 @@ export const PATTERNS = {
   mac: { re: MAC_RE, message: 'Format: AA:BB:CC:DD:EE:FF' },
   uuid: { re: UUID_RE, message: 'Format: XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX' },
   ipv4: { re: IPV4_RE, message: 'To‘g‘ri IPv4 manzil kiriting' },
+  cidr4: { re: CIDR4_RE, message: 'Format: 192.168.0.0/24 (prefiks 8–31)' },
   pinfl: { re: PINFL_RE, message: 'JSHSHIR 14 ta raqamdan iborat' },
   slug: { re: /^[A-Za-z0-9_-]+$/, message: 'Faqat harf, raqam, `-` va `_`' },
   url: { re: /^https?:\/\/.+/i, message: 'URL http:// yoki https:// bilan boshlanishi kerak' },

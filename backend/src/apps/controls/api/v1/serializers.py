@@ -25,12 +25,20 @@ class AllowedPublicIpSerializer(serializers.ModelSerializer):
     # bog'lanish `zone` orqali (`CameraSerializer` dagi bilan bir xil naqsh).
     region = serializers.IntegerField(source="zone.region_id", read_only=True, default=None)
     region_name = serializers.CharField(source="zone.region.name", read_only=True, default="")
+    # Tarmoq yozuvida IP bo'sh: panel formasi bo'sh maydonni `""` qilib
+    # yuboradi, DRF esa `GenericIPAddressField` uchun bo'sh satrni rad
+    # etardi. Bo'sh qiymat `validate` da `None` ga aylanadi; unikallik
+    # tekshiruvi saqlanadi (bo'sh qiymatda ishlamaydi).
+    ip_address = serializers.IPAddressField(
+        required=False, allow_null=True, allow_blank=True,
+        validators=[UniqueValidator(queryset=AllowedPublicIp.objects.all())],
+    )
 
     class Meta:
         model = AllowedPublicIp
         fields = (
             "id", "zone", "zone_name", "region", "region_name",
-            "name", "ip_address", "is_active", "created_at",
+            "name", "ip_address", "network", "is_active", "created_at",
         )
         read_only_fields = ("id", "created_at")
 
@@ -42,6 +50,22 @@ class AllowedPublicIpSerializer(serializers.ModelSerializer):
             message="Faqat o'z viloyatingiz binosi uchun manzil qo'sha olasiz",
             null_message="Binosiz (umumiy) manzilni faqat respublika administratori qo'shadi",
         )
+        # IP yoki tarmoq — qoida Django admin bilan BITTA
+        # (`services.clean_allowlist_entry`). PATCH'da yuborilmagan maydon
+        # yozuvdagi qiymatda qoladi.
+        from django.core.exceptions import ValidationError as DjangoValidationError
+
+        from apps.controls.services import clean_allowlist_entry
+
+        instance = self.instance
+        try:
+            attrs["ip_address"], attrs["network"] = clean_allowlist_entry(
+                ip_address=attrs.get("ip_address", getattr(instance, "ip_address", None)),
+                network=attrs.get("network", getattr(instance, "network", "")),
+                exclude_pk=getattr(instance, "pk", None),
+            )
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.message_dict)
         return attrs
 
 

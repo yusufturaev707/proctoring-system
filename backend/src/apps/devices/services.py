@@ -221,20 +221,25 @@ def resolve_zone_by_public_ip(public_ip: str):
 
     `zone=NULL` yozuv - "barcha binolar uchun ruxsat etilgan" degani, u
     binoni ANIQLAMAYDI, shuning uchun bunday qatorlar hisobga olinmaydi.
+
+    Manzil aniq IP YOKI bino TARMOG'I (`AllowedPublicIp.network`) bo'yicha
+    taniladi - qoida `is_ip_allowed` bilan bitta (`controls.services.
+    zone_id_for_ip`). VPN'da server binoni tashqi IP bilan emas, bino
+    tarmog'idagi xususiy manzil bilan ko'radi.
     """
     if not public_ip:
         return None
 
-    from apps.controls.models import AllowedPublicIp
+    from apps.controls.services import zone_id_for_ip
+    from apps.regions.models import Zone
 
-    row = (
-        AllowedPublicIp.objects.select_related("zone", "zone__region")
-        .filter(ip_address=public_ip, is_active=True, zone__isnull=False)
-        .first()
-    )
-    if row is None or row.zone.deleted_at is not None or not row.zone.is_active:
+    zone_id = zone_id_for_ip(public_ip)
+    if zone_id is None:
         return None
-    return row.zone
+    zone = Zone.objects.select_related("region").filter(pk=zone_id).first()
+    if zone is None or zone.deleted_at is not None or not zone.is_active:
+        return None
+    return zone
 
 
 #: Apparat izi: `muid:<Machine UUID>|mac:<MAC>` (client

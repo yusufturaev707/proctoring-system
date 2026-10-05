@@ -169,7 +169,7 @@ class AllowedPublicIpViewSet(ControlsBaseViewSet):
     required_permission = "controls.ip_manage"
     required_read_permission = "controls.ip_view"
     filterset_fields = ["zone", "zone__region", "is_active"]
-    search_fields = ["ip_address", "name"]
+    search_fields = ["ip_address", "network", "name"]
 
     def get_queryset(self):
         # Ilgari ro'yxat umuman cheklanmagan edi: viloyat xodimi barcha

@@ -29,27 +29,72 @@ def validate_heartbeat_interval(value):
 
 class AllowedPublicIp(TimeStampedModel):
     """
-    Kirishga ruxsat etilgan tashqi IP'lar.
+    Kirishga ruxsat etilgan manzillar — bitta IP YOKI tarmoq (CIDR).
 
     Client uydan emas, aynan imtihon markazidan ulanayotganini tekshiradi —
     bu JSHSHIR qidiruvi hujum yuzasini keskin toraytiradi.
+
+    Yozuv ikki turdan biri (bazada `allowed_ip_one_kind` bilan majburlangan):
+
+      * `ip_address` — binoning tashqi (NAT) manzili: bino server bilan
+        internet orqali ulanadi;
+      * `network` — tarmoq, masalan `192.168.0.0/24`: server BINO ICHIDA
+        turadi yoki binolar bitta VPN tarmog'ida. Server bu clientlarni
+        xususiy manzil bilan ko'radi va bitta IP bilan ularni sanab
+        bo'lmaydi. `ALLOW_PRIVATE_SOURCE_IP` dan farqi — tarmoq BINOGA
+        bog'lanadi: boshqa ichki tarmoq yoki boshqa binoning qurilmasi
+        o'tmaydi.
+
+    Aniq IP tarmoqdan ustun; tarmoqlar o'zaro kesishmaydi (validatsiya —
+    `services.clean_allowlist_entry`), ya'ni manzil hech qachon ikki xil
+    binoga tegishli bo'lib qolmaydi.
     """
 
     zone = models.ForeignKey(
         "regions.Zone", on_delete=models.CASCADE, blank=True, null=True, related_name="allowed_ips"
     )
     name = models.CharField(max_length=255, blank=True, default="")
-    ip_address = models.GenericIPAddressField(unique=True)
+    ip_address = models.GenericIPAddressField(unique=True, blank=True, null=True)
+    #: Kanonik CIDR (`ipaddress.ip_network(...).compressed`), bo'sh — IP yozuvi.
+    network = models.CharField(_("Tarmoq (CIDR)"), max_length=49, blank=True, default="")
     is_active = models.BooleanField(default=True, db_index=True)
 
     def __str__(self):
-        return f"{self.zone or 'global'} — {self.ip_address}"
+        return f"{self.zone or 'global'} — {self.address}"
+
+    @property
+    def address(self) -> str:
+        """Ekrandagi qiymat: IP yoki tarmoq."""
+        return self.ip_address or self.network
+
+    def clean(self):
+        # Django admin `full_clean` orqali shu yerga keladi; panel
+        # serializer'i ham AYNAN shu qoidani chaqiradi.
+        from apps.controls.services import clean_allowlist_entry
+
+        self.ip_address, self.network = clean_allowlist_entry(
+            ip_address=self.ip_address, network=self.network, exclude_pk=self.pk
+        )
 
     class Meta:
         verbose_name = _("Ruxsat etilgan IP")
         verbose_name_plural = _("Ruxsat etilgan IP'lar")
         db_table = "allowed_public_ip"
-        ordering = ["ip_address"]
+        ordering = ["ip_address", "network"]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(ip_address__isnull=False, network="")
+                    | (models.Q(ip_address__isnull=True) & ~models.Q(network=""))
+                ),
+                name="allowed_ip_one_kind",
+            ),
+            models.UniqueConstraint(
+                fields=["network"],
+                condition=~models.Q(network=""),
+                name="unique_allowed_ip_network",
+            ),
+        ]
 
 
 class ClientExitPassword(TimeStampedModel):

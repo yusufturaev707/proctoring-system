@@ -570,12 +570,19 @@ def client_hotkeys() -> list:
     return [obj.code for obj in setting.hotkeys.all() if obj.is_active]
 
 
-IP_CACHE_KEY = "controls:allowed_ips:v1"
+#: v2: yozuv IP YOKI tarmoq bo'lishi mumkin (keshdagi shakl o'zgardi —
+#: eski jarayonlar qoldirgan v1 qiymati o'qilmasin).
+IP_CACHE_KEY = "controls:allowed_ips:v2"
+
+#: Tarmoq qanchalik keng bo'lishi mumkin. `0.0.0.0/0` yoki `10.0.0.0/4`
+#: kabi yozuv tekshiruvni amalda o'chirardi — bu ataylab qaror bo'lsa,
+#: `REQUIRE_ALLOWED_IP=false` yoki global IP aniqroq yo'l.
+MIN_PREFIX = {4: 8, 6: 32}
 
 
-def allowed_ip_map() -> dict:
+def _allowlist() -> dict:
     """
-    `{ip_address: zone_id|None}` — faol ruxsat etilgan manzillar.
+    Faol yozuvlar, keshda: `{"hosts": {ip: zone_id|None}, "networks": [[cidr, zone_id|None]]}`.
 
     Kesh AYNAN shu yerda, chunki uni ikki joy o'qiydi: har bir client
     so'rovidagi `is_ip_allowed` va ishga tushishdagi preflight. Ikkinchi
@@ -585,13 +592,137 @@ def allowed_ip_map() -> dict:
     """
     from apps.controls.models import AllowedPublicIp
 
-    allowed = cache.get(IP_CACHE_KEY)
-    if allowed is None:
-        allowed = dict(
-            AllowedPublicIp.objects.filter(is_active=True).values_list("ip_address", "zone_id")
+    data = cache.get(IP_CACHE_KEY)
+    if data is None:
+        hosts: dict = {}
+        networks: list = []
+        rows = AllowedPublicIp.objects.filter(is_active=True).values_list(
+            "ip_address", "network", "zone_id"
         )
-        cache.set(IP_CACHE_KEY, allowed, 300)
-    return allowed
+        for ip_address, network, zone_id in rows:
+            if ip_address:
+                hosts[ip_address] = zone_id
+            elif network:
+                networks.append([network, zone_id])
+        data = {"hosts": hosts, "networks": networks}
+        cache.set(IP_CACHE_KEY, data, 300)
+    return data
+
+
+def allowed_ip_map() -> dict:
+    """`{ip_address: zone_id|None}` — faol yozuvlarning faqat bitta IP'lisi."""
+    return _allowlist()["hosts"]
+
+
+def allowlist_empty() -> bool:
+    data = _allowlist()
+    return not data["hosts"] and not data["networks"]
+
+
+def allowed_zones_for(ip_address: str, *, networks_only: bool = False) -> list:
+    """
+    Manzilga mos yozuvlarning binolari (`None` — barcha binolar uchun).
+
+    Bo'sh ro'yxat — manzil ro'yxatda yo'q. Aniq IP tarmoqdan USTUN: u
+    topilsa tarmoqlarga qaralmaydi. Tarmoqlar kesishmaydi (validatsiya),
+    ya'ni javobda ko'pi bilan bitta yozuv. `networks_only` — faqat
+    tarmoq yozuvlari (preflight'da server ko'rgan manzil uchun).
+    """
+    import ipaddress
+
+    data = _allowlist()
+    value = str(ip_address or "").strip()
+    if not networks_only and value in data["hosts"]:
+        return [data["hosts"][value]]
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return []
+    zones = []
+    for cidr, zone_id in data["networks"]:
+        try:
+            network = ipaddress.ip_network(cidr)
+        except ValueError:
+            continue
+        if address.version == network.version and address in network:
+            zones.append(zone_id)
+    return zones
+
+
+def clean_allowlist_entry(
+    *, ip_address=None, network: str = "", exclude_pk=None
+) -> tuple[str | None, str]:
+    """
+    Yozuvni tekshiradi va kanonik shaklga keltiradi: `(ip_address, network)`.
+
+    Panel serializer'i va Django admin (`AllowedPublicIp.clean`) SHU
+    funksiyani chaqiradi — qoida ikki joyda yashasa ajralib ketadi.
+    Xato — `django.core.exceptions.ValidationError` (maydon bo'yicha).
+
+    * aynan bittasi: IP yoki tarmoq;
+    * tarmoq kanonik (`192.168.0.15/24` -> `192.168.0.0/24`), juda keng
+      emas (`MIN_PREFIX`) va bitta manzildan iborat emas (u — IP);
+    * tarmoqlar o'zaro KESISHMAYDI: aks holda bitta manzil ikki binoga
+      tegishli bo'lib qolardi va qaysi biri hal qilishi noaniq edi.
+    """
+    import ipaddress
+
+    from django.core.exceptions import ValidationError
+
+    from apps.controls.models import AllowedPublicIp
+
+    ip_value = str(ip_address or "").strip() or None
+    raw_network = str(network or "").strip()
+
+    if bool(ip_value) == bool(raw_network):
+        message = "IP manzil YOKI tarmoqdan (CIDR) aynan bittasini kiriting"
+        raise ValidationError({"ip_address": message, "network": message})
+
+    if ip_value:
+        return ip_value, ""
+
+    try:
+        parsed = ipaddress.ip_network(raw_network, strict=False)
+    except ValueError:
+        raise ValidationError(
+            {"network": "Tarmoq CIDR ko'rinishida bo'lishi kerak, masalan 192.168.0.0/24"}
+        )
+    if parsed.num_addresses == 1:
+        raise ValidationError(
+            {"network": "Bitta manzil uchun «IP manzil» maydonidan foydalaning"}
+        )
+    if parsed.prefixlen < MIN_PREFIX[parsed.version]:
+        raise ValidationError(
+            {"network": "Tarmoq juda keng: kamida /{} bo'lishi kerak".format(
+                MIN_PREFIX[parsed.version]
+            )}
+        )
+
+    others = AllowedPublicIp.objects.exclude(network="")
+    if exclude_pk is not None:
+        others = others.exclude(pk=exclude_pk)
+    for other_cidr in others.values_list("network", flat=True):
+        try:
+            other = ipaddress.ip_network(other_cidr)
+        except ValueError:
+            continue
+        if other.version == parsed.version and other.overlaps(parsed):
+            raise ValidationError(
+                {"network": "Bu tarmoq mavjud {} yozuvi bilan kesishadi".format(other_cidr)}
+            )
+    return None, parsed.compressed
+
+
+def zone_id_for_ip(ip_address: str):
+    """
+    Manzil qaysi BINOGA tegishli (`None` — noma'lum yoki global yozuv).
+
+    Qurilmani ro'yxatdan o'tkazishda binoni aniqlash uchun
+    (`devices.services.resolve_zone_by_public_ip`): VPN'da server binoni
+    tashqi IP bilan emas, bino tarmog'i bilan taniydi.
+    """
+    zones = [zone for zone in allowed_zones_for(ip_address) if zone is not None]
+    return zones[0] if len(zones) == 1 else None
 
 
 def require_allowed_ip() -> bool:
@@ -622,7 +753,7 @@ def ip_check_enforced() -> bool:
     bog'liq: qat'iy rejimda tekshiruv baribir kuchda qoladi (va hamma
     rad etiladi), yumshoq rejimda esa o'chiriladi.
     """
-    return bool(allowed_ip_map()) or require_allowed_ip()
+    return not allowlist_empty() or require_allowed_ip()
 
 
 def is_ip_allowed(ip_address: str, zone_id: int | None = None) -> bool:
@@ -634,16 +765,16 @@ def is_ip_allowed(ip_address: str, zone_id: int | None = None) -> bool:
     bo'lardi: ro'yxatdagi yagona manzilni nofaol qilish yoki o'chirish
     butun cheklovni jimgina olib tashlardi.
 
-    XUSUSIY MANBA MANZILI — alohida holat. `AllowedPublicIp` binolarning
-    TASHQI manzillari ro'yxati; 192.168.x.x yoki 127.0.0.1 ni u bo'yicha
-    baholab bo'lmaydi. Bu "ruxsat yo'q" emas, "bu ro'yxat bu savolga
-    javob bera olmaydi" degani va farqni jimgina "rad etish" deb talqin
-    qilish server bino ichida turgan o'rnatishda HAMMANI bloklaydi.
-    Qaror `ALLOW_PRIVATE_SOURCE_IP` da.
-    """
-    allowed = allowed_ip_map()
+    Manzil ikki xil yozuvga mos kelishi mumkin: aniq IP (bino internet
+    orqali, NAT manzili bilan keladi) yoki TARMOQ (server bino ichida
+    yoki binolar VPN'da — server xususiy manzilni ko'radi). Ikkalasi
+    ham binoga bog'lanadi: boshqa binoga biriktirilgan qurilma o'tmaydi.
 
-    if not allowed:
+    `ALLOW_PRIVATE_SOURCE_IP` — eski, qo'pol yo'l: istalgan xususiy
+    manzilni binoga bog'lamasdan o'tkazadi. Tarmoq yozuvi uning o'rnini
+    bosadi; sozlama orqaga moslik uchun qoladi.
+    """
+    if allowlist_empty():
         return not require_allowed_ip()
 
     # Tekshiruv ro'yxat BO'SH EMASLIGIDAN keyin turadi: ro'yxat
@@ -652,11 +783,23 @@ def is_ip_allowed(ip_address: str, zone_id: int | None = None) -> bool:
     if allow_private_source() and is_private_ip(ip_address):
         return True
 
-    if ip_address not in allowed:
+    zones = allowed_zones_for(ip_address)
+    if not zones:
         return False
+    return any(bound is None or zone_id is None or bound == zone_id for bound in zones)
 
-    bound_zone = allowed[ip_address]
-    return bound_zone is None or zone_id is None or bound_zone == zone_id
+
+def _matching_zone(ip_address: str):
+    """Preflight'da ko'rsatish uchun: manzil tegishli bo'lgan faol bino."""
+    from apps.regions.models import Zone
+
+    zone_id = zone_id_for_ip(ip_address)
+    if zone_id is None:
+        return None
+    zone = Zone.objects.select_related("region").filter(pk=zone_id).first()
+    if zone is None or zone.deleted_at is not None or not zone.is_active:
+        return None
+    return zone
 
 
 def network_preflight(*, public_ip: str, observed_ip: str = "") -> dict:
@@ -669,15 +812,16 @@ def network_preflight(*, public_ip: str, observed_ip: str = "") -> dict:
     `ip_not_allowed` olishi mantiqsiz — to'siq oqimning eng boshida
     ko'rinishi kerak.
 
-    QAROR AYNAN BITTA QIYMAT BO'YICHA: client o'zi aniqlagan tashqi
-    (public) IP. Server ko'rgan manzil (`observed_ip`) tekshiruvda
-    QATNASHMAYDI, u faqat jurnalga va farqni ko'rsatishga tushadi.
+    IKKI MANZIL, BITTASI YETARLI:
 
-    Buning sababi joylashuvda: server Toshkentdagi binoning ICHIDA
-    turadi. O'sha binodagi clientlar unga NAT'siz, ya'ni LAN manzili
-    bilan yetib boradi va server ularning tashqi manzilini printsipial
-    ravishda ko'ra olmaydi — har bir ish stantsiyasining 192.168.x.x
-    manzilini ro'yxatga kiritishga esa hech qanday ma'no yo'q.
+      * client aytgan tashqi (public) IP — IP yoki tarmoq yozuviga mos;
+      * server ko'rgan manzil (`observed_ip`) — FAQAT TARMOQ yozuviga mos
+        kelsa. Tarmoq yozuvi aynan server xususiy manzilni ko'radigan
+        topologiya uchun (server bino ichida, binolar VPN'da): bunday
+        bino o'z tashqi IP'sini ro'yxatga kiritmaguncha login formasini
+        ko'rmasdi, holbuki keyingi haqiqiy tekshiruv aynan server ko'rgan
+        manzil bo'yicha o'tardi. Aniq IP yozuvlari uchun qaror avvalgidek
+        client aytgan manzil bo'yicha (`test_observed_ip_alone_is_not_enough`).
 
     NIMANI ANGLATADI: bu tekshiruv QULAYLIK to'sig'i, himoya emas —
     client aytgan qiymatni o'zgartirish mumkin. Haqiqiy himoya
@@ -685,22 +829,25 @@ def network_preflight(*, public_ip: str, observed_ip: str = "") -> dict:
     `ClientBaseView.check_source_ip` orqali, FAQAT server ko'rgan
     manzil bo'yicha ishlaydi.
     """
-    allowed_ips = allowed_ip_map()          # FAQAT `is_active=True` yozuvlar
+    empty = allowlist_empty()
     enforced = ip_check_enforced()
 
     # Qaror jadvali — boshqa hech qanday shart yo'q:
     #
-    #   public_ip ro'yxatda, faol      -> RUXSAT
-    #   public_ip ro'yxatda yo'q       -> RAD
-    #   public_ip nofaol qilingan      -> RAD (u `allowed_ips` da yo'q)
-    #   public_ip umuman aniqlanmadi   -> RAD (tekshirish uchun narsa yo'q)
-    #   ro'yxatda faol yozuv YO'Q      -> `REQUIRE_ALLOWED_IP` hal qiladi
-    if not allowed_ips:
+    #   public_ip ro'yxatda (IP yoki tarmoq)          -> RUXSAT
+    #   observed_ip ro'yxatdagi TARMOQda              -> RUXSAT
+    #   boshqa holat (jumladan noma'lum manzillar)    -> RAD
+    #   nofaol yozuv                                     -> hisoblanmaydi
+    #   ro'yxatda faol yozuv YO'Q                        -> `REQUIRE_ALLOWED_IP`
+    matched_ip = ""
+    if empty:
         allowed = not require_allowed_ip()
-    elif not public_ip:
-        allowed = False
     else:
-        allowed = public_ip in allowed_ips
+        if public_ip and allowed_zones_for(public_ip):
+            matched_ip = public_ip
+        elif observed_ip and allowed_zones_for(observed_ip, networks_only=True):
+            matched_ip = observed_ip
+        allowed = bool(matched_ip)
 
     result = {
         "allowed": allowed,
@@ -710,7 +857,7 @@ def network_preflight(*, public_ip: str, observed_ip: str = "") -> dict:
         # va "ro'yxat umuman to'ldirilmagan". Ikkinchisi administrator
         # xatosi, uni operatorga "IP'ingiz noto'g'ri" deb ko'rsatish
         # nosozlikni soatlab qidirishga olib keladi.
-        "allowlist_empty": not allowed_ips,
+        "allowlist_empty": empty,
         "public_ip": public_ip,
         "observed_ip": observed_ip,
         # `None` — solishtirib bo'lmadi (biror manzil noma'lum).
@@ -720,23 +867,17 @@ def network_preflight(*, public_ip: str, observed_ip: str = "") -> dict:
         "zone": None,
         "region": None,
     }
-    if not allowed or not allowed_ips:
+    if not matched_ip:
         return result
 
     # Bino nomi FAQAT ko'rsatish uchun: operator "qaysi bino sifatida
     # tanildim?" degan savolga darhol javob oladi va noto'g'ri bino
     # biriktirilgani imtihon boshlangunga qadar ma'lum bo'ladi.
-    from apps.controls.models import AllowedPublicIp
-
-    row = (
-        AllowedPublicIp.objects.select_related("zone", "zone__region")
-        .filter(ip_address=public_ip, is_active=True, zone__isnull=False)
-        .first()
-    )
-    if row is not None and row.zone.deleted_at is None and row.zone.is_active:
-        result["zone"] = {"id": row.zone.pk, "name": row.zone.name}
-        if row.zone.region_id:
-            result["region"] = {"id": row.zone.region_id, "name": row.zone.region.name}
+    zone = _matching_zone(matched_ip)
+    if zone is not None:
+        result["zone"] = {"id": zone.pk, "name": zone.name}
+        if zone.region_id:
+            result["region"] = {"id": zone.region_id, "name": zone.region.name}
     return result
 
 

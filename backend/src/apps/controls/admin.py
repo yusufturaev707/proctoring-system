@@ -98,9 +98,23 @@ class SettingAdmin(admin.ModelAdmin):
 
 @admin.register(AllowedPublicIp)
 class AllowedPublicIpAdmin(admin.ModelAdmin):
-    list_display = ("ip_address", "zone", "name", "is_active")
+    # Tekshiruv `AllowedPublicIp.clean` da (panel bilan bitta qoida).
+    list_display = ("ip_address", "network", "zone", "name", "is_active")
     list_filter = ("is_active", "zone")
-    search_fields = ("ip_address", "name")
+    search_fields = ("ip_address", "network", "name")
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        # Panel kabi: o'zgarish darhol kuchga kirsin (aks holda 5 daqiqa kesh).
+        from apps.controls.services import invalidate_ip_cache
+
+        invalidate_ip_cache()
+
+    def delete_model(self, request, obj):
+        super().delete_model(request, obj)
+        from apps.controls.services import invalidate_ip_cache
+
+        invalidate_ip_cache()
 
 
 @admin.register(ProctoringPolicy)
