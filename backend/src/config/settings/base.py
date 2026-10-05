@@ -157,11 +157,6 @@ DATABASES = {
         "CONN_HEALTH_CHECKS": DB_CONN_MAX_AGE > 0,
         "OPTIONS": {
             "connect_timeout": 5,
-            # Bitta og'ir query butun pool'ni band qilib qo'ymasligi uchun.
-            "options": (
-                "-c statement_timeout=15000 "
-                "-c idle_in_transaction_session_timeout=30000"
-            ),
         },
     }
 }
