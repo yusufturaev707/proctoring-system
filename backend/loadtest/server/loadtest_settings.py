@@ -92,12 +92,15 @@ EXTERNAL_PLATFORM["API_KEY"] = "loadtest"  # noqa: F405
 if env_bool("LT_THROTTLING", True):
     REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
         "pinfl_lookup": "10/hour",
-        "pinfl_lookup_operator": "300/hour",
+        "pinfl_lookup_operator": "1500/hour",
+        "pinfl_lookup_device": "120/hour",
         "face_verify": "40/min",
         "session_start": "10/hour",
-        "exit_verify": "10/hour",
+        "exit_verify": "300/hour",
+        "exit_verify_device": "10/hour",
         "client_ingest": "600/min",
-        "staff_login": "10/min",
+        "staff_login": "60/min",
+        "staff_login_device": "10/min",
         "device_register": "20/hour",
         "preflight": "30/min",
         "access_attempt": "30/min",

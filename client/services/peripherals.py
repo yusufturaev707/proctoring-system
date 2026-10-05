@@ -93,6 +93,8 @@ _IGNORED_CLASSES = frozenset({
     "monitor", "printqueue", "softwaredevice", "softwarecomponent",
     "extension", "system", "computer", "volumesnapshot",
 })
+#: Shu sinflardagi tugunning nomi qurilmaning o'z nomi (tanlovda ustun).
+_NAMED_CLASSES = frozenset({"diskdrive", "cdrom", "wpd", "camera", "image", "net"})
 #: Telefon ba'zan "Image" (iPhone PTP) yoki "USB" sinfida keladi.
 _PHONE_HINTS = ("iphone", "ipad", "android", "apple mobile device", "adb interface")
 #: Konteyner FIZIK shinada bo'lishi shart (yuqoridagi docstring).
@@ -184,7 +186,7 @@ class PeripheralEvent:
 # --------------------------------------------------------------------------
 def classify(nodes) -> tuple:
     """Konteyner turi va uni bergan tugun: `(kind | None, node | None)`."""
-    best_rank, best_kind, best_node = len(_KIND_PRIORITY), None, None
+    best_rank, best_kind, best_node = len(_KIND_PRIORITY) * 2, None, None
     for node in nodes:
         cls = (node.device_class or "").strip().lower()
         if cls in _IGNORED_CLASSES:
@@ -193,7 +195,9 @@ def classify(nodes) -> tuple:
         name = (node.name or "").lower()
         if kind in ("camera", "other", "input") and any(hint in name for hint in _PHONE_HINTS):
             kind = "phone"
-        rank = _KIND_PRIORITY.index(kind)
+        # Bir tur ichida nomi ma'noli tugun: diskda "Kingston DataTraveler"
+        # (DiskDrive), "Том"/"Volume" (tom) emas - amalda log'da shunday chiqdi.
+        rank = _KIND_PRIORITY.index(kind) * 2 + (0 if cls in _NAMED_CLASSES else 1)
         if rank < best_rank:
             best_rank, best_kind, best_node = rank, kind, node
     return best_kind, best_node

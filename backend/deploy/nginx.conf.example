@@ -38,7 +38,7 @@ upstream proctoring_ws {
 # (2 r/s dan ko'p -> 503), ~10 so'rov/talabgor = 17–83 r/s (60 dan ko'p ->
 # 429). Endi: client yo'li QURILMA (`X-Device-ID`) bo'yicha, IP bo'yicha
 # esa faqat keng suiiste'mol chegarasi. Brute-force himoyasi
-# ilovada qoladi (`StaffLoginThrottle`: IP+login, `PinflLookup*`).
+# ilovada qoladi (`StaffLogin*Throttle`: mashina+login va IP+login, `PinflLookup*`).
 map $http_x_device_id $ingest_device_key {
     ""      $binary_remote_addr;
     default $http_x_device_id;

@@ -27,9 +27,11 @@ blacklist qo'shsangiz — u endi JWT emas, shunchaki sekinroq sessiya.
 from __future__ import annotations
 
 import logging
+import time
 
 from django.conf import settings
 from django.utils import timezone
+from redis.exceptions import RedisError
 from rest_framework.authentication import BaseAuthentication
 
 from apps.common.exceptions import (
@@ -46,6 +48,19 @@ from apps.proctoring.models import ExamSession
 from apps.proctoring.services import state as session_state
 
 logger = logging.getLogger(__name__)
+
+#: Redis uzilishi haqidagi ogohlantirish oralig'i (jarayon bo'yicha).
+#: Har so'rovda yozilsa, 5000 client uzilish daqiqasida log'ni to'ldirardi.
+_REDIS_WARN_INTERVAL_S = 30.0
+_last_redis_warning = 0.0
+
+
+def _warn_redis_down(exc: Exception) -> None:
+    global _last_redis_warning
+    now = time.monotonic()
+    if now - _last_redis_warning >= _REDIS_WARN_INTERVAL_S:
+        _last_redis_warning = now
+        logger.error("Redis ishlamayapti — sessiya tokeni DB'dan tekshirilmoqda: %s", exc)
 
 
 class _BearerHeaderMixin:
@@ -139,7 +154,16 @@ class SessionTokenAuthentication(_BearerHeaderMixin, BaseAuthentication):
             return None
 
         digest = hash_token(raw_token)
-        payload = session_state.resolve_session_token(digest)
+        try:
+            payload = session_state.resolve_session_token(digest)
+        except RedisError as exc:
+            # Redis ISHLAMAYAPTI (topilmadi emas). Ilgari xato shu yerdan
+            # chiqib ketardi va DB zaxirasi hech qachon ishlamasdi: Redis
+            # o'chishi bilan barcha client so'rovlari 500 olardi. DB
+            # haqiqat manbai: token hash'i, muddati va sessiya holati
+            # (chetlashtirish `status` ni darhol o'zgartiradi) shu yerda.
+            _warn_redis_down(exc)
+            payload = None
 
         if payload is None:
             session = self._from_database(digest)
@@ -176,17 +200,22 @@ class SessionTokenAuthentication(_BearerHeaderMixin, BaseAuthentication):
             .first()
         )
         if session is not None:
-            session_state.store_session_token(
-                token_hash=digest,
-                payload={
-                    "session_id": session.pk,
-                    "public_id": str(session.public_id),
-                    "exam_id": session.exam_id,
-                    "device_id": session.device_id,
-                    "zone_id": session.zone_id,
-                    "status": session.status,
-                },
-            )
+            try:
+                session_state.store_session_token(
+                    token_hash=digest,
+                    payload={
+                        "session_id": session.pk,
+                        "public_id": str(session.public_id),
+                        "exam_id": session.exam_id,
+                        "device_id": session.device_id,
+                        "zone_id": session.zone_id,
+                        "status": session.status,
+                    },
+                )
+            except RedisError as exc:
+                # Keshni tiklash — qulaylik: Redis qaytgach keyingi so'rov
+                # uni o'zi yozadi. So'rovni bu sabab bilan rad etmaymiz.
+                _warn_redis_down(exc)
         return session
 
 

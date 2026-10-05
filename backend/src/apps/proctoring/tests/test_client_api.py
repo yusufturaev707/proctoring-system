@@ -332,6 +332,7 @@ class FaceEndpointTests(RedisStateMixin, TestCase):
             exam=self.exam,
             device=self.device,
             zone=self.computer.zone,
+            **factories.machine_of(self.device),
         )["challenge"]
 
     @staticmethod

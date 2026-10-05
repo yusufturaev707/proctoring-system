@@ -105,6 +105,7 @@ def _prepare_like_main() -> None:
 
     sanitize_process_env()
     os.environ.setdefault("INSIGHTFACE_ROOT", str(resource_root()))
+    os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"  # main.py bilan bir xil
     stub = types.ModuleType("insightface.app.mask_renderer")
     stub.MaskRenderer = type("MaskRenderer", (), {})
     sys.modules.setdefault("insightface.app.mask_renderer", stub)

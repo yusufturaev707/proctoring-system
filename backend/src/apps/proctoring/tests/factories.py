@@ -89,6 +89,20 @@ def machine_uuid_for(index: int) -> str:
     return "4C4C4544-0038-4A10-805A-{:012X}".format(0xC7C04F000000 + index)
 
 
+def machine_of(device) -> dict:
+    """
+    Client JSHSHIR tekshiruvida yuboradigan (Machine UUID, MAC) juftligi.
+
+    Haqiqiy client uni HAR DOIM yuboradi va `REQUIRE_MACHINE_MATCH=true`
+    da server uni qurilma kompyuteri bilan solishtiradi
+    (`session.require_machine_match`).
+    """
+    return {
+        "machine_uuid": device.computer.machine_uuid,
+        "mac_address": device.computer.mac_address,
+    }
+
+
 def make_device(computer=None, **kwargs) -> DeviceToken:
     index = _next()
     return DeviceToken.objects.create(

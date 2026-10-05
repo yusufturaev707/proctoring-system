@@ -30,6 +30,8 @@ import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from config import CAMERA_INDEX, DETECT_EVERY_NTH_FRAME, MIN_FACE_WIDTH_PX
+from proctoring.camera.liveness import DEAD_STREAM_MESSAGE, FrameLiveness
+from proctoring.camera.liveness import applies as liveness_applies
 
 log = logging.getLogger(__name__)
 
@@ -60,6 +62,9 @@ _BACKOFF_S = (1, 2, 3, 5)
 
 #: Ketma-ket shuncha bo'sh kadrdan keyin kamera "yo'qolgan" (~1 s).
 _EMPTY_FRAMES_BEFORE_LOST = 30
+
+#: Qurilma hali tizimdami - shu oraliqda (s); `manager._PRESENCE_CHECK_S`.
+_PRESENCE_CHECK_S = 2.0
 
 #: Kadr sifati chegaralari (`assess_quality`). Ular faqat OPERATORGA
 #: MASLAHAT tanlaydi ("yorug'lik yetarli emas"), qarorga ta'sir
@@ -425,30 +430,63 @@ class CameraWorker(QThread):
             return attempt + 1
 
         log.info("Kamera ochildi: %s", source.info.label)
-        self._read_loop(source)
+        reason = self._read_loop(source)
         self._close(source)
+        if reason == "dead":
+            # O'lik oqim (`liveness.py`): yopilgandan keyin keyingi ochilish
+            # usuli (`WebcamSource.recover_dead_stream`), kechikish O'SADI.
+            from proctoring.camera.manager import _recover
+
+            step = _recover(source)
+            if step:
+                log.warning("Kamera: o'lik oqim - keyingi urinish: %s", step)
+            if not self._sleep_backoff(attempt):
+                return attempt
+            return attempt + 1
         if self._running and not self._reconnect_requested:
             self._sleep_backoff(0)
         return 0
 
-    def _read_loop(self, source) -> None:
+    def _read_loop(self, source) -> str:
+        """Kadrlar sikli. Qaytadi: "dead" - o'lik oqim, "" - boshqa sabab."""
         frame_index = 0
         failures = 0
+        last_presence = time.monotonic()
+        liveness = FrameLiveness() if liveness_applies(source) else None
         while self._running:
             if self._reconnect_requested:
-                return
+                return ""
+            now = time.monotonic()
+            if now - last_presence >= _PRESENCE_CHECK_S:
+                last_presence = now
+                # USB sug'urilganda DirectShow kadr qaytaraverishi mumkin -
+                # bo'sh kadrlar qoidasi buni ko'rmaydi (`WebcamSource.is_present`).
+                if source.is_present() is False:
+                    self._report_error(_explain_lost(source))
+                    return ""
             frame = source.read()
+            read_s = time.monotonic() - now
             if frame is None:
                 failures += 1
                 # Bitta o'tkazib yuborilgan kadr normal holat (USB
                 # uzilishi). Ketma-ket 30 tasi esa kamera yo'qolgani.
                 if failures >= _EMPTY_FRAMES_BEFORE_LOST:
                     self._report_error(_explain_lost(source))
-                    return
+                    return ""
                 time.sleep(0.03)
                 continue
 
             failures = 0
+            if liveness is not None:
+                state = liveness.observe(frame, read_s, time.monotonic())
+                summary = liveness.report(time.monotonic())
+                if summary:
+                    log.info("Kamera oqimi (%s): %s", source.info.label, summary)
+                if state == "dead":
+                    self._report_error(DEAD_STREAM_MESSAGE)
+                    return "dead"
+                if state != "live":
+                    continue  # qora/qotgan bufer - "tiklandi" ham, kadr ham emas
             if self._outage:
                 self._outage = False
                 self._reported_error = ""

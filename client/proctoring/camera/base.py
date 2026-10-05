@@ -131,6 +131,15 @@ class CameraSource:
         """Resursni bo'shatadi. Takroriy chaqiruv xavfsiz bo'lishi shart."""
         raise NotImplementedError
 
+    def is_present(self) -> Optional[bool]:
+        """
+        Qurilma hali tizimdami (uzilishni `read()` ga tayanmasdan bilish).
+
+        `None` - manba buni bilmaydi (IP kamera) yoki aniqlab bo'lmadi;
+        faqat `False` uzilish deb hisoblanadi (`WebcamSource.is_present`).
+        """
+        return None
+
     # ------------------------------------------------------------------
     @property
     def last_error(self) -> str:

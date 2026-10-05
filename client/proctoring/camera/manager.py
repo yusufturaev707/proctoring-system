@@ -42,6 +42,8 @@ from proctoring.camera.base import (
     CameraSpec,
     CameraState,
 )
+from proctoring.camera.liveness import DEAD_STREAM_MESSAGE, FrameLiveness
+from proctoring.camera.liveness import applies as liveness_applies
 
 log = logging.getLogger(__name__)
 
@@ -68,6 +70,10 @@ _LOCAL_BACKOFF_S = (1, 2, 3, 5)
 #: uzilish deb hisoblash hodisa oqimini soxta `camera_lost` bilan
 #: to'ldirardi. 30 kadr ~1 soniya.
 _EMPTY_FRAMES_BEFORE_LOST = 30
+
+#: Qurilma hali tizimdami - shu oraliqda (s). DirectShow ro'yxati
+#: (~ms), kameraga tegmaydi.
+_PRESENCE_CHECK_S = 2.0
 
 #: FPS shuncha oxirgi kadr bo'yicha hisoblanadi.
 _FPS_WINDOW = 30
@@ -122,6 +128,8 @@ class CameraStream(QThread):
         #: Qayta ulanish so'raldi (kompyuter uyqudan uyg'ondi). Sikl
         #: joriy ulanishni yopib, KUTMASDAN qaytadan ochadi.
         self._reconnect_requested = False
+        #: Uzilish davom etyapti (FAILED aytilgan, tirik kadr hali yo'q).
+        self._outage = False
         _connect_power_resumed(self.request_reconnect)
 
     # ------------------------------------------------------------------
@@ -230,18 +238,43 @@ class CameraStream(QThread):
             self._health.reconnects += 1
             return attempt + 1
 
-        self._set_state(CameraState.ONLINE)
-        self._read_loop()
+        # ONLINE - ochilishda EMAS, birinchi TIRIK kadrda (`_read_loop`):
+        # qayta ulangan USB kamera "ochildi", lekin qora bufer berdi -
+        # bu "kamera qayta ulandi" emas edi (`liveness.py`).
+        reason = self._read_loop()
 
         self._safe_close()
         if not self._running:
             return 0
+        self._health.reconnects += 1
+        if reason == "dead":
+            # Manba YOPILGANDAN keyin: keyingi ochilish usuli yoki qurilmani
+            # qayta ishga tushirish (`WebcamSource.recover_dead_stream`).
+            step = _recover(self._source)
+            if step:
+                log.warning("[%s] o'lik oqim - keyingi urinish: %s", self._role, step)
+            # Kechikish O'SADI: har soniyada ochib-yopish qurilmani
+            # tayyorlanishga qo'ymasdi.
+            if not self._sleep_backoff(attempt):
+                return attempt
+            return attempt + 1
         # Sikl uzilish sababli tugadi — qayta ulanamiz. Uyg'onishdan
         # keyingi so'rovda kutilmaydi: qurilma allaqachon tayyor.
-        self._health.reconnects += 1
         if not self._reconnect_requested:
             self._sleep_backoff(0)
         return 0
+
+    def _mark_lost(self) -> None:
+        """
+        FAILED - bitta uzilishga BIR MARTA (supervisor har `failed` ni
+        `camera_lost` hodisasiga aylantiradi). O'lik oqim qayta ochilib
+        yana o'lik bo'lsa, hodisa takrorlanmaydi; tirik kadr kelguncha
+        uzilish davom etyapti.
+        """
+        if self._outage:
+            return
+        self._outage = True
+        self._set_state(CameraState.FAILED)
 
     def _safe_close(self) -> None:
         try:
@@ -250,16 +283,29 @@ class CameraStream(QThread):
             log.debug("[%s] kamerani yopishda xato", self._role, exc_info=True)
 
     # ------------------------------------------------------------------
-    def _read_loop(self) -> None:
+    def _read_loop(self) -> str:
+        """Kadrlar sikli. Qaytadi: nega tugadi ("dead" - o'lik oqim, "" - boshqa)."""
         empty_streak = 0
         last_preview = 0.0
         last_health = 0.0
+        last_presence = time.monotonic()
+        liveness = FrameLiveness() if liveness_applies(self._source) else None
 
         while self._running:
             if self._reconnect_requested:
                 self._health.last_error = "Uyqudan keyin qayta ulanish"
-                return
+                return ""
             started = time.monotonic()
+            if started - last_presence >= _PRESENCE_CHECK_S:
+                last_presence = started
+                # `read()` ga tayanmaymiz: USB sug'urilganda DirectShow
+                # kadr qaytaraverishi mumkin (`WebcamSource.is_present`).
+                if self._source.is_present() is False:
+                    self._health.last_error = _explain_lost(self._source)
+                    log.warning("[%s] kamera tizimdan yo'qoldi (uzilgan): %s",
+                                self._role, self._health.last_error)
+                    self._mark_lost()
+                    return ""
             frame = self._source.read()
             elapsed = time.monotonic() - started
 
@@ -269,14 +315,29 @@ class CameraStream(QThread):
                 if empty_streak >= _EMPTY_FRAMES_BEFORE_LOST:
                     self._health.last_error = _explain_lost(self._source)
                     log.warning("[%s] %s", self._role, self._health.last_error)
-                    self._set_state(CameraState.FAILED)
-                    return
+                    self._mark_lost()
+                    return ""
                 # Qisqa kutish: bo'sh siklda protsessorni yemaslik uchun.
                 self.msleep(30)
                 continue
 
             empty_streak = 0
             now = time.monotonic()
+            if liveness is not None:
+                state = liveness.observe(frame, elapsed, now)
+                summary = liveness.report(now)
+                if summary:
+                    log.info("[%s] kamera oqimi: %s", self._role, summary)
+                if state == "dead":
+                    self._health.last_error = DEAD_STREAM_MESSAGE
+                    log.warning("[%s] %s", self._role, DEAD_STREAM_MESSAGE)
+                    self._mark_lost()
+                    return "dead"
+                if state != "live":
+                    continue  # qora/qotgan bufer - kadr sifatida berilmaydi
+            if self._health.state != CameraState.ONLINE:
+                self._outage = False
+                self._set_state(CameraState.ONLINE)
             self._health.frames_total += 1
             self._frame_times.append(now)
             self._read_times.append(elapsed * 1000.0)
@@ -345,6 +406,17 @@ class CameraStream(QThread):
             return
         self._health.state = state
         self.state_changed.emit(self._role, state.value)
+
+
+def _recover(source) -> str:
+    recover = getattr(source, "recover_dead_stream", None)
+    if recover is None:
+        return ""
+    try:
+        return recover() or ""
+    except Exception:  # noqa: BLE001
+        log.warning("Kamera tiklash qadamida xato", exc_info=True)
+        return ""
 
 
 def _explain_lost(source) -> str:

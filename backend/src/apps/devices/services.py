@@ -262,6 +262,41 @@ def fingerprint_for(machine_uuid: str, mac_address: str) -> str:
     return "{}{}{}{}".format(FINGERPRINT_UUID_PREFIX, uuid_value, FINGERPRINT_MAC_MARKER, mac)
 
 
+def rebaseline_fingerprints(computer: Computer, *, old_uuid: str, old_mac: str) -> list[str]:
+    """
+    Administrator kompyuterning (UUID, MAC) juftligini o'zgartirdi — qurilmalarning
+    etalon izini YANGI juftlikka ko'chiradi. Ko'chirilgan `device_id` lar qaytadi.
+
+    Nima uchun kerak: masalan monoblok Wi-Fi'ga o'tdi va administrator MAC'ni
+    yangiladi. Mashina tekshiruvi darhol `ok` beradi, lekin qurilma etaloni
+    eski MAC'li izda qolardi — `is_fingerprint_upgrade` uni tanimaydi
+    (etalonda MAC bor), ya'ni HAR handshake auditga `fingerprint_changed`
+    yozardi va haqiqiy klon shu shovqin ichida ko'rinmay qolardi.
+
+    Iz o'chirilMAYDI (keyingi handshake etalonni o'zi qo'yardi — o'sha
+    oynada ko'chirilgan `device_id` ham uni egallashi mumkin edi), aynan
+    client yuboradigan qiymatga almashtiriladi (`fingerprint_for`). Faqat
+    etaloni ESKI juftlikka TENG qurilmalar: boshqa izli (allaqachon
+    shubhali) qurilma anomaliyasini saqlab qoladi. Bekor qilinganlarga
+    tegilmaydi. Juftlikning biri yo'q (UUID'siz yozuv) — iz qurib bo'lmaydi.
+    """
+    old = fingerprint_for(old_uuid or "", old_mac or "")
+    new = fingerprint_for(computer.machine_uuid or "", computer.mac_address or "")
+    if not old or not new or old == new:
+        return []
+    tokens = DeviceToken.objects.filter(computer=computer, hardware_fingerprint=old).exclude(
+        status=DeviceToken.Status.REVOKED
+    )
+    device_ids = list(tokens.values_list("device_id", flat=True))
+    if device_ids:
+        tokens.update(hardware_fingerprint=new)
+        logger.info(
+            "Apparat izi yangi juftlikka ko'chirildi (kompyuter %s): %s",
+            computer.pk, device_ids,
+        )
+    return device_ids
+
+
 def _uuid_fingerprint_parts(fingerprint: str) -> tuple[str, str]:
     """`muid:` izining (UUID, MAC) qismlari; boshqa format - `("", "")`."""
     if not (fingerprint or "").startswith(FINGERPRINT_UUID_PREFIX):

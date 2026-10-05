@@ -28,6 +28,7 @@ from datetime import datetime, timedelta
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
+from redis.exceptions import RedisError
 
 from apps.common.exceptions import (
     CandidateNotEligible,
@@ -36,6 +37,7 @@ from apps.common.exceptions import (
     FaceVerificationFailed,
     IdentityAlreadyConfirmed,
     IdentityNotConfirmed,
+    MachineNotVerified,
     SessionAlreadyActive,
     SessionNotFound,
 )
@@ -81,7 +83,7 @@ def _parse_dt(value):
 # --------------------------------------------------------------------------
 def lookup_candidate(
     *, pinfl: str, exam, device=None, zone=None, ip_address: str = "",
-    machine_uuid: str = "", mac_address: str = "",
+    machine_uuid: str = "", mac_address: str = "", actor=None,
 ) -> dict:
     """
     Tashqi platformadan talabgorni oladi va `Candidate` yozuvini yangilaydi.
@@ -117,6 +119,14 @@ def lookup_candidate(
     seat = bookings.resolve_candidate_seat(
         schedule=schedule, pinfl=pinfl, device=device,
         machine_uuid=machine_uuid, mac_address=mac_address,
+    )
+    # MASHINA TEKSHIRUVI — bron xatolaridan KEYIN (ular aniqroq: talabgor
+    # qaysi stolga borishi kerak), platformadan OLDIN (mos kelmagan
+    # mashina tashqi limitni yemasin). `face/verify` alohida tekshirilmaydi:
+    # u faqat shu qurilmaga berilgan challenge bilan ishlaydi
+    # (`_require_pending_device`), challenge esa faqat shu yerdan.
+    require_machine_match(
+        device=device, machine_uuid=machine_uuid, mac_address=mac_address, actor=actor,
     )
     # `CandidateNotFound` / `CandidateNotEligible` shu yerdan ko'tariladi
     # va ular client uchun BOSHQA-BOSHQA holat (`exam_site._normalize`).
@@ -260,6 +270,59 @@ def lookup_candidate(
             else None
         ),
     }
+
+
+def require_machine_match(*, device, machine_uuid: str = "", mac_address: str = "", actor=None) -> None:
+    """
+    `REQUIRE_MACHINE_MATCH=true` da mashina tekshiruvini SERVERDA majburlaydi.
+
+    Ilgari natija faqat handshake javobida bayroq edi (`machine.allowed`) va
+    to'siqni client UI qo'yardi — bayroqni e'tiborsiz qoldirgan client
+    imtihon ochardi. Qoida handshake bilan BITTA: `verify_machine`
+    (juftlik, bino ko'lami, UUID'ni bog'lash), xabar ham o'sha.
+
+    `false` — tekshiruv o'tkazilmaydi (handshake ogohlantirish darajasida
+    ko'rsatadi, oqim to'xtamaydi — dastlabki joylashtirish rejimi).
+    """
+    if not settings.PROCTORING["REQUIRE_MACHINE_MATCH"]:
+        return
+
+    from apps.devices import services as device_services
+    from apps.proctoring.services.audit import record_audit
+
+    machine = device_services.verify_machine(
+        device, machine_uuid=machine_uuid, mac_address=mac_address
+    )
+    if machine.get("bound") and device is not None and device.computer_id:
+        # Handshake'dagi kabi: kompyuter yozuvi O'ZGARDI — auditda qoladi.
+        record_audit(
+            actor=actor,
+            action="update",
+            object_type="Computer",
+            object_id=device.computer_id,
+            meta={
+                "machine_uuid_bound": machine["machine_uuid"],
+                "by_mac": machine["mac_address"],
+                "device_id": device.device_id,
+            },
+        )
+    if machine["status"] != device_services.MACHINE_OK:
+        logger.warning(
+            "JSHSHIR tekshiruvi rad etildi — mashina mos emas (%s): device=%s uuid=%s mac=%s",
+            machine["status"],
+            getattr(device, "device_id", "-"),
+            machine.get("machine_uuid") or "-",
+            machine.get("mac_address") or "-",
+        )
+        raise MachineNotVerified(
+            machine.get("message") or None,
+            extra={
+                "status": machine["status"],
+                "machine_uuid": machine.get("machine_uuid", ""),
+                "mac_address": machine.get("mac_address", ""),
+                "expected_mac": machine.get("expected_mac", ""),
+            },
+        )
 
 
 def _require_open_schedule(exam, zone):
@@ -1342,8 +1405,18 @@ def _broadcast_status(session: ExamSession, **fields) -> None:
 
 
 def _flush_counters(session: ExamSession) -> None:
-    """Redis hisoblagichlarini yakuniy holatga ko'chiradi."""
-    hot = session_state.get_state(session.pk)
+    """
+    Redis hisoblagichlarini yakuniy holatga ko'chiradi.
+
+    Redis ishlamasa — DB'dagi qiymatlar qoladi (write-behind ularni oxirgi
+    marta 10 s ichida yozgan). Hisoblagich uchun yakunni rad etish
+    sessiyani "jarayonda" qoldirib, joyni band qilardi.
+    """
+    try:
+        hot = session_state.get_state(session.pk)
+    except RedisError as exc:
+        logger.warning("Yakun: Redis hisoblagichlari o'qilmadi (%s): %s", session.public_id, exc)
+        return
     session.event_count = int(hot.get("events", session.event_count) or 0)
     session.screenshot_count = int(hot.get("shots", session.screenshot_count) or 0)
     session.face_fail_count = int(hot.get("face_fails", session.face_fail_count) or 0)
@@ -1352,12 +1425,24 @@ def _flush_counters(session: ExamSession) -> None:
 
 
 def _release(session: ExamSession) -> None:
-    session_state.revoke_session_token(session.token_hash)
-    session_state.clear_state(session.pk, session.zone_id)
-    if session.pinfl:
-        session_state.unlock_candidate(
-            session.pinfl, session.exam_id, f"dev:{session.device_id or 'na'}"
-        )
+    """
+    Redis'dagi token, holat va talabgor qulfini tozalaydi.
+
+    Redis ishlamasa — XATO YUTILADI va yakun DB'da baribir yoziladi.
+    Xavfsiz, chunki DB haqiqat manbai: qolib ketgan token keyingi
+    so'rovda terminal `status` tufayli rad etiladi
+    (`SessionTokenAuthentication`), holat va qulf esa TTL bilan o'zi
+    so'nadi.
+    """
+    try:
+        session_state.revoke_session_token(session.token_hash)
+        session_state.clear_state(session.pk, session.zone_id)
+        if session.pinfl:
+            session_state.unlock_candidate(
+                session.pinfl, session.exam_id, f"dev:{session.device_id or 'na'}"
+            )
+    except RedisError as exc:
+        logger.warning("Yakun: Redis tozalanmadi (%s): %s", session.public_id, exc)
 
 
 def _notify_external(session: ExamSession, status: str, meta: dict) -> None:

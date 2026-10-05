@@ -306,6 +306,61 @@ class CameraWorkerReconnectTest(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         self.assertFalse(inner.opened)
 
+    def test_unplugged_camera_that_keeps_returning_frames_reconnects(self):
+        """
+        Noutbukda amalda topilgan: USB sug'urilgach DirectShow `read()`
+        kadr qaytaraverdi - bo'sh kadrlar qoidasi uzilishni ko'rmadi va
+        kabel qayta ulanganda kamera qayta ochilmadi (3 daqiqa log jim).
+        """
+        from unittest import mock
+
+        inner = FakeSource()
+        presence = {"value": True}
+        inner.is_present = lambda: presence["value"]
+        worker = self.module.CameraWorker(source=inner, detect=False)
+        errors, restored, frames = [], [], []
+
+        def on_frame(_frame):
+            frames.append(1)
+            if len(frames) == 5:
+                presence["value"] = False   # sug'urildi - kadr baribir keladi
+            if restored:
+                worker.stop()
+
+        def on_error(message):
+            errors.append(message)
+            presence["value"] = True        # qayta ulandi
+
+        worker.frame_ready.connect(on_frame)
+        worker.camera_error.connect(on_error)
+        worker.camera_restored.connect(lambda: restored.append(True))
+        with mock.patch.object(self.module, "_PRESENCE_CHECK_S", 0.0):
+            worker.run()
+
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(restored, [True])
+        self.assertEqual(inner.open_calls, 2)   # yopildi va QAYTA ochildi
+
+    def test_unknown_presence_does_not_disconnect(self):
+        from unittest import mock
+
+        inner = FakeSource()
+        inner.is_present = lambda: None          # ro'yxat o'qilmadi
+        worker = self.module.CameraWorker(source=inner, detect=False)
+        frames, errors = [], []
+        worker.camera_error.connect(errors.append)
+
+        def on_frame(_frame):
+            frames.append(1)
+            if len(frames) >= 20:
+                worker.stop()
+
+        worker.frame_ready.connect(on_frame)
+        with mock.patch.object(self.module, "_PRESENCE_CHECK_S", 0.0):
+            worker.run()
+        self.assertEqual(errors, [])
+        self.assertEqual(inner.open_calls, 1)
+
     def test_unexpected_exception_does_not_kill_loop(self):
         inner = FakeSource()
         worker = self.module.CameraWorker(source=inner, detect=False)

@@ -48,6 +48,10 @@ from core.logging_setup import setup_logging
 _env_ignored = sanitize_process_env()
 
 os.environ.setdefault("INSIGHTFACE_ROOT", str(resource_root()))
+# Media Foundation (kamera tiklash rejimi, `WebcamSource.recover_dead_stream`)
+# apparat transformatsiyalari bilan 19 s ochilardi (o'lchandi: Logi C270,
+# qo'riqchi chegarasi 20 s), usiz - 0.3 s. cv2 dan OLDIN; DirectShow'ga ta'siri yo'q.
+os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
 
 # `insightface/app/__init__.py` ichida `from .mask_renderer import *` bor.
 # mask_renderer modul darajasida albumentations va face3d ni import qiladi

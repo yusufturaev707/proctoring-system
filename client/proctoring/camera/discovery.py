@@ -184,6 +184,11 @@ def probe(max_index: int = MAX_PROBE_INDEX) -> list[DiscoveredCamera]:
                 continue
 
             height, width = frame.shape[:2]
+            # Diagnostika: bu DRAYVER formatidagi kadr (MJPG majburlanmagan).
+            # Oqim keyin qora bo'lsa (`liveness.py`), yorqinlik 0 dan katta
+            # bu yerda - "format kelishmovchiligi", 0 - qurilma tasvir bermayapti.
+            log.info("Kamera %s tekshiruv kadri: %dx%d, yorqinlik %.0f",
+                     index, width, height, float(frame[::8, ::8].mean()))
             found.append(
                 DiscoveredCamera(
                     index=index,

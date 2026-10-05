@@ -30,6 +30,7 @@ from datetime import datetime, timedelta
 
 from django.conf import settings
 from django.utils import timezone
+from redis.exceptions import RedisError
 
 from apps.common.redis_client import get_redis
 from apps.proctoring.models import ProctoringEvent, ScreenshotMeta
@@ -107,7 +108,7 @@ def push_event(
         "client_event_id": client_event_id,
     }
 
-    session_state.increment(session_id, "events")
+    _count(session_id, "events")
     _apply_risk(session_id, type, risk_config)
 
     if int(severity) >= IMMEDIATE_SEVERITY:
@@ -177,7 +178,7 @@ def push_events_batch(*, session, events: list[dict]) -> int:
         _enqueue_many(settings.PROCTORING["EVENT_STREAM_KEY"], pipeline_records)
 
     if accepted:
-        session_state.increment(session.pk, "events", accepted)
+        _count(session.pk, "events", accepted)
     if skewed:
         # Mashina soati adashgan — bu texnik nosozlik belgisi.
         logger.warning(
@@ -251,6 +252,22 @@ def _adds_risk(event_type: str, severity: int, payload) -> bool:
     if event_type in _PERIPHERAL_TYPES:
         return int(severity) >= _PERIPHERAL_RISK_MIN_SEVERITY
     return True
+
+
+def _count(session_id: int, field: str, amount: int = 1) -> None:
+    """
+    Issiq hisoblagich (`events`) — xatosi YUTILADI.
+
+    Redis ishlamasa hodisalarning o'zi allaqachon DB'ga yozilgan
+    (`_enqueue*` zaxirasi). Ilgari shu so'nggi qadam 500 qaytarardi va
+    client butun batch'ni qayta yuborardi — dalil saqlangani holda
+    "yuborilmadi" deb. Hisoblagich faqat panel uchun: yakunda
+    `event_count` DB'dagi qiymatda qoladi.
+    """
+    try:
+        session_state.increment(session_id, field, amount)
+    except RedisError as exc:
+        logger.warning("Hisoblagich yangilanmadi (%s, sessiya %s): %s", field, session_id, exc)
 
 
 def _apply_risk(session_id: int, event_type: str, config: dict | None) -> None:

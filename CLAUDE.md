@@ -104,6 +104,18 @@ to'g'ri yozmaydi — shu yo'ldan (`proctoring/services/ingest.py` +
 Kritik hodisalar (chetlashtirish, FaceID xatosi, `CRITICAL` jiddiylik)
 write-behind EMAS — darhol DB'ga.
 
+**Redis o'chsa imtihon to'xtamaydi** (`tests/test_redis_outage.py`):
+sessiya tokeni DB'dan (`SessionTokenAuthentication`, `RedisError` →
+`_from_database`), heartbeat `last_heartbeat_at` ga to'g'ridan-to'g'ri,
+hodisalar DB'ga, yakun Redis'ni tozalamasdan. Zaxirasiz yo'l — 503 +
+tasodifiy `Retry-After` (`BackendUnavailable`, DB `OperationalError` ham),
+500 emas. Yangi client yo'li Redis'ga tayansa, shu qoidaga moslang.
+
+**`close_stale_sessions` DB vaqtiga ishonmaydi**: `last_heartbeat_at` ni
+faqat ingest ishchisi yozadi, u to'xtasa barcha sessiyalar "eskiradi".
+Yopishdan oldin Redis `hb` tekshiriladi (tirigi yopilmaydi, DB vaqti
+tuzatiladi); Redis ishlamasa shu yurishda hech kim yopilmaydi.
+
 `services/stream.py` uch yo'qotish stsenariysini qamraydi: `XAUTOCLAIM`
 bilan osilgan PEL yozuvlari, batch yiqilsa qator-ma-qator yozish, yozib
 bo'lmaganini `:dead` oqimiga ko'chirish. **Soddalashtirmang** — "dalil
@@ -679,6 +691,14 @@ TANLANMAYDI. Faqat UUID yoki faqat MAC bo'yicha taxminiy moslik QO'SHMANG.
 (eski nomi `REQUIRE_MAC_MATCH` ham o'qiladi). **Bu kredensial emas,
 inventarizatsiya intizomi.** Rad etilgan tekshiruv audit yozmaydi.
 
+**Server ham majburlaydi** (faqat client UI emas): `true` da
+`candidate/lookup/` `session.require_machine_match` bilan qayta tekshiradi
+— bron xatolaridan KEYIN, platformadan OLDIN — va 409
+`machine_not_verified` (`details.status`, matn handshake'niki) qaytaradi.
+`face/verify/` alohida tekshirilmaydi: challenge shu qurilmaga bog'langan.
+Testlarda lookup juftlik bilan chaqiriladi (`factories.machine_of`);
+`settings/test.py` bayroqni `True` ga mahkamlaydi.
+
 **MAC'siz eski yozuvlar (o'tish davri)** — o'chirilmaydi va to'xtatilmaydi:
 (b) qoida bo'yicha faqat UUID bilan tanilanadi (`legacy_no_mac`). Shu UUID'li
 ikkinchi yozuv (MAC bilan) qo'shilishi bilan moslik TO'XTAYDI — endi UUID
@@ -701,7 +721,12 @@ O'tishlar (`is_fingerprint_upgrade`, etalon JIMGINA yangilanadi):
 `MAC|host|OS|arch` → yangi — eski izdagi MAC client MAC'i bilan mos;
 `muid:<UUID>` → `muid:<UUID>|mac:<MAC>` — UUID mos VA izdagi MAC KOMPYUTER
 YOZUVIDAGI MAC bilan mos (yozuvda MAC yo'q — anomaliya). Aks holda
-`fingerprint_changed`. **`devices/register/` da "o'sha mashinami" (eski
+`fingerprint_changed`. **Administrator juftlikni o'zgartirsa** (panel yoki
+Django admin; masalan monoblok Wi-Fi'ga o'tdi) etalon
+`services.rebaseline_fingerprints` bilan yangi juftlikka ko'chadi — O'CHIRILMAYDI,
+`fingerprint_for` qiymatiga almashtiriladi, faqat etaloni ESKI juftlikka teng
+qurilmalar (shubhalisi anomaliyasini saqlaydi); qaysilari — auditda
+`fingerprint_rebaselined`. **`devices/register/` da "o'sha mashinami" (eski
 `device_id` ni qaytarish) — JUFTLIK bo'yicha** (`views._is_same_machine`):
 so'rovdagi (UUID, MAC) == kompyuter yozuvidagi; iz faqat juftlikni
 solishtirib bo'lmaydigan eski holatlarda. Aks holda bir xil UUID'li ikkinchi
@@ -1287,7 +1312,35 @@ qo'shimcha qatlam; AI qismi faqat `services/monitoring.py` buferiga yozadi.
   xavfsizlik chegarasi emas.
 * **Qayta ulanish HAR OCHILISHDA indeksni yo'l bo'yicha qayta topadi**
   (`WebcamSource._current_index`): kamera uzilsa qolganlari siljiydi va
-  eski indeks BOSHQA kamerani ochardi. Yo'l ro'yxatda yo'q — ochilmaydi.
+  eski indeks BOSHQA kamerani ochardi. Yo'l USB PORTGA bog'liq (seriyasiz
+  kamera) — topilmasa YAGONA bir xil nom bo'yicha; aks holda ochilmaydi.
+* **Uzilish `read()` dan emas, qurilma ro'yxatidan aniqlanadi**
+  (`is_present`, har 2 s, `manager`/`camera_worker` `_PRESENCE_CHECK_S`):
+  noutbukda USB sug'urilgach DirectShow `read()` kadr qaytaraverdi — bo'sh
+  kadrlar qoidasi uzilishni ko'rmadi, kabel qayta ulanganda ham kamera
+  ochilmadi. Faqat `False` uzilish; `None` (ro'yxat o'qilmadi —
+  `dshow.enumerate_devices_strict`) — tegilmaydi.
+* **O'lik oqim** (`proctoring/camera/liveness.py`): qayta ulangan USB
+  kamera "ochildi", lekin DirectShow har `read()` da ~1 s kutib QORA
+  bufer berdi. Belgi — kadr nol/oldingisi bilan aynan bir xil VA o'qish
+  sekin (≥ 0.5 s), 5 s uzluksiz → qayta ochiladi (kechikish o'sadi).
+  Faqat birinchisi emas: yopilgan ob'ektiv ham qora, lekin tez — u tirik.
+  ONLINE / `camera_restored` faqat TIRIK kadrda; FAILED bitta uzilishga
+  bir marta (`CameraStream._mark_lost`). Muvaffaqiyatsiz ochilishdan
+  keyingi urinish 3 s kutadi (`webcam._SETTLE_AFTER_RETURN_S`).
+  Ochilishdan 3 s keyin log'da oqim xulosasi (yorqinlik, o'qish ms).
+  **Qayta ochish yetmaydi** (holat jarayon qayta ishga tushganda ham
+  saqlangan) — `WebcamSource.recover_dead_stream` zinapoyasi, manba
+  YOPILGACH: `native` (DirectShow, MJPG/o'lcham majburlanmaydi) →
+  `msmf` (faqat yagona fizik kamerada, indeks 0) → `pnputil
+  /restart-device` (2 daqiqada bir marta). Ishlagan rejim saqlanadi.
+  MSMF uchun `main.py` `OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS=0`
+  (usiz ochilish 19 s — qo'riqchi chegarasi 20 s).
+* **Abadiy osilgan `read()`** (DirectShow, USB sug'urilganda):
+  `GuardedSource` `_REPLACE_AFTER_S` (10 s) dan keyin osilgan I/O
+  thread'ni tashlab ketadi va manbani `fresh_copy()` bilan yangi thread'da
+  ochadi; eski manba o'z thread'ida yopiladi (har I/O o'z navbati bilan).
+  Usiz kabel qayta ulansa ham har `open()` rad etilardi.
 * **Uzilishda eski natija ishlatilmaydi**: pipeline `_FRAME_MAX_AGE_S`
   dan eski kadrni tahlil qilmaydi (oqim muzlagan kadrni ushlab qoladi),
   `latest_identity` / `_current_face` eskirganda `(None, None)` —
@@ -1512,6 +1565,14 @@ biznes-mantiq) / `api/v1/{serializers,views,urls}.py`. View'lar yupqa.
   API qaytarmaydi). Endpoint autentifikatsiyasiz (`ExitVerifyThrottle`).
   Parol sozlanmagan — `exit_password_not_configured`, client tasdiqlash
   dialogiga o'tadi.
+* **Throttle — ikki qavat, chunki operator hisobi REGIONGA bitta** (bino
+  ~500 mashina, bitta NAT IP). Login, JSHSHIR qidiruvi, chiqish paroli:
+  `*DeviceThrottle` (bazadagi `X-Device-ID` — mashinaga qat'iy,
+  `common/throttling.py:device_user_ident`) + hisob/bino bo'yicha keng
+  (`StaffLoginThrottle`, `PinflLookupOperatorThrottle`, `ExitVerifyThrottle`).
+  Faqat `user:{pk}` yoki IP kaliti butun binoni bitta byudjetga tiqadi.
+  Kenglarini oshirish (`THROTTLE_*`) — mashina chegarasini emas. DRF ro'yxati
+  har so'rovda to'liq qayta yoziladi — o'n minglab limit qo'ymang.
 * Har urinish `client/access-attempt/` → `backend/logs/client_access.log`
   (`client_access` logger), `AuditLog` ga emas.
 

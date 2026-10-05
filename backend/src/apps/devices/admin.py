@@ -2,6 +2,7 @@ from django import forms
 from django.contrib import admin
 
 from apps.common.utils.validators import normalize_mac, normalize_machine_uuid
+from apps.devices import services
 from apps.devices.models import Camera, Computer, DeviceToken
 
 
@@ -46,6 +47,16 @@ class ComputerAdmin(admin.ModelAdmin):
     search_fields = ("number", "inventory_code", "machine_uuid", "ip_address", "mac_address")
     list_select_related = ("zone", "zone__region")
     filter_horizontal = ("cameras",)
+
+    def save_model(self, request, obj, form, change):
+        # Panel bilan bir xil: juftlik o'zgarsa qurilmalar etaloni ham
+        # (`services.rebaseline_fingerprints`). `form.initial` — saqlashdan
+        # OLDINGI qiymatlar (`obj` ga forma allaqachon yozilgan).
+        old_uuid = form.initial.get("machine_uuid") if change else ""
+        old_mac = form.initial.get("mac_address") if change else ""
+        super().save_model(request, obj, form, change)
+        if change:
+            services.rebaseline_fingerprints(obj, old_uuid=old_uuid or "", old_mac=old_mac or "")
 
 
 @admin.register(Camera)

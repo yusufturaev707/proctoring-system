@@ -44,6 +44,7 @@ class ReplacePreviousSessionTests(RedisStateMixin, TestCase):
         """JSHSHIR tekshiruvi + yuz tasdig'i - qayta ishga tushgandagi yo'l."""
         challenge = session_service.lookup_candidate(
             pinfl=PINFL, exam=self.exam, device=self.device, zone=self.device.computer.zone,
+            **factories.machine_of(self.device),
         )["challenge"]
         response = self.client.post(
             reverse("client-face-verify"),

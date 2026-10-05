@@ -32,6 +32,15 @@ Osilgan chaqiruv davomida yangi `open()` RAD ETILADI (navbatga
 qo'yilmaydi): u baribir o'sha qurilmani ochishga urinardi va
 osilgan chaqiruv qaytgach hech kim kutmayotgan kamerani ochib,
 qurilmani band qilib qo'yardi.
+
+OSILISH ABADIY BO'LSA (`_REPLACE_AFTER_S`). DirectShow'da USB kabel
+sug'urilganda `read()` UMUMAN qaytmasligi mumkin - o'shanda yuqoridagi
+qoida kamerani imtihon oxirigacha o'chiq qoldirardi: kabel qayta
+ulangan, lekin har `open()` "javob bermayapti" bilan rad. Shuning uchun
+shuncha vaqtdan keyin osilgan I/O thread TASHLAB KETILADI (o'z navbati
+va eski manba bilan; qaytsa, eski manbani O'ZI yopadi) va qurilma YANGI
+manba nusxasi (`fresh_copy`) bilan, yangi thread'da ochiladi. Ikki
+thread bitta `VideoCapture` ga tegmaydi - har biri o'zinikiga.
 """
 
 from __future__ import annotations
@@ -54,6 +63,11 @@ _WAIT_SLICE_S = 0.1
 
 #: Manba yopiq va navbat bo'sh bo'lsa I/O thread shuncha kutib chiqadi.
 _IDLE_EXIT_S = 30.0
+
+#: Chaqiruv shuncha vaqt qaytmasa osilgan I/O tashlab ketiladi va manba
+#: yangi nusxa bilan ochiladi (modul docstring'i). O'qish chegarasidan
+#: (5 s) ancha katta: sekin, lekin tirik qurilma almashtirilmasin.
+_REPLACE_AFTER_S = 10.0
 
 
 def normalize_frame(frame) -> Optional[np.ndarray]:
@@ -92,11 +106,14 @@ def normalize_frame(frame) -> Optional[np.ndarray]:
 
 
 class _Job:
-    __slots__ = ("name", "fn", "done", "result", "error", "abandoned", "started_at")
+    __slots__ = ("name", "fn", "inner", "done", "result", "error", "abandoned", "started_at")
 
-    def __init__(self, name: str, fn: Callable) -> None:
+    def __init__(self, name: str, fn: Callable, inner: Optional[CameraSource] = None) -> None:
         self.name = name
         self.fn = fn
+        #: Chaqiruv QAYSI manbaga tegishli - osilgan I/O almashtirilgach
+        #: kechikkan ochilish yangisini emas, o'zinikini yopsin.
+        self.inner = inner
         self.done = threading.Event()
         self.result = None
         self.error: Optional[BaseException] = None
@@ -150,6 +167,29 @@ class GuardedSource(CameraSource):
         job = self._current
         return job is not None and job.abandoned
 
+    def is_present(self) -> Optional[bool]:
+        """
+        Ichki manbaga O'TADI, I/O thread'ga emas: bu qurilmalar ro'yxati
+        (`VideoCapture` ga tegmaydi) va osilgan `read()` paytida aynan
+        shu savolga javob kerak.
+        """
+        try:
+            return self._inner.is_present()
+        except Exception:  # noqa: BLE001
+            log.debug("Kamera borligini tekshirib bo'lmadi", exc_info=True)
+            return None
+
+    def recover_dead_stream(self) -> str:
+        """Ichki manbaga o'tadi (`WebcamSource.recover_dead_stream`); yo'q bo'lsa ""."""
+        recover = getattr(self._inner, "recover_dead_stream", None)
+        if recover is None:
+            return ""
+        try:
+            return recover() or ""
+        except Exception:  # noqa: BLE001 - tiklash urinishi kuzatuvni to'xtatmaydi
+            log.warning("[%s] kamera tiklash qadamida xato", self.info.role or "-", exc_info=True)
+            return ""
+
     def abort(self) -> None:
         """
         Kutayotgan `open`/`read` darhol qaytadi (egasi to'xtayapti).
@@ -169,6 +209,8 @@ class GuardedSource(CameraSource):
             # ketilgan bo'lishi mumkin — u odatda millisekundlarda
             # qaytadi. Qisqa kutamiz; haqiqatan osilgan bo'lsa rad.
             job.done.wait(1.0)
+        if self.hung and self._stalled_seconds() >= _REPLACE_AFTER_S:
+            self._replace_stuck_io()
         if self.hung:
             return self._fail(
                 "Kamera javob bermayapti (oldingi chaqiruv {} s dan beri "
@@ -224,6 +266,45 @@ class GuardedSource(CameraSource):
             )
 
     # ------------------------------------------------------------------
+    def _replace_stuck_io(self) -> bool:
+        """
+        Abadiy osilgan I/O ni tashlab, manbani yangi nusxa bilan almashtiradi.
+
+        `fresh_copy` yo'q manba (masalan RTSP - FFmpeg o'z timeout'i bilan
+        qaytadi) almashtirilmaydi - eski qoida qoladi.
+        """
+        fresh = getattr(self._inner, "fresh_copy", None)
+        if fresh is None:
+            return False
+        try:
+            replacement = fresh()
+        except Exception:  # noqa: BLE001
+            log.warning("[%s] kamera manbasini yangilab bo'lmadi", self.info.role or "-", exc_info=True)
+            return False
+        # Ma'lumot obyekti UMUMIY qoladi (rezolyutsiya, nom - tashqarida ko'rinadi).
+        replacement.info = self.info
+        with self._lock:
+            old_inner, old_jobs = self._inner, self._jobs
+            stalled = self._stalled_seconds()
+            self._inner = replacement
+            self._jobs = queue.Queue()
+            self._thread = None
+            self._current = None
+            self._opened = False
+        # Eski manba O'Z thread'ida yopiladi - osilgan chaqiruv qaytsa.
+        old_jobs.put(_Job("close", old_inner.close, old_inner))
+        log.warning(
+            "[%s] kamera chaqiruvi %d s dan beri qaytmayapti - u tashlab ketildi, "
+            "qurilma yangi ulanish bilan ochiladi", self.info.role or "-", stalled,
+        )
+        return True
+
+    def _stalled_seconds(self) -> float:
+        job = self._current
+        if job is None or not job.started_at:
+            return 0.0
+        return time.monotonic() - job.started_at
+
     def _stalled_for(self) -> int:
         job = self._current
         if job is None or not job.started_at:
@@ -234,7 +315,7 @@ class GuardedSource(CameraSource):
 
     def _call(self, name: str, fn: Callable, timeout: float, *, abortable: bool = True):
         """`(bajarildimi, natija)`. Istisno natija `None`/`False` bo'ladi."""
-        job = _Job(name, fn)
+        job = _Job(name, fn, self._inner)
         self._submit(job)
         deadline = time.monotonic() + max(0.05, timeout)
         while True:
@@ -264,6 +345,9 @@ class GuardedSource(CameraSource):
             if self._thread is None:
                 self._thread = threading.Thread(
                     target=self._loop,
+                    # Navbat ARGUMENT: almashtirilgan (`_replace_stuck_io`)
+                    # eski thread yangi navbatdan ish olmasligi kerak.
+                    args=(self._jobs,),
                     name="camera-io-{}".format(self.info.role or "src"),
                     # DAEMON: osilgan nativ chaqiruv dastur yopilishini
                     # to'smasligi kerak.
@@ -271,27 +355,32 @@ class GuardedSource(CameraSource):
                 )
                 self._thread.start()
 
-    def _loop(self) -> None:
+    def _loop(self, jobs: "queue.Queue[_Job]") -> None:
         while True:
             try:
-                job = self._jobs.get(timeout=_IDLE_EXIT_S)
+                job = jobs.get(timeout=_IDLE_EXIT_S)
             except queue.Empty:
                 with self._lock:
+                    if jobs is not self._jobs:
+                        return  # tashlab ketilgan I/O - ishi tugadi
                     # Ochiq manba thread'siz qolmaydi: DirectShow
                     # qurilmasi ochilgan thread'da ishlashi kerak.
-                    if self._jobs.empty() and not self._opened:
+                    if jobs.empty() and not self._opened:
                         self._thread = None
                         return
                 continue
 
-            self._current = job
+            current = jobs is self._jobs
+            if current:
+                self._current = job
             job.started_at = time.monotonic()
             try:
                 job.result = job.fn()
             except BaseException as exc:  # noqa: BLE001 — thread yiqilmasin
                 job.error = exc
             finally:
-                self._current = None
+                if self._current is job:
+                    self._current = None
                 job.done.set()
 
             if job.abandoned:
@@ -302,8 +391,8 @@ class GuardedSource(CameraSource):
                 )
                 if job.name == "open" and job.result:
                     # Hech kim kutmayotgan ochilish — qurilma band
-                    # qolmasligi uchun darhol yopiladi.
+                    # qolmasligi uchun darhol yopiladi (O'Z manbasi).
                     try:
-                        self._inner.close()
+                        (job.inner or self._inner).close()
                     except Exception:
                         log.debug("Kechikkan ochilishni yopishda xato", exc_info=True)

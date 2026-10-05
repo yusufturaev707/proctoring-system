@@ -11,7 +11,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 
 from apps.common.mixins import AuditLogMixin, PermissionRequiredMixin
 from apps.common.permissions import HasRolePermission
-from apps.common.throttling import StaffLoginThrottle, client_ip
+from apps.common.throttling import StaffLoginDeviceThrottle, StaffLoginThrottle, client_ip
 from apps.proctoring.services.audit import record_audit
 from apps.users import services
 from apps.users.api.v1.serializers import (
@@ -34,7 +34,8 @@ from apps.users.models import Permission, Role, User
 class LoginView(APIView):
     permission_classes = [AllowAny]
     authentication_classes: list = []
-    throttle_classes = [StaffLoginThrottle]
+    # Mashina bo'yicha qat'iy + bino bo'yicha keng (`common/throttling.py`).
+    throttle_classes = [StaffLoginDeviceThrottle, StaffLoginThrottle]
 
     @extend_schema(request=LoginSerializer, responses=TokenPairSerializer)
     def post(self, request):

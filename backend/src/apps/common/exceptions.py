@@ -1,12 +1,14 @@
 import logging
+import random
 
 from django.core.exceptions import PermissionDenied, ValidationError as DjangoValidationError
-from django.db import IntegrityError
+from django.db import IntegrityError, InterfaceError, OperationalError
 from django.http import Http404
 from rest_framework import status
 from rest_framework.exceptions import APIException
 from rest_framework.response import Response
 from rest_framework.views import exception_handler as drf_exception_handler
+from redis.exceptions import RedisError
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +182,44 @@ class ExternalPlatformUnavailable(DomainError):
     status_code = status.HTTP_503_SERVICE_UNAVAILABLE
     default_detail = "Tashqi platforma vaqtincha mavjud emas, biroz kuting"
     default_code = "external_platform_unavailable"
+
+
+class MachineNotVerified(DomainError):
+    """
+    Mashina (Machine UUID, MAC) qurilma biriktirilgan kompyuterga mos emas.
+
+    Handshake buni faqat BAYROQ bilan aytadi (`machine.allowed`) va to'siqni
+    client UI qo'yadi; `REQUIRE_MACHINE_MATCH=true` da server ham JSHSHIR
+    tekshiruvida rad etadi — o'zgartirilgan client bayroqni e'tiborsiz
+    qoldirib imtihon ochmasligi uchun. Matn `verify_machine` dan (handshake
+    bilan bir xil), `details.status` — `not_found` / `mismatch` / ...
+    """
+
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = "Bu mashina bazadagi kompyuter yozuviga mos kelmadi"
+    default_code = "machine_not_verified"
+
+
+class BackendUnavailable(DomainError):
+    """
+    Redis yoki PostgreSQL vaqtincha javob bermayapti — 503 + `Retry-After`.
+
+    Ilgari bunday xato 500 `internal_error` bo'lib chiqardi: client uni
+    "server buzilgan" deb tushunardi va server "qachon qaytish kerak"
+    degan signal bermasdi. `Retry-After` TASODIFIY (5–15 s): 5000 client
+    bir xil muddatni olsa, tiklangan serverga hammasi bir soniyada
+    qaytib urilardi. Client 503 ni va bu sarlavhani hurmat qiladi
+    (`client/services/api_client.py`, `Retry-After` darvozasi).
+    """
+
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    default_detail = "Server vaqtincha band — biroz kutib qayta urinib ko'ring"
+    default_code = "service_unavailable"
+
+    def __init__(self, detail=None, code=None, *, extra: dict | None = None):
+        super().__init__(detail, code, extra=extra)
+        # DRF handler'i `wait` dan `Retry-After` sarlavhasini yasaydi.
+        self.wait = random.randint(5, 15)
 
 
 class CandidateNotFound(DomainError):
@@ -394,6 +434,12 @@ def api_exception_handler(exc, context):
         logger.warning("IntegrityError: %s", exc)
         exc = DomainError(_integrity_message(exc), code="integrity_error")
         exc.status_code = status.HTTP_409_CONFLICT
+    elif isinstance(exc, (RedisError, OperationalError, InterfaceError)):
+        # Infratuzilma nosozligi (Redis/DB ulanishi), kod xatosi emas:
+        # stack trace emas, bitta qator — uzilish paytida 5000 client
+        # log'ni bir daqiqada gigabaytga to'ldirardi.
+        logger.error("Ichki xizmat javob bermayapti (%s): %s", type(exc).__name__, exc)
+        exc = BackendUnavailable()
 
     response = drf_exception_handler(exc, context)
 

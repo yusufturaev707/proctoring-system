@@ -59,6 +59,9 @@ PROCTORING["REQUIRE_DEVICE_ID"] = False  # noqa: F405
 # testlar ularni `override_settings` bilan o'zi yoqadi.
 PROCTORING["REQUIRE_COMPUTER_BOOKING"] = False  # noqa: F405
 PROCTORING["ALLOW_PRIVATE_SOURCE_IP"] = False  # noqa: F405
+# Production standarti: mashina mos kelmasa handshake to'sadi va JSHSHIR
+# tekshiruvi rad etadi (`session.require_machine_match`).
+PROCTORING["REQUIRE_MACHINE_MATCH"] = True  # noqa: F405
 # Dashboard keshi testlar orasida locmem'da qolib, keyingi testga eski
 # sonlarni berardi. Keshning o'zi `test_dashboard.py` da yoqib sinaladi.
 PROCTORING["DASHBOARD_CACHE_SECONDS"] = 0  # noqa: F405

@@ -342,12 +342,19 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         # Talabgor JSHSHIR qidiruvi — brute-force'ga qarshi eng muhim chegara
         "pinfl_lookup": env("THROTTLE_PINFL_LOOKUP", "10/hour"),
-        "pinfl_lookup_operator": env("THROTTLE_PINFL_OPERATOR", "300/hour"),
+        # Operator hisobi REGIONGA bitta (bino ~500 mashina): `*_OPERATOR`,
+        # `EXIT_VERIFY`, `STAFF_LOGIN` — butun binoning KENG byudjeti,
+        # `*_DEVICE` — bitta mashinaning QAT'IY chegarasi. Ikkalasi birga
+        # tekshiriladi (`common/throttling.py:device_user_ident`).
+        "pinfl_lookup_operator": env("THROTTLE_PINFL_OPERATOR", "1500/hour"),
+        "pinfl_lookup_device": env("THROTTLE_PINFL_DEVICE", "120/hour"),
         "face_verify": env("THROTTLE_FACE_VERIFY", "40/min"),
         "session_start": env("THROTTLE_SESSION_START", "10/hour"),
-        "exit_verify": env("THROTTLE_EXIT_VERIFY", "10/hour"),
+        "exit_verify": env("THROTTLE_EXIT_VERIFY", "300/hour"),
+        "exit_verify_device": env("THROTTLE_EXIT_VERIFY_DEVICE", "10/hour"),
         "client_ingest": env("THROTTLE_CLIENT_INGEST", "600/min"),
-        "staff_login": env("THROTTLE_STAFF_LOGIN", "10/min"),
+        "staff_login": env("THROTTLE_STAFF_LOGIN", "60/min"),
+        "staff_login_device": env("THROTTLE_STAFF_LOGIN_DEVICE", "10/min"),
         "device_register": env("THROTTLE_DEVICE_REGISTER", "20/hour"),
         "preflight": env("THROTTLE_PREFLIGHT", "30/min"),
         "access_attempt": env("THROTTLE_ACCESS_ATTEMPT", "30/min"),

@@ -48,7 +48,8 @@ class SessionFlowTestCase(RedisStateMixin, TestCase):
     def _lookup(self, pinfl="30000000000001", device=None):
         device = device or self.device
         return session_service.lookup_candidate(
-            pinfl=pinfl, exam=self.exam, device=device, zone=device.computer.zone
+            pinfl=pinfl, exam=self.exam, device=device, zone=device.computer.zone,
+            **factories.machine_of(device),
         )
 
     def _make_session(self, pinfl="30000000000001", device=None):

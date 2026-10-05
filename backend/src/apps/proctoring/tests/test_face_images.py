@@ -96,7 +96,8 @@ class EntryImageTests(RedisStateMixin, TestCase):
 
     def _lookup(self, pinfl="30000000000001"):
         return session_service.lookup_candidate(
-            pinfl=pinfl, exam=self.exam, device=self.device, zone=self.computer.zone
+            pinfl=pinfl, exam=self.exam, device=self.device, zone=self.computer.zone,
+            **factories.machine_of(self.device),
         )
 
     def test_successful_entry_stores_the_frame(self):

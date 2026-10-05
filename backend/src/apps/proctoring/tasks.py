@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 from celery import shared_task
 from django.conf import settings
 from django.utils import timezone
+from redis.exceptions import RedisError
 
 from apps.common.redis_client import get_redis
 from apps.proctoring.models import (
@@ -355,23 +356,61 @@ def close_stale_sessions():
     Bunday sessiyalar abadiy "jarayonda" qolib ketmasligi kerak — aks
     holda `SessionAlreadyActive` qulfi talabgorni qayta kirishdan
     to'sib qo'yadi.
+
+    DB'DAGI VAQT YETARLI DALIL EMAS. `last_heartbeat_at` ni faqat ingest
+    ishchisi (`flush_session_state`) Redis'dan ko'chiradi; u to'xtasa
+    yoki kechiksa, 15 daqiqadan keyin bu vazifa SOG' sessiyalarni ham
+    (daqiqasiga 500 tadan) yopib, imtihonlarni to'xtatardi. Shuning
+    uchun har nomzod yopilishdan oldin Redis'dagi haqiqiy `hb` bilan
+    tekshiriladi:
+
+      * Redis'da yangi `hb` — sessiya tirik: yopilmaydi, DB vaqti
+        tuzatiladi (aks holda ular har safar birinchi 500 talikni
+        egallab, haqiqatan o'lganlarini to'sib qo'yardi);
+      * Redis ishlamayapti — tirikligini bilib bo'lmaydi: shu yurishda
+        HECH KIM yopilmaydi (uzilish paytida heartbeat DB'ga yoziladi —
+        `HeartbeatView`);
+      * Redis'da `hb` yo'q yoki u ham eski — yopiladi.
     """
-    threshold = timezone.now() - timedelta(
-        seconds=settings.PROCTORING["STALE_SESSION_AFTER"]
+    stale_after = settings.PROCTORING["STALE_SESSION_AFTER"]
+    threshold = timezone.now() - timedelta(seconds=stale_after)
+    stale = list(
+        ExamSession.objects.filter(
+            status__in=[
+                ExamSession.Status.IN_PROGRESS,
+                ExamSession.Status.READY,
+                ExamSession.Status.FACE_CHECK,
+            ],
+            last_heartbeat_at__lt=threshold,
+        ).order_by("last_heartbeat_at")[:500]
     )
-    stale = ExamSession.objects.filter(
-        status__in=[
-            ExamSession.Status.IN_PROGRESS,
-            ExamSession.Status.READY,
-            ExamSession.Status.FACE_CHECK,
-        ],
-        last_heartbeat_at__lt=threshold,
-    )[:500]
+    if not stale:
+        return {"closed": 0}
+
+    try:
+        states = session_state.get_states([session.pk for session in stale])
+    except RedisError as exc:
+        logger.error(
+            "close_stale_sessions: Redis ishlamayapti — heartbeat tekshirilmadi, "
+            "%s ta nomzod yopilmadi: %s", len(stale), exc,
+        )
+        return {"closed": 0, "skipped": len(stale), "reason": "redis_unavailable"}
+
+    alive = _alive_heartbeats(stale, states, stale_after=stale_after)
+    if alive:
+        # Bu holatning o'zi nosozlik belgisi: write-behind ishlamayapti.
+        logger.warning(
+            "close_stale_sessions: %s ta sessiya DB'da eskirgan, lekin Redis'da tirik — "
+            "`flush_session_state` (ingest ishchisi) ishlayaptimi?", len(alive),
+        )
+        _sync_heartbeats(alive)
 
     from apps.proctoring.services.session import expire_session
 
     closed = 0
     for session in stale:
+        if session.pk in alive:
+            continue
         try:
             expire_session(session)
             closed += 1
@@ -380,7 +419,38 @@ def close_stale_sessions():
 
     if closed:
         logger.info("%s ta eskirgan sessiya yopildi", closed)
-    return {"closed": closed}
+    return {"closed": closed, "alive": len(alive)}
+
+
+def _alive_heartbeats(sessions, states: dict, *, stale_after: int) -> dict[int, int]:
+    """`session_id -> hb` — Redis'dagi heartbeat'i hali eskirmagan sessiyalar."""
+    now_ts = time.time()
+    alive: dict[int, int] = {}
+    for session in sessions:
+        raw = (states.get(session.pk) or {}).get("hb")
+        try:
+            heartbeat = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if now_ts - heartbeat < stale_after:
+            alive[session.pk] = heartbeat
+    return alive
+
+
+def _sync_heartbeats(alive: dict[int, int]) -> None:
+    """Redis'dagi haqiqiy heartbeat vaqtini DB'ga yozadi (bitta UPDATE)."""
+    from django.db.models import Case, DateTimeField, Value, When
+
+    tz = timezone.get_current_timezone()
+    ExamSession.objects.filter(pk__in=list(alive)).update(
+        last_heartbeat_at=Case(
+            *[
+                When(pk=pk, then=Value(datetime.fromtimestamp(heartbeat, tz=tz)))
+                for pk, heartbeat in alive.items()
+            ],
+            output_field=DateTimeField(),
+        )
+    )
 
 
 @shared_task(name="proctoring.report_session_result", bind=True, max_retries=5)

@@ -65,6 +65,22 @@ class ComputerViewSet(
         "machine_uuid", "status", "last_seen_at",
     ]
 
+    def perform_update(self, serializer):
+        """
+        Juftlik (UUID, MAC) o'zgarsa — qurilmalar etaloni ham yangi juftlikka
+        (`services.rebaseline_fingerprints`); qaysilari — auditda.
+        """
+        old_uuid = serializer.instance.machine_uuid
+        old_mac = serializer.instance.mac_address
+        instance = serializer.save()
+        rebaselined = services.rebaseline_fingerprints(
+            instance, old_uuid=old_uuid, old_mac=old_mac
+        )
+        self.log_audit(
+            "update", instance, {"fingerprint_rebaselined": rebaselined} if rebaselined else None
+        )
+        return instance
+
     def get_queryset(self):
         from apps.proctoring.models import ExamSession
 

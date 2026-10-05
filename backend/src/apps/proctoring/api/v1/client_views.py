@@ -24,6 +24,7 @@ import logging
 from django.conf import settings
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema
+from redis.exceptions import RedisError
 from rest_framework import status
 from rest_framework.exceptions import ValidationError
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
@@ -39,9 +40,11 @@ from apps.common.storage import build_object_key, presign_put
 from apps.common.throttling import (
     AccessAttemptThrottle,
     ClientIngestThrottle,
+    ExitVerifyDeviceThrottle,
     ExitVerifyThrottle,
     FaceAttemptThrottle,
     FaceVerifyThrottle,
+    PinflLookupDeviceThrottle,
     PinflLookupOperatorThrottle,
     PinflLookupThrottle,
     PreflightThrottle,
@@ -1018,10 +1021,11 @@ class CandidateLookupView(ClientBaseView):
     ochiq qidirish servisiga aylanadi. Shuning uchun uch qavat himoya:
       1. Qurilma imzosi (ro'yxatdan o'tgan client bo'lishi shart)
       2. IP allowlist (imtihon markazi tarmog'i)
-      3. Ikki xil throttle (JSHSHIR bo'yicha + qurilma bo'yicha)
+      3. Uch xil throttle: JSHSHIR bo'yicha, mashina bo'yicha (qat'iy) va
+         operator hisobi bo'yicha (keng — hisob regionga bitta)
     """
 
-    throttle_classes = [PinflLookupThrottle, PinflLookupOperatorThrottle]
+    throttle_classes = [PinflLookupThrottle, PinflLookupDeviceThrottle, PinflLookupOperatorThrottle]
 
     @extend_schema(request=CandidateLookupSerializer, responses={200: None})
     def post(self, request):
@@ -1053,6 +1057,8 @@ class CandidateLookupView(ClientBaseView):
             # Jismoniy mashina — kompyuter broni shu bilan solishtiriladi.
             machine_uuid=serializer.validated_data.get("machine_uuid", ""),
             mac_address=serializer.validated_data.get("mac_address", ""),
+            # Mashina tekshiruvi UUID'ni bog'lasa — auditda kim nomidan.
+            actor=request.user,
         )
         return Response(result)
 
@@ -1660,16 +1666,26 @@ class HeartbeatView(SessionRequiredView):
         serializer.is_valid(raise_exception=True)
 
         session = self.session
-        session_state.touch_heartbeat(
-            session.pk, zone_id=session.zone_id, extra=serializer.validated_data
-        )
+        try:
+            session_state.touch_heartbeat(
+                session.pk, zone_id=session.zone_id, extra=serializer.validated_data
+            )
+            hot = session_state.get_state(session.pk)
+        except RedisError:
+            # REDIS ISHLAMAYAPTI — tiriklik belgisi DB'ga to'g'ridan-to'g'ri.
+            # Aks holda `last_heartbeat_at` uzilish davomida eskiradi va
+            # Redis qaytgan zahoti (holat yo'qolgan, heartbeat hali
+            # kelmagan) `close_stale_sessions` sog' sessiyalarni yopardi.
+            # Bu qimmat yo'l (5000 x 30 s = ~170 UPDATE/s), lekin faqat
+            # uzilish paytida. Ball DB'dagi oxirgi qiymatdan.
+            ExamSession.objects.filter(pk=session.pk).update(last_heartbeat_at=timezone.now())
+            hot = {"risk": session.risk_score}
         # IMTIHON DAVOMIDA ALOHIDA SIGNAL YUBORILMAYDI: heartbeat
         # baribir kelib turibdi va presence undan olinadi. Yozuv
         # daqiqada bir marta bo'ladi (`PRESENCE_DB_INTERVAL`), ya'ni
-        # bu yerdagi qo'shimcha yuk sezilmaydi.
+        # bu yerdagi qo'shimcha yuk sezilmaydi. Redis'siz ham ishlaydi.
         device_services.touch_presence(self.device, staff=request.user, in_exam=True)
 
-        hot = session_state.get_state(session.pk)
         return Response(
             {
                 "server_time": timezone.now(),
@@ -1741,7 +1757,7 @@ class ExitVerifyView(APIView):
 
     authentication_classes = [JWTAuthentication]
     permission_classes: list = []
-    throttle_classes = [ExitVerifyThrottle]
+    throttle_classes = [ExitVerifyDeviceThrottle, ExitVerifyThrottle]
 
     @staticmethod
     def _device(request):

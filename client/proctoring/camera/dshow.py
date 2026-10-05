@@ -50,6 +50,7 @@ import logging
 import sys
 from ctypes import POINTER, byref, c_void_p
 from dataclasses import dataclass
+from typing import Optional
 
 log = logging.getLogger(__name__)
 
@@ -205,18 +206,37 @@ def enumerate_devices() -> list[DshowDevice]:
     Bo'sh ro'yxat IKKI ma'noni bildiradi: qurilma yo'q yoki COM
     chaqiruvi ishlamadi. Ikkalasida ham chaqiruvchi eski yo'lga
     (PnP nomlari) tushadi, shuning uchun ularni ajratishning
-    ma'nosi yo'q — sabab log'da qoladi.
+    ma'nosi yo'q — sabab log'da qoladi. Farq kerak bo'lsa —
+    `enumerate_devices_strict`.
     """
     if not _IS_WINDOWS:
         return []
     try:
-        return _enumerate()
+        return _enumerate() or []
     except Exception:
         log.warning("DirectShow qurilmalarini sanab bo'lmadi", exc_info=True)
         return []
 
 
-def _enumerate() -> list[DshowDevice]:
+def enumerate_devices_strict() -> Optional[list[DshowDevice]]:
+    """
+    `enumerate_devices` ning ANIQ shakli: `None` — sanab bo'lmadi,
+    `[]` — kamera haqiqatan yo'q (kategoriya bo'sh).
+
+    "Kamera uzildimi" savoli uchun (`WebcamSource.is_present`): COM
+    xatosini "uzildi" deb o'qish ishlab turgan kamerani har tekshiruvda
+    yopib-ochardi.
+    """
+    if not _IS_WINDOWS:
+        return None
+    try:
+        return _enumerate()
+    except Exception:
+        log.debug("DirectShow qurilmalarini sanab bo'lmadi", exc_info=True)
+        return None
+
+
+def _enumerate() -> Optional[list[DshowDevice]]:
     initialized = _ole32.CoInitializeEx(None, _COINIT_APARTMENTTHREADED)
     # `RPC_E_CHANGED_MODE` — jarayonda COM boshqa rejimda ishga
     # tushirilgan (Qt buni qiladi). Bu XATO EMAS: sanash baribir
@@ -229,7 +249,7 @@ def _enumerate() -> list[DshowDevice]:
             byref(_CLSID_SystemDeviceEnum), None, _CLSCTX_INPROC_SERVER,
             byref(_IID_ICreateDevEnum), byref(device_enum),
         ) != _S_OK or not device_enum:
-            return []
+            return None
         try:
             return _enumerate_category(device_enum)
         finally:
@@ -239,17 +259,20 @@ def _enumerate() -> list[DshowDevice]:
             _ole32.CoUninitialize()
 
 
-def _enumerate_category(device_enum: c_void_p) -> list[DshowDevice]:
+def _enumerate_category(device_enum: c_void_p) -> Optional[list[DshowDevice]]:
     moniker_enum = c_void_p()
     create = _vcall(
         device_enum, 3, POINTER(_GUID), POINTER(c_void_p), ctypes.c_ulong
     )
     # `S_FALSE` — kategoriya bo'sh (kamera umuman yo'q) va
-    # ko'rsatkich `NULL` bo'lib qoladi.
-    if create(
+    # ko'rsatkich `NULL` bo'lib qoladi. Boshqa kod - xato (`None`).
+    result = create(
         device_enum, byref(_CLSID_VideoInputDeviceCategory), byref(moniker_enum), 0
-    ) != _S_OK or not moniker_enum:
+    )
+    if result == _S_FALSE:
         return []
+    if result != _S_OK or not moniker_enum:
+        return None
 
     devices: list[DshowDevice] = []
     try:

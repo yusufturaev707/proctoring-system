@@ -143,14 +143,46 @@ class PinflLookupThrottle(BaseScopedThrottle):
         return hashlib.sha256(str(pinfl).encode()).hexdigest()[:32]
 
 
+def device_user_ident(request) -> str:
+    """
+    Kalit: ro'yxatdagi QURILMA + xodim — har mashinaga o'z byudjeti.
+
+    Nima uchun xodimning o'zi yetmaydi: operator hisobi REGIONGA bitta
+    (bino ~500 mashina) va `user:{pk}` kaliti bilan butun bino bitta
+    soatlik byudjetni bo'lishardi — kirish to'lqinida talabgorlarning
+    yarmi 429 olardi. Chegarani oshirish esa himoyani butun region uchun
+    bo'shatardi.
+
+    Qurilma `request.device` dan (`DeviceResolution` uni bazadan topib,
+    holatini tekshirgan) yoki, u yo'q yuzalarda (`exit/verify/` faqat JWT
+    oladi), `known_device_pk` orqali — ikkalasida ham faqat BAZADAGI
+    qurilma: soxta `X-Device-ID` yangi byudjet bermaydi, IP kalitiga
+    tushadi. Xodim + qurilmasiz so'rov bino IP'si bo'yicha.
+    """
+    device = getattr(request, "device", None)
+    device_pk = device.pk if device is not None else known_device_pk(request)
+    user = getattr(request, "user", None)
+    if user is not None and user.is_authenticated:
+        if device_pk:
+            return f"dev:{device_pk}:user:{user.pk}"
+        return f"user:{user.pk}:ip:{client_ip(request)}"
+    if device_pk:
+        return f"dev:{device_pk}:{client_ip(request)}"
+    return f"ip:{client_ip(request)}"
+
+
 class PinflLookupOperatorThrottle(BaseScopedThrottle):
     """
-    Bitta OPERATOR soatiga nechta har xil JSHSHIR qidira oladi.
+    Bitta OPERATOR HISOBI soatiga nechta JSHSHIR qidira oladi — KENG chegara.
 
     JSHSHIR bo'yicha chegara enumeration'ni to'xtatmaydi (hujumchi har safar
-    yangi raqam sinaydi). Ilgari bu chegara qurilmaga bog'langan edi, endi
-    esa xodimga: o'g'irlangan hisob bilan bir necha mashinadan qidirish
-    shu bilan yopiladi, va chegaraga yetilganda kim ekani ham ma'lum.
+    yangi raqam sinaydi). Bu chegara xodimga bog'langan: o'g'irlangan hisob
+    bilan ko'p mashinadan qidirish shu bilan yopiladi va chegaraga
+    yetilganda kim ekani ham ma'lum.
+
+    Hisob regionga bitta, ya'ni bu butun binoning byudjeti — u bino
+    hajmiga moslab KENG qo'yiladi (`THROTTLE_PINFL_OPERATOR`). Bitta
+    mashinaning qat'iy chegarasi alohida: `PinflLookupDeviceThrottle`.
     """
 
     scope = "pinfl_lookup_operator"
@@ -162,13 +194,32 @@ class PinflLookupOperatorThrottle(BaseScopedThrottle):
         return f"ip:{client_ip(request)}"
 
 
+class PinflLookupDeviceThrottle(BaseScopedThrottle):
+    """
+    Bitta MASHINA soatiga nechta JSHSHIR qidira oladi — QAT'IY chegara.
+
+    Mashina smenada bir necha talabgorni qidiradi, ya'ni qonuniy ish bu
+    chegaraga yetmaydi; bitta mashinadan JSHSHIR'larni sanab chiqish esa
+    shu yerda to'xtaydi. Region bo'yicha keng chegara bilan BIRGA ishlaydi.
+    """
+
+    scope = "pinfl_lookup_device"
+
+    def get_ident_value(self, request, view):
+        return device_user_ident(request)
+
+
 class ExitVerifyThrottle(BaseScopedThrottle):
     """
-    Chiqish paroli — ALOHIDA scope.
+    Chiqish paroli — ALOHIDA scope, hisob bo'yicha KENG chegara.
 
     Ilgari u `SessionStartThrottle` bilan bitta byudjetni bo'lishardi:
     10 marta noto'g'ri parol kiritilsa, o'sha kompyuterda bir soat
     davomida hech kim imtihon boshlay olmasdi.
+
+    Hisob regionga bitta, ya'ni bu binoning kun oxiridagi barcha
+    chiqishlari byudjeti (`THROTTLE_EXIT_VERIFY`). Parolni bitta
+    mashinada tanlashni `ExitVerifyDeviceThrottle` to'xtatadi.
     """
 
     scope = "exit_verify"
@@ -178,6 +229,15 @@ class ExitVerifyThrottle(BaseScopedThrottle):
         if user is not None and user.is_authenticated:
             return f"user:{user.pk}"
         return f"ip:{client_ip(request)}"
+
+
+class ExitVerifyDeviceThrottle(BaseScopedThrottle):
+    """Chiqish paroli — bitta MASHINA bo'yicha QAT'IY chegara."""
+
+    scope = "exit_verify_device"
+
+    def get_ident_value(self, request, view):
+        return device_user_ident(request)
 
 
 class FaceAttemptThrottle(BaseScopedThrottle):
@@ -299,10 +359,36 @@ class AccessAttemptThrottle(BaseScopedThrottle):
 
 
 class StaffLoginThrottle(BaseScopedThrottle):
-    """Xodim login'i — parolni brute-force qilishga qarshi."""
+    """
+    Xodim login'i — bino (IP) + login bo'yicha KENG chegara.
+
+    Operator hisobi regionga bitta va regionda bitta bino bor, ya'ni bu
+    kalit amalda "butun bino": unga kirish to'lqinidagi barcha mashinalar
+    sig'ishi kerak (`THROTTLE_STAFF_LOGIN`). Uning vazifasi — binodan
+    kelayotgan umumiy hujumni to'xtatish (ro'yxatdagi qurilmalar ID'si
+    diskda yotadi va yig'ib olinishi mumkin). Bitta mashinadagi parol
+    tanlash — `StaffLoginDeviceThrottle`.
+    """
 
     scope = "staff_login"
 
     def get_ident_value(self, request, view):
         username = (request.data or {}).get("username", "")
         return f"{client_ip(request)}:{str(username)[:64]}"
+
+
+class StaffLoginDeviceThrottle(BaseScopedThrottle):
+    """
+    Xodim login'i — bitta MASHINA (`X-Device-ID`) + login bo'yicha QAT'IY chegara.
+
+    Login'da hali xodim yo'q, shuning uchun kalit `device_or_ip_ident`:
+    ro'yxatdagi qurilma — o'z byudjeti, ro'yxatdan o'tmagan yoki soxta
+    ID — bino IP'si bo'yicha umumiy byudjet. Client login so'rovida ham
+    `X-Device-ID` yuboradi (`client/services/api_client.py:_headers`).
+    """
+
+    scope = "staff_login_device"
+
+    def get_ident_value(self, request, view):
+        username = (request.data or {}).get("username", "")
+        return f"{device_or_ip_ident(request)}:{str(username)[:64]}"

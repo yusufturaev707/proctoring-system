@@ -53,6 +53,14 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(kind, "storage")
         self.assertEqual(node.device_class, "DiskDrive")
 
+    def test_volume_node_name_does_not_win(self):
+        # Ventoy fleshka: Volume tuguni ("Том") ro'yxatda DiskDrive'dan oldin.
+        nodes = [
+            DevNode(r"STORAGE\VOLUME\_??_USBSTOR#DISK", "Volume", "Том", FLASH),
+            DevNode(r"USBSTOR\DISK&VEN_VENTOY\X", "DiskDrive", "Ventoy USB Device", FLASH),
+        ]
+        self.assertEqual(pp.classify(nodes)[1].name, "Ventoy USB Device")
+
     def test_webcam_with_microphone_is_camera(self):
         nodes = [
             DevNode(r"USB\VID_046D&PID_0825\X", "USB", "USB Composite Device", WEBCAM),
