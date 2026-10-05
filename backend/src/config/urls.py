@@ -8,16 +8,16 @@ from drf_spectacular.views import (
     SpectacularSwaggerView,
 )
 
-urlpatterns = [
-    re_path(r'^static/(?P<path>.*)$', serve, {'document_root': settings.STATIC_ROOT}),
-    re_path(r'^media/(?P<path>.*)$', serve, {'document_root': settings.MEDIA_ROOT}),
-]
+# urlpatterns = [
+#     re_path(r'^static/(?P<path>.*)$', serve, {'document_root': settings.STATIC_ROOT}),
+#     re_path(r'^media/(?P<path>.*)$', serve, {'document_root': settings.MEDIA_ROOT}),
+# ]
 
 from apps.common.views import HealthView, ReadinessView
 
 admin_url = getattr(settings, "ADMIN_URL", "admin/")
 
-urlpatterns += [
+urlpatterns = [
     path(admin_url, admin.site.urls),
 
     # Infratuzilma probe'lari (load balancer / k8s)
