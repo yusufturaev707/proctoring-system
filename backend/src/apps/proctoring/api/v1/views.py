@@ -5,7 +5,7 @@ import logging
 from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema
-from rest_framework import status, viewsets
+from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -20,6 +20,7 @@ from apps.common.pagination import (
     SessionCursorPagination,
 )
 from apps.common.permissions import (
+    HasPanelAccess,
     HasRegionAssignment,
     HasRolePermission,
     RegionScopedPermission,
@@ -64,6 +65,11 @@ class ExamSessionViewSet(PermissionRequiredMixin, viewsets.ReadOnlyModelViewSet)
     permission_classes = [IsAuthenticated, HasRolePermission, RegionScopedPermission]
     required_permission = "sessions.terminate"
     required_read_permission = "sessions.view"
+    # Ogohlantirish va chetlashtirish — IKKI alohida qaror: Proktor
+    # matritsasida ikkalasi bor, lekin faqat ogohlantira oladigan rol
+    # (masalan navbatchi kuzatuvchi) `sessions.terminate` siz ham
+    # ishlashi kerak.
+    action_permissions = {"warn": "sessions.warn", "terminate": "sessions.terminate"}
     pagination_class = SessionCursorPagination
 
     filterset_fields = [
@@ -244,9 +250,6 @@ class ExamSessionViewSet(PermissionRequiredMixin, viewsets.ReadOnlyModelViewSet)
     @action(detail=True, methods=["post"])
     def warn(self, request, pk=None):
         """Talabgor ekranida ogohlantirish ko'rsatadi (WebSocket orqali)."""
-        if not request.user.has_role_permission("sessions.warn"):
-            return Response({"detail": "Ruxsat yo'q"}, status=status.HTTP_403_FORBIDDEN)
-
         session = self.get_object()
         serializer = SessionWarnSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -411,7 +414,7 @@ class _DashboardView(APIView):
     xodimga (masalan Operator'ga) viloyat bo'yicha sonlarni berardi.
     """
 
-    permission_classes = [IsAuthenticated, HasRegionAssignment, HasRolePermission]
+    permission_classes = [IsAuthenticated, HasPanelAccess, HasRegionAssignment, HasRolePermission]
     required_permission = "dashboard.view"
 
     @staticmethod
@@ -513,7 +516,7 @@ class FaceLogFileView(APIView):
     Har bir ochish AUDIT izida qoladi.
     """
 
-    permission_classes = [IsAuthenticated, HasRegionAssignment, HasRolePermission]
+    permission_classes = [IsAuthenticated, HasPanelAccess, HasRegionAssignment, HasRolePermission]
     required_permission = "evidence.view"
 
     @extend_schema(responses={200: OpenApiTypes.BINARY})
@@ -574,7 +577,7 @@ class EvidenceFileView(APIView):
     kirish faktining o'zi tekshirilishi kerak bo'lgan harakat.
     """
 
-    permission_classes = [IsAuthenticated, HasRegionAssignment, HasRolePermission]
+    permission_classes = [IsAuthenticated, HasPanelAccess, HasRegionAssignment, HasRolePermission]
     required_permission = "evidence.view"
 
     @extend_schema(responses={200: OpenApiTypes.BINARY})
@@ -626,7 +629,7 @@ class ScreenshotFileView(APIView):
     URL brauzer tarixida, `Referer` da va nginx access log'ida qoladi.
     """
 
-    permission_classes = [IsAuthenticated, HasRegionAssignment, HasRolePermission]
+    permission_classes = [IsAuthenticated, HasPanelAccess, HasRegionAssignment, HasRolePermission]
     required_permission = "sessions.view"
 
     @extend_schema(responses={200: OpenApiTypes.BINARY})

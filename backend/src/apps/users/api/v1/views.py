@@ -9,6 +9,7 @@ from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenRefreshView
 
+from apps.common.exceptions import DomainError
 from apps.common.mixins import AuditLogMixin, PermissionRequiredMixin
 from apps.common.permissions import HasRolePermission
 from apps.common.throttling import StaffLoginDeviceThrottle, StaffLoginThrottle, client_ip
@@ -124,9 +125,15 @@ class UserViewSet(PermissionRequiredMixin, AuditLogMixin, viewsets.ModelViewSet)
         # Viloyatga biriktirilgan admin faqat o'z viloyatidagilarni ko'radi.
         if user.is_region_scoped:
             queryset = queryset.filter(region_id=user.region_id)
-        if self.action == "retrieve":
-            queryset = queryset.prefetch_related("role__permissions")
-        return queryset
+        # Ro'yxatda ham: `surfaces` ustuni har qatorda rol ruxsatlarini
+        # o'qiydi — prefetch'siz har qatorga alohida so'rov ketardi.
+        return queryset.prefetch_related("role__permissions")
+
+    def perform_destroy(self, instance):
+        # O'zini o'chirish — qaytarib bo'lmaydigan qulflanish.
+        if instance.pk == self.request.user.pk:
+            raise DomainError("O'z hisobingizni o'chira olmaysiz", code="self_delete")
+        super().perform_destroy(instance)
 
     @extend_schema(request=SetPasswordSerializer, responses={200: None})
     @action(detail=True, methods=["post"], url_path="set-password")
@@ -179,10 +186,30 @@ class RoleViewSet(PermissionRequiredMixin, AuditLogMixin, viewsets.ModelViewSet)
     filterset_fields = ["is_active", "is_global"]
     search_fields = ["name"]
 
+    def perform_destroy(self, instance):
+        # `User.role` — PROTECT: tekshiruvsiz `ProtectedError` 500 bo'lib
+        # chiqardi. Xodimlari bor rolni o'chirish ularni "rolsiz" (login
+        # qila olmaydigan) qilib qo'yardi — avval boshqa rol berilsin.
+        count = instance.users.count()
+        if count:
+            raise DomainError(
+                f"Bu rolda {count} ta xodim bor — avval ularga boshqa rol bering",
+                code="role_in_use",
+            )
+        super().perform_destroy(instance)
 
-class PermissionViewSet(viewsets.ReadOnlyModelViewSet):
+
+class PermissionViewSet(PermissionRequiredMixin, viewsets.ReadOnlyModelViewSet):
+    """
+    Ruxsatlar katalogi — rol muharriri uchun, BARCHASI (sahifalanmaydi).
+
+    Ilgari faqat `IsAuthenticated` edi: client rolidagi token ham butun
+    katalogni o'qirdi. Endi rollar sahifasi bilan bir xil ruxsat.
+    """
+
     queryset = Permission.objects.all()
     serializer_class = PermissionSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasRolePermission]
+    required_permission = "users.view"
     filterset_fields = ["group"]
     pagination_class = None

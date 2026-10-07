@@ -177,10 +177,13 @@ class MonitorConsumer(AsyncJsonWebsocketConsumer):
             "region_id": user.region_id if user.is_region_scoped else None,
             "is_superuser": user.is_superuser,
             "permissions": user.permission_codes(),
+            # Panel yuzasi — HTTP bilan bir xil qoida (`HasPanelAccess`):
+            # client rolidagi token jonli kuzatuvga ham ulanmaydi.
+            "has_panel_access": user.has_panel_access,
         }
 
     async def _has_permission(self) -> bool:
-        if self.user.get("lacks_region"):
+        if self.user.get("lacks_region") or not self.user.get("has_panel_access"):
             return False
         permissions = self.user.get("permissions", [])
         return (

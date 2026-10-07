@@ -3,16 +3,24 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from apps.common.exceptions import DomainError
-from apps.common.permissions import HasRegionAssignment, HasRolePermission, RepublicLevelWrite
+from apps.common.permissions import (
+    HasPanelAccess,
+    HasRegionAssignment,
+    HasRolePermission,
+    RepublicLevelWrite,
+)
 
 
 class PermissionRequiredMixin:
     """
-    Admin yuzasi: `required_permission` + viloyat biriktiruvi.
+    Admin yuzasi: panel kirishi + `required_permission` + viloyat biriktiruvi.
 
-    `HasRegionAssignment` HAR DOIM qo'shiladi — bu mixin faqat admin
-    panel viewset'larida ishlatiladi va viloyati yo'q viloyat xodimi
-    ulardan birortasini ham ochmasligi kerak.
+    `HasPanelAccess` va `HasRegionAssignment` HAR DOIM qo'shiladi — bu
+    mixin faqat admin panel viewset'larida ishlatiladi: client rolidagi
+    (Operator) token ham, viloyati yo'q viloyat xodimi ham ulardan
+    birortasini ochmasligi kerak. `HasPanelAccess` BIRINCHI turadi —
+    Operator "ruxsat yo'q" emas, "rolingiz panel uchun emas" degan
+    aniq sababni olsin.
     """
 
     required_permission: str | None = None
@@ -22,6 +30,7 @@ class PermissionRequiredMixin:
 
     def get_permissions(self):
         permissions = super().get_permissions()
+        permissions.insert(0, HasPanelAccess())
         permissions.append(HasRegionAssignment())
         if self.required_permission:
             permissions.append(HasRolePermission())

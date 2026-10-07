@@ -54,6 +54,15 @@ def upsert_face_profile(
 
 DEFAULT_PERMISSIONS: list[tuple[str, str, str]] = [
     # (code, name, group)
+    #
+    # To'liq huquq (`models.FULL_ACCESS_CODE`) — Administrator roli. Bitta
+    # katak barcha guruhlarni, shu jumladan keyingi relizlarda qo'shiladigan
+    # ruxsatlarni ham beradi.
+    ("*", "To'liq huquq — barcha amallar", "system"),
+    # Panel yuzasi (`models.PANEL_ACCESS_CODE`). Usiz qolgan ruxsatlar
+    # panelda ishlamaydi — Operator kabi faqat client'da ishlaydigan rollar
+    # uchun ataylab alohida.
+    ("panel.access", "Admin panelga kirish", "panel"),
     ("dashboard.view", "Dashboard ko'rish", "dashboard"),
     ("sessions.view", "Sessiyalarni ko'rish", "sessions"),
     ("sessions.warn", "Ogohlantirish yuborish", "sessions"),
@@ -119,14 +128,21 @@ DEFAULT_PERMISSIONS: list[tuple[str, str, str]] = [
 ]
 
 
-def sync_default_permissions() -> int:
-    """`manage.py seed_permissions` uchun."""
+def sync_default_permissions() -> list[str]:
+    """
+    Ruxsatlar katalogini bazaga yozadi; YANGI yaratilgan kodlarni qaytaradi.
+
+    Yangilari `seed_base_data` ga kerak: yangi ruxsat mavjud rollarga
+    matritsa bo'yicha BIR MARTA tarqatiladi, administrator qo'lda
+    o'zgartirgan ruxsatlarga esa tegilmaydi.
+    """
     from apps.users.models import Permission
 
-    created = 0
+    created: list[str] = []
     for code, name, group in DEFAULT_PERMISSIONS:
         _, was_created = Permission.objects.update_or_create(
             code=code, defaults={"name": name, "group": group}
         )
-        created += int(was_created)
+        if was_created:
+            created.append(code)
     return created

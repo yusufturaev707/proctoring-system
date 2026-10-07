@@ -36,6 +36,22 @@ class DomainError(APIException):
         self.extra = extra
 
 
+class PanelAccessDenied(DomainError):
+    """
+    Panelga login: parol to'g'ri, lekin rolda `panel.access` yo'q.
+
+    403, 400 emas: hisob haqiqiy, yuza noto'g'ri. Panel bu kod bo'yicha
+    "bu hisob desktop client uchun" degan aniq ekran ko'rsatadi.
+    """
+
+    status_code = status.HTTP_403_FORBIDDEN
+    default_detail = (
+        "Bu hisob admin panel uchun emas: rolingiz faqat desktop client "
+        "dasturida ishlaydi. Panelga kirish kerak bo'lsa, administratorga murojaat qiling."
+    )
+    default_code = "panel_access_denied"
+
+
 class CameraStreamUnavailable(DomainError):
     """Kamera oqimidan kadr olib bo'lmadi (paneldagi jonli ko'rish)."""
 

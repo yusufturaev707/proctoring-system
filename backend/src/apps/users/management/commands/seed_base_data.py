@@ -7,15 +7,22 @@ Boshlang'ich ma'lumotlarni yaratadi.
 
 from django.core.management.base import BaseCommand
 from django.db import transaction
+from django.db.models import Max
 
 from apps.users import services
-from apps.users.models import Permission, Role
+from apps.users.models import PANEL_ACCESS_CODE, Permission, Role
 
 #: Rol -> (kalit, respublika bo'yichami, ruxsat kodlari).
 #:
 #: `is_global=True` - hudud filtri qo'llanmaydi (`User.is_region_scoped`).
 #: Bu ilgari `is_superuser` bayrog'i orqali hal qilinardi; endi qaror
 #: rolda, ya'ni "kim nima ko'radi" savoliga javob bitta jadvalda.
+#:
+#: MATRITSA — BOSHLANG'ICH QIYMAT, qonun emas. U rol YARATILGANDA va
+#: yangi ruxsat paydo bo'lganda (bir marta) qo'llanadi. Ilgari har
+#: `deploy.sh` (u shu buyruqni chaqiradi) barcha rollarni matritsaga
+#: qaytarardi: administrator panelda Proktorga bergan ruxsat keyingi
+#: relizda jimgina yo'qolardi. To'liq qaytarish — `--reset-roles`.
 ROLE_MATRIX: dict[str, tuple[int, bool, list[str]]] = {
     # Respublika administratori — yagona to'liq huquqli rol.
     #
@@ -28,7 +35,7 @@ ROLE_MATRIX: dict[str, tuple[int, bool, list[str]]] = {
         2,
         False,
         [
-            "dashboard.view", "sessions.view", "sessions.warn", "sessions.terminate",
+            "panel.access", "dashboard.view", "sessions.view", "sessions.warn", "sessions.terminate",
             "technical.view", "technical.resolve", "devices.view",
             # Dalilni ko'rish AYNAN proktorga kerak: chetlashtirish
             # qarorini u chiqaradi va uni asoslash uchun videoni
@@ -43,23 +50,32 @@ ROLE_MATRIX: dict[str, tuple[int, bool, list[str]]] = {
     "Monitoring": (
         3,
         False,
-        ["dashboard.view", "sessions.view", "technical.view", "devices.view", "bookings.view"],
+        [
+            "panel.access", "dashboard.view", "sessions.view", "technical.view",
+            "devices.view", "bookings.view",
+        ],
     ),
-    "Kuzatuvchi": (4, False, ["dashboard.view", "sessions.view"]),
+    "Kuzatuvchi": (4, False, ["panel.access", "dashboard.view", "sessions.view"]),
     # Imtihon markazidagi ish o'rni: talabgorni qabul qiladi va uning
     # shaxsini hujjat bo'yicha tasdiqlaydi. Chetlashtirish huquqi YO'Q —
     # u proktorning ishi.
-    "Operator": (
-        5,
-        False,
-        [
-            "client.operate", "client.identity", "client.exit",
-            "sessions.view", "technical.view",
-            # Operator talabgorni stolga YO'NALTIRADI va buning uchun
-            # bron ro'yxatini ko'rishi kerak.
-            "bookings.view",
-        ],
-    ),
+    #
+    # FAQAT DESKTOP CLIENT: `panel.access` yo'q va panel ruxsatlari
+    # (`sessions.view`, `bookings.view`...) ham yo'q. Ilgari ular bor edi,
+    # lekin client ularning birortasini ishlatmaydi (`ClientBaseView` —
+    # faqat `client.*`): stol tekshiruvi serverda, JSHSHIR so'rovida
+    # bajariladi. Ular faqat Operatorga panelni ochib qo'yardi.
+    "Operator": (5, False, ["client.operate", "client.identity", "client.exit"]),
+}
+
+#: Rol izohi — foydalanuvchi formasidagi rol plitkasida ko'rinadi. Faqat
+#: BO'SH izohga yoziladi: administrator o'zgartirgan matn bosilmaydi.
+ROLE_DESCRIPTIONS = {
+    "Administrator": "Respublika administratori: barcha bo'limlar va sozlamalar",
+    "Proktor": "Imtihonni kuzatadi: ogohlantiradi, chetlashtiradi, dalillarni ko'radi",
+    "Monitoring": "Holatni kuzatadi: sessiyalar, texnik muammolar, qurilmalar (o'zgartirmaydi)",
+    "Kuzatuvchi": "Faqat ko'rish: boshqaruv paneli va sessiyalar",
+    "Operator": "Imtihon markazidagi ish o'rni — faqat desktop client, admin panelga kirmaydi",
 }
 
 
@@ -68,29 +84,22 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument("--demo", action="store_true", help="Demo hudud/qurilmalarni ham yaratadi")
+        parser.add_argument(
+            "--reset-roles",
+            action="store_true",
+            help="Standart rollarning ruxsatlarini matritsaga QAYTARADI (paneldagi o'zgarishlar yo'qoladi)",
+        )
 
     @transaction.atomic
     def handle(self, *args, **options):
         created = services.sync_default_permissions()
-        self.stdout.write(self.style.SUCCESS(f"Ruxsatlar: {created} ta yangi"))
+        self.stdout.write(self.style.SUCCESS(f"Ruxsatlar: {len(created)} ta yangi"))
 
         for name, (key, is_global, codes) in ROLE_MATRIX.items():
-            # Qidiruv NOM bo'yicha: kalitlar shu relizda qayta
-            # raqamlangan (Superadmin olib tashlandi), shuning uchun
-            # `key` bo'yicha qidirish mavjud rolni boshqasining ustiga
-            # yozib yuborardi.
-            role, _ = Role.objects.update_or_create(
-                name=name,
-                defaults={"key": key, "is_global": is_global, "is_active": True},
-            )
-            if codes == ["*"]:
-                role.permissions.set(Permission.objects.all())
-            else:
-                role.permissions.set(Permission.objects.filter(code__in=codes))
-            scope = "respublika" if is_global else "viloyat"
-            self.stdout.write(
-                f"  Rol: {name} ({role.permissions.count()} ruxsat, {scope})"
-            )
+            self._seed_role(name, key, is_global, codes, created, options["reset_roles"])
+
+        if PANEL_ACCESS_CODE in created:
+            self._backfill_panel_access()
 
         self._seed_controls()
 
@@ -98,6 +107,76 @@ class Command(BaseCommand):
             self._seed_demo()
 
         self.stdout.write(self.style.SUCCESS("Tayyor."))
+
+    def _seed_role(self, name, key, is_global, codes, created, reset):
+        """
+        Bitta standart rol.
+
+        Qidiruv NOM bo'yicha: kalitlar bir relizda qayta raqamlangan
+        (Superadmin olib tashlandi), `key` bo'yicha qidirish mavjud
+        rolni boshqasining ustiga yozib yuborardi.
+        """
+        def matrix():
+            if codes == ["*"]:
+                return Permission.objects.all()
+            return Permission.objects.filter(code__in=codes)
+
+        role = Role.objects.filter(name=name).first()
+        scope = "respublika" if is_global else "viloyat"
+        description = ROLE_DESCRIPTIONS.get(name, "")
+        if role is None:
+            role = Role.objects.create(
+                name=name, key=self._free_key(key), is_global=is_global, is_active=True,
+                description=description,
+            )
+            role.permissions.set(matrix())
+            state = "yaratildi"
+        elif reset:
+            role.is_global, role.is_active = is_global, True
+            role.save(update_fields=["is_global", "is_active", "updated_at"])
+            role.permissions.set(matrix())
+            state = "matritsaga qaytarildi"
+        else:
+            # Faqat shu ishga tushishda PAYDO BO'LGAN ruxsatlar — matritsa
+            # bo'yicha. Qolganiga (administrator qarori) tegilmaydi.
+            fresh = [code for code in created if codes == ["*"] or code in codes]
+            if fresh:
+                role.permissions.add(*Permission.objects.filter(code__in=fresh))
+            state = f"o'zgarmadi, +{len(fresh)} yangi ruxsat" if fresh else "o'zgarmadi"
+            if description and not role.description:
+                role.description = description
+                role.save(update_fields=["description", "updated_at"])
+        self.stdout.write(f"  Rol: {name} ({role.permissions.count()} ruxsat, {scope}) — {state}")
+
+    @staticmethod
+    def _free_key(preferred: int) -> int:
+        """`Role.key` unikal: panelda yaratilgan rol shu kalitni olgan bo'lishi mumkin."""
+        if not Role.objects.filter(key=preferred).exists():
+            return preferred
+        return (Role.objects.aggregate(top=Max("key"))["top"] or 0) + 1
+
+    def _backfill_panel_access(self):
+        """
+        `panel.access` paydo bo'lgan relizda — BIR MARTA.
+
+        Undan oldin panel ruxsat kodlari bilan ochilardi. Yangi to'siq
+        mavjud rollarni (panelda yaratilganlarini ham, masalan bron
+        tizimining JWT hisobi) jimgina o'chirib qo'ymasligi kerak: panel
+        ruxsati bor har rol kirishni SAQLAYDI. Istisno — `client.operate`
+        li rollar: ular client ish o'rni (Operator), panelga kirishi
+        to'xtatiladi. Kimga berilgani log'da ko'rinadi.
+        """
+        permission = Permission.objects.get(code=PANEL_ACCESS_CODE)
+        for role in Role.objects.prefetch_related("permissions"):
+            codes = {item.code for item in role.permissions.all()}
+            if PANEL_ACCESS_CODE in codes:
+                continue
+            panel_codes = {code for code in codes if not code.startswith("client.")}
+            if "client.operate" in codes or not panel_codes:
+                self.stdout.write(f"  Panel kirishi: {role.name} — YO'Q (client roli)")
+                continue
+            role.permissions.add(permission)
+            self.stdout.write(f"  Panel kirishi: {role.name} — berildi")
 
     def _seed_controls(self):
         from apps.controls.models import CocoObject, HotKeyboardKey, RdpObject, Setting

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import {
-  Alert, Box, Button, Card, CardContent, CircularProgress, InputAdornment,
+  Alert, AlertTitle, Box, Button, Card, CardContent, CircularProgress, InputAdornment,
   IconButton, Stack, TextField, Typography,
 } from '@mui/material'
 import ShieldIcon from '@mui/icons-material/GppGoodOutlined'
@@ -17,6 +17,9 @@ export default function Login() {
   const [form, setForm] = useState({ username: '', password: '' })
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
+  // `panel_access_denied` — parol to'g'ri, lekin hisob faqat client uchun.
+  // Oddiy qizil xato emas: foydalanuvchi xato qilmagan, u boshqa dasturda ishlaydi.
+  const [clientOnly, setClientOnly] = useState(false)
   const [submitting, setSubmitting] = useState(false)
 
   if (authLoading) {
@@ -31,11 +34,13 @@ export default function Login() {
   const handleSubmit = async (event) => {
     event.preventDefault()
     setError('')
+    setClientOnly(false)
     setSubmitting(true)
     try {
       await login(form)
       navigate('/', { replace: true })
     } catch (err) {
+      setClientOnly(err.response?.data?.error?.code === 'panel_access_denied')
       setError(err.userMessage || 'Kirishda xatolik')
     } finally {
       setSubmitting(false)
@@ -76,7 +81,12 @@ export default function Login() {
 
           <form onSubmit={handleSubmit}>
             <Stack spacing={2.5}>
-              {error && <Alert severity="error">{error}</Alert>}
+              {error && (
+                <Alert severity={clientOnly ? 'info' : 'error'} sx={{ borderRadius: '16px' }}>
+                  {clientOnly && <AlertTitle>Bu hisob desktop client uchun</AlertTitle>}
+                  {error}
+                </Alert>
+              )}
 
               <TextField
                 label="Login"

@@ -21,7 +21,9 @@ export function AuthProvider({ children }) {
   }, [])
 
   const login = useCallback(async (credentials) => {
-    const data = await auth.login(credentials)
+    // `surface: 'panel'` — server client rollariga (Operator) panel
+    // tokenini bermaydi va aniq sabab qaytaradi (`panel_access_denied`).
+    const data = await auth.login({ ...credentials, surface: 'panel' })
     tokens.set(data.access, data.refresh)
     setUser(data.user)
     return data.user
@@ -43,15 +45,20 @@ export function AuthProvider({ children }) {
    *
    * DIQQAT: bu faqat UI'ni yashirish uchun. Haqiqiy himoya backendda.
    */
+  // Eski token (masalan Operator client'dagi hisobi bilan) — server
+  // panelda hech narsa bermaydi (`HasPanelAccess`), UI ham hech narsa
+  // ko'rsatmaydi. Maydon yo'q bo'lsa (eski backend) — ochiq deb olinadi.
+  const hasPanelAccess = Boolean(user) && user.has_panel_access !== false
+
   const can = useCallback(
     (code) => {
-      if (!user) return false
+      if (!user || !hasPanelAccess) return false
       if (user.is_superuser) return true
       const list = user.permissions || []
       if (list.includes('*') || list.includes(code)) return true
       return list.includes(`${code.split('.')[0]}.*`)
     },
-    [user],
+    [user, hasPanelAccess],
   )
 
   /**
@@ -77,9 +84,10 @@ export function AuthProvider({ children }) {
       // Viloyat darajasidagi rol, lekin viloyat biriktirilmagan — server
       // bunday xodimga admin panelda hech narsa bermaydi.
       lacksRegion: Boolean(user?.lacks_region),
+      hasPanelAccess,
       isAuthenticated: Boolean(user),
     }),
-    [user, loading, login, logout, can, canShared],
+    [user, loading, login, logout, can, canShared, hasPanelAccess],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

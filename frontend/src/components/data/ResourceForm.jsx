@@ -46,8 +46,19 @@ export default function ResourceForm({
    * `fields` bo'yicha yuradi, shuning uchun bu kalitlar serverga ketmaydi.
    */
   context = {},
+  /** Sarlavhadagi tonal belgi (MD3 "leading icon"). */
+  icon,
+  /**
+   * MD3 bo'limlar: `{ [section]: { icon, description } }`. Berilsa har
+   * bo'lim alohida karta (sarlavha belgisi + izoh), mantiqiy maydonlar
+   * esa "switch qatori" bo'lib chiziladi. Berilmasa — eski ko'rinish,
+   * ya'ni boshqa sahifalarning formalari o'zgarmaydi.
+   */
+  sections: sectionMeta,
 }) {
   const isEdit = Boolean(row?.id)
+  const m3 = Boolean(sectionMeta)
+  const resolvedTitle = typeof title === 'function' ? title(isEdit, row) : title
   const theme = useTheme()
   const fullScreen = useMediaQuery(theme.breakpoints.down('sm'))
   const fieldNames = useMemo(() => fields.map((field) => field.name), [fields])
@@ -183,6 +194,10 @@ export default function ResourceForm({
         // qatorga tushib qolardi.
         fullScreen={fullScreen}
         keepMounted={false}
+        // MD3: dialog sirti "low", bo'lim kartalari undan ochroq — kartalar
+        // fon ustida "ko'tarilgan" bo'lib o'qiladi (`ComputerDetailDialog`
+        // bilan bir xil yechim).
+        PaperProps={m3 ? { sx: { bgcolor: 'm3.surfaceContainerLow' } } : undefined}
       >
         {/* Forma paper'ning FLEX bolasi: sarlavha va tugmalar joyida qoladi,
             faqat maydonlar suriladi. Ilgari butun oyna surilardi va uzun
@@ -193,13 +208,30 @@ export default function ResourceForm({
           noValidate
           sx={{ display: 'flex', flexDirection: 'column', minHeight: 0, flex: '1 1 auto' }}
         >
-          <DialogTitle sx={{ pr: 6 }}>
-            {title || (isEdit ? 'Tahrirlash' : 'Yangi yozuv')}
-            {description && (
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                {description}
-              </Typography>
-            )}
+          <DialogTitle component="div" sx={{ pr: 7, ...(m3 ? { pt: 3, pb: 2 } : {}) }}>
+            <Stack direction="row" spacing={2} alignItems="center">
+              {icon && (
+                <Box
+                  sx={{
+                    width: 48, height: 48, borderRadius: '16px', flexShrink: 0,
+                    display: 'grid', placeItems: 'center',
+                    bgcolor: 'm3.primaryContainer', color: 'm3.onPrimaryContainer',
+                  }}
+                >
+                  {icon}
+                </Box>
+              )}
+              <Box sx={{ minWidth: 0 }}>
+                <Typography component="h2" sx={{ font: 'inherit' }}>
+                  {resolvedTitle || (isEdit ? 'Tahrirlash' : 'Yangi yozuv')}
+                </Typography>
+                {description && (
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+                    {description}
+                  </Typography>
+                )}
+              </Box>
+            </Stack>
             <IconButton
               onClick={requestClose}
               sx={{ position: 'absolute', right: 12, top: 12 }}
@@ -209,7 +241,7 @@ export default function ResourceForm({
             </IconButton>
           </DialogTitle>
 
-          <DialogContent dividers>
+          <DialogContent dividers={!m3} sx={m3 ? { px: { xs: 2, sm: 3 }, pt: '4px !important' } : undefined}>
             {generalErrors.length > 0 && (
               <Alert severity="error" sx={{ mb: 2.5 }}>
                 <AlertTitle>Saqlab bo‘lmadi</AlertTitle>
@@ -219,7 +251,33 @@ export default function ResourceForm({
               </Alert>
             )}
 
-            {sections.map(({ section, items }, sectionIndex) => (
+            {m3 && sections.map(({ section, items }, sectionIndex) => (
+              <SectionCard key={section || sectionIndex} title={section} meta={sectionMeta[section]}>
+                <Grid container spacing={{ xs: 2, sm: 2.5 }}>
+                  {items.map((field) => (
+                    <Grid item xs={12} sm={field.colSpan || 12} key={field.name}>
+                      <FieldControl
+                        field={field}
+                        form={form}
+                        value={form[field.name]}
+                        error={touched[field.name] ? errors[field.name] : undefined}
+                        disabled={submitting || field.disabled?.(form, isEdit)}
+                        revealed={revealed[field.name]}
+                        onReveal={() =>
+                          setRevealed((prev) => ({ ...prev, [field.name]: !prev[field.name] }))
+                        }
+                        onChange={(value) => setValue(field, value)}
+                        onBlur={() => handleBlur(field)}
+                        isEdit={isEdit}
+                        m3
+                      />
+                    </Grid>
+                  ))}
+                </Grid>
+              </SectionCard>
+            ))}
+
+            {!m3 && sections.map(({ section, items }, sectionIndex) => (
               <Box key={section || sectionIndex} sx={{ mb: sectionIndex < sections.length - 1 ? 3 : 0 }}>
                 {section && (
                   <>
@@ -251,7 +309,12 @@ export default function ResourceForm({
             ))}
           </DialogContent>
 
-          <DialogActions sx={{ px: { xs: 2, sm: 3 }, py: 2, pb: { xs: 'calc(16px + env(safe-area-inset-bottom))', sm: 2 } }}>
+          <DialogActions
+            sx={{
+              px: { xs: 2, sm: 3 }, py: 2, pb: { xs: 'calc(16px + env(safe-area-inset-bottom))', sm: 2 },
+              ...(m3 ? { bgcolor: 'm3.surfaceContainer', borderTop: 1, borderColor: 'divider' } : {}),
+            }}
+          >
             {isDirty && (
               <Typography variant="caption" color="text.secondary" sx={{ mr: 'auto' }}>
                 Saqlanmagan o‘zgarishlar bor
@@ -289,13 +352,15 @@ export default function ResourceForm({
 }
 
 // --------------------------------------------------------------------------
-function FieldControl({ field, form, value, error, disabled, onChange, onBlur, isEdit, revealed, onReveal }) {
+function FieldControl({ field, form, value, error, disabled, onChange, onBlur, isEdit, revealed, onReveal, m3 }) {
   const id = `field-${field.name}`
   // `helperText` matn yoki funksiya bo'lishi mumkin — string'ni funksiya
   // sifatida chaqirish TypeError beradi, shuning uchun turini tekshiramiz.
+  // Ikkinchi argument — forma: izoh boshqa maydonga bog'liq bo'lishi
+  // mumkin ("respublika roli tanlangan — viloyat shart emas").
   const helper =
     error ||
-    (typeof field.helperText === 'function' ? field.helperText(isEdit) : field.helperText)
+    (typeof field.helperText === 'function' ? field.helperText(isEdit, form) : field.helperText)
 
   /**
    * O'ziga xos boshqaruv (masalan rol ruxsatlari matritsasi).
@@ -311,10 +376,45 @@ function FieldControl({ field, form, value, error, disabled, onChange, onBlur, i
         {field.label && (
           <Typography variant="subtitle2" sx={{ mb: 1 }}>{field.label}</Typography>
         )}
-        {field.render({ value, onChange, disabled, error })}
+        {field.render({ value, onChange, disabled, error, form, isEdit })}
         {helper && (
           <FormHelperText error={Boolean(error)} sx={{ ml: 0, mt: 1 }}>{helper}</FormHelperText>
         )}
+      </Box>
+    )
+  }
+
+  // MD3 "switch list item": sarlavha + izoh chapda, kalit o'ngda, butun
+  // qator bosiladi. Oddiy `FormControlLabel` da izoh kalit ostida osilib
+  // qolardi va ikki ustunli bo'limda qatorlar tekislanmasdi.
+  if (field.type === 'boolean' && m3) {
+    return (
+      <Box
+        component="label"
+        htmlFor={id}
+        sx={{
+          display: 'flex', alignItems: 'center', gap: 2, height: '100%',
+          px: 2, py: 1.5, borderRadius: '12px', cursor: disabled ? 'default' : 'pointer',
+          border: 1, borderColor: error ? 'error.main' : 'm3.outlineVariant',
+          bgcolor: value ? 'm3.secondaryContainer' : 'transparent',
+          transition: 'background-color 150ms',
+          opacity: disabled ? 0.6 : 1,
+        }}
+      >
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography variant="body2" fontWeight={600}>{field.label}</Typography>
+          {helper && (
+            <Typography variant="caption" color={error ? 'error' : 'text.secondary'} display="block" sx={{ mt: 0.25 }}>
+              {helper}
+            </Typography>
+          )}
+        </Box>
+        <Switch
+          id={id}
+          checked={Boolean(value)}
+          onChange={(event) => onChange(event.target.checked)}
+          disabled={disabled}
+        />
       </Box>
     )
   }
@@ -531,6 +631,43 @@ function FieldControl({ field, form, value, error, disabled, onChange, onBlur, i
 function emptyOptionsText(field, blockedBy) {
   if (blockedBy) return field.blockedText
   return field.emptyOptionsText || 'Variantlar yuklanmoqda…'
+}
+
+/**
+ * MD3 bo'lim kartasi: tonal belgi + sarlavha + izoh, ostida maydonlar.
+ * Karta dialog sirtidan ochroq (`background.paper`) — guruh chegarasini
+ * chiziq emas, sirt rangi beradi.
+ */
+function SectionCard({ title, meta = {}, children }) {
+  const Icon = meta.icon
+  return (
+    <Box sx={{ bgcolor: 'background.paper', borderRadius: '16px', p: { xs: 2, sm: 2.5 }, mb: 1.5 }}>
+      {title && (
+        <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 2 }}>
+          {Icon && (
+            <Box
+              sx={{
+                width: 36, height: 36, borderRadius: '50%', flexShrink: 0,
+                display: 'grid', placeItems: 'center',
+                bgcolor: 'm3.secondaryContainer', color: 'm3.onSecondaryContainer',
+              }}
+            >
+              <Icon fontSize="small" />
+            </Box>
+          )}
+          <Box sx={{ minWidth: 0 }}>
+            <Typography variant="subtitle1" sx={{ lineHeight: 1.3 }}>{title}</Typography>
+            {meta.description && (
+              <Typography variant="caption" color="text.secondary" display="block">
+                {meta.description}
+              </Typography>
+            )}
+          </Box>
+        </Stack>
+      )}
+      {children}
+    </Box>
+  )
 }
 
 function groupBySection(fields) {

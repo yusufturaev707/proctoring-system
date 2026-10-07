@@ -1508,7 +1508,21 @@ biznes-mantiq) / `api/v1/{serializers,views,urls}.py`. View'lar yupqa.
   (eski client).
 * Ruxsatlar — `HasRolePermission` (`required_permission = "sessions.view"`)
   + `RegionScopedPermission` (obyekt darajasida IDOR himoyasi; asosiy filtr
-  `get_queryset()` da).
+  `get_queryset()` da). Amalga xos ruxsat — `action_permissions`
+  (`{"warn": "sessions.warn"}`), POST amallar bitta `required_permission`
+  ga tushmasin.
+* **Panel yuzasi — `panel.access`** (`User.has_panel_access`): client va
+  panel BIR XIL JWT, shuning uchun panelning HAR endpointi `HasPanelAccess`
+  (`PermissionRequiredMixin` o'zi qo'shadi; mixin'siz panel view'iga qo'lda,
+  `MonitorConsumer` da ham). Panel login'i `surface: "panel"` yuboradi →
+  403 `panel_access_denied`; client `surface` yubormaydi. Operator — faqat
+  `client.*`. `*` — to'liq huquq (kelajakdagi ruxsatlar ham, `codes_grant`).
+  Rol muharriri: o'zida yo'q ruxsatni qo'shib bo'lmaydi, o'z rolidan
+  `panel.access`/`users.manage` ni olib bo'lmaydi (`RoleSerializer.validate`).
+* **`seed_base_data` (har deploy) rol ruxsatlarini BOSMAYDI**: matritsa faqat
+  yangi rolga va YANGI paydo bo'lgan ruxsatga; to'liq qaytarish —
+  `--reset-roles`. `panel.access` birinchi paydo bo'lganda panel ruxsatli
+  rollarga beriladi, `client.operate` lilarga — yo'q.
 * **Viloyat chegarasi — uch qatlam** (`apps/users/tests/test_region_access.py`):
   * **KIM**: `Role.is_global` yoki superuser — respublika; qolganlari —
     `User.region`. Viloyat roli + viloyat yo'q (`User.lacks_region`) —

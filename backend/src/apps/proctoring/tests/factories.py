@@ -142,7 +142,7 @@ def make_setting(**kwargs) -> Setting:
     return Setting.objects.create(**{"name": f"Profil-{index}", **kwargs})
 
 
-def make_user(*, permissions=None, global_role=None, **kwargs) -> User:
+def make_user(*, permissions=None, global_role=None, panel_access=None, **kwargs) -> User:
     """
     Berilgan ruxsat kodlari bilan xodim (rol avtomatik yaratiladi).
 
@@ -151,12 +151,21 @@ def make_user(*, permissions=None, global_role=None, **kwargs) -> User:
     `is_global` siz ham hamma narsani ko'rardi va testlar shunga
     tayangan; endi u admin panelda to'siladi (`User.lacks_region`),
     shuning uchun "hamma narsani ko'radigan xodim" rolda ochiq aytiladi.
+
+    `panel_access` berilmasa — panel ruxsati (`client.*` dan boshqa) bor
+    bo'lsa `panel.access` qo'shiladi: test "panel xodimi" ni nazarda
+    tutadi. Faqat-client roli kerak bo'lsa — `panel_access=False`.
     """
     index = _next()
     role = None
     if global_role is None:
         global_role = kwargs.get("region") is None
     if permissions is not None:
+        permissions = list(permissions)
+        if panel_access is None:
+            panel_access = any(not code.startswith("client.") for code in permissions)
+        if panel_access and "panel.access" not in permissions:
+            permissions.append("panel.access")
         role = Role.objects.create(name=f"Rol-{index}", key=index, is_global=global_role)
         objects = [
             Permission.objects.get_or_create(code=code, defaults={"name": code})[0]

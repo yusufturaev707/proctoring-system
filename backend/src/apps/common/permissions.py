@@ -10,6 +10,7 @@ sessiyalarni ko'rish" kerak. Shuning uchun `Role -> Permission(code)` va
 from rest_framework.permissions import SAFE_METHODS, BasePermission
 
 __all__ = [
+    "HasPanelAccess",
     "HasRegionAssignment",
     "HasRolePermission",
     "RegionScopedPermission",
@@ -39,6 +40,28 @@ class HasRegionAssignment(BasePermission):
         if not user or not user.is_authenticated:
             return True  # autentifikatsiyani boshqa klass hal qiladi
         return not user.lacks_region
+
+
+class HasPanelAccess(BasePermission):
+    """
+    Admin yuzasi: rolda `panel.access` bor (`User.has_panel_access`).
+
+    Desktop client va panel bitta JWT bilan ishlaydi, ya'ni client'da
+    login qilgan Operator tokeni panel API'siga ham yaroqli. Ruxsat
+    kodlari buni to'smaydi: eski bazalarda Operator rolida
+    `sessions.view` qolgan. Shuning uchun panelning HAR BIR endpointi
+    yuzaning o'zini alohida tekshiradi — `PermissionRequiredMixin`,
+    dashboard, fayl view'lari va `MonitorConsumer`.
+    """
+
+    message = "Rolingiz admin panel uchun emas — u faqat desktop client dasturida ishlaydi"
+    code = "panel_access_denied"
+
+    def has_permission(self, request, view):
+        user = request.user
+        if not user or not user.is_authenticated:
+            return True  # autentifikatsiyani boshqa klass hal qiladi
+        return user.has_panel_access
 
 
 class RepublicLevelWrite(BasePermission):
@@ -84,6 +107,12 @@ class HasRolePermission(BasePermission):
     """
     View'da `required_permission = "sessions.view"` ko'rsatiladi.
 
+    `action_permissions = {"warn": "sessions.warn"}` — amalga xos ruxsat
+    (`required_permission` / `required_read_permission` dan USTUN). Usiz
+    POST amallarning hammasi bitta `required_permission` ga tushardi:
+    `sessions.warn` berilgan, lekin chetlashtirish huquqi yo'q rol
+    ogohlantirish ham yubora olmasdi.
+
     Superuser barcha tekshiruvlardan o'tadi.
     """
 
@@ -95,6 +124,11 @@ class HasRolePermission(BasePermission):
             return False
         if user.is_superuser:
             return True
+
+        action_permissions = getattr(view, "action_permissions", None) or {}
+        action = getattr(view, "action", None)
+        if action in action_permissions:
+            return user.has_role_permission(action_permissions[action])
 
         required = getattr(view, "required_permission", None)
         if required is None:

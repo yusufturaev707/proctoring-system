@@ -72,6 +72,11 @@ export default function ResourcePage({
   formMaxWidth = 'sm',
   formDescription,
   formContext = {},
+  /** Forma sarlavhasi: matn yoki `(isEdit, row) => matn` (`ResourceForm.title`). */
+  formTitle,
+  /** MD3 forma: sarlavha belgisi va bo'lim kartalari (`ResourceForm.icon` / `sections`). */
+  formIcon,
+  formSections,
   canCreate = true,
   canDelete = true,
   /**
@@ -711,8 +716,11 @@ export default function ResourcePage({
         onSubmit={handleSubmit}
         onClose={() => setEditing(null)}
         maxWidth={formMaxWidth}
+        title={formTitle}
         description={formDescription}
         context={formContext}
+        icon={formIcon}
+        sections={formSections}
       />
 
       <ConfirmDialog

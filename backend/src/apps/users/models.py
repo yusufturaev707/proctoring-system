@@ -12,6 +12,37 @@ from django.utils.translation import gettext_lazy as _
 from apps.common.models import TimeStampedModel
 from apps.users.user_manager import UserManager
 
+#: To'liq huquq — hozirgi VA kelajakdagi barcha ruxsatlar.
+#:
+#: Administrator roli ilgari `Permission.objects.all()` bilan to'ldirilardi,
+#: ya'ni yangi ruxsat qo'shilgan relizdan keyin u `seed_base_data` qayta
+#: ishlaguncha o'sha amalni bajara olmasdi, panelda bitta katakchani
+#: tasodifan olib tashlash esa "administrator" ni jimgina cheklab qo'yardi.
+#: `*` — ochiq qaror: bitta katak, ma'nosi aniq.
+FULL_ACCESS_CODE = "*"
+
+#: Admin panelga (va uning API'siga) kirish.
+#:
+#: Ruxsat kodlarining o'zi "nima" degan savolga javob beradi, lekin "qaysi
+#: yuzada" degan savolga emas: desktop client va panel BIR XIL JWT bilan
+#: ishlaydi (`ClientBaseView`). Operator faqat client'da ishlaydi —
+#: unga `sessions.view` qolib ketsa ham (eski bazalarda bor) panel ochilmasligi
+#: kerak. Shu sababli panel kirishi ALOHIDA, ko'rinadigan ruxsat:
+#: administrator uni rol muharririda bitta katak bilan beradi yoki oladi.
+PANEL_ACCESS_CODE = "panel.access"
+
+
+def codes_grant(codes, code: str) -> bool:
+    """
+    Ruxsatlar to'plami `code` ni beradimi — `*` va `guruh.*` bilan.
+
+    Qoida BITTA joyda: `User.has_role_permission` va rol muharriridagi
+    o'z-o'zini qulflash tekshiruvi (`RoleSerializer`) shundan foydalanadi.
+    """
+    if FULL_ACCESS_CODE in codes or code in codes:
+        return True
+    return f"{code.split('.')[0]}.*" in codes
+
 
 class Permission(TimeStampedModel):
     """
@@ -148,7 +179,10 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
         if self.is_superuser:
             codes = ["*"]
         elif self.role_id and self.role.is_active:
-            codes = sorted(self.role.permissions.values_list("code", flat=True))
+            # `.all()` — `values_list` EMAS: ro'yxatda `prefetch_related(
+            # "role__permissions")` bo'lsa so'rov ketmaydi (foydalanuvchilar
+            # jadvalidagi `surfaces` ustuni har qatorda shu yerga keladi).
+            codes = sorted(item.code for item in self.role.permissions.all())
         else:
             codes = []
 
@@ -200,12 +234,18 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
     def has_role_permission(self, code: str) -> bool:
         if self.is_superuser:
             return True
-        codes = self.permission_codes()
-        if "*" in codes or code in codes:
-            return True
-        # `sessions.*` kabi wildcard qo'llab-quvvatlanadi.
-        prefix = code.split(".")[0]
-        return f"{prefix}.*" in codes
+        # `*` va `sessions.*` kabi wildcard qo'llab-quvvatlanadi.
+        return codes_grant(self.permission_codes(), code)
+
+    @property
+    def has_panel_access(self) -> bool:
+        """
+        Admin panelga kira oladimi (`PANEL_ACCESS_CODE`).
+
+        Login (`surface="panel"`) va panelning HAR BIR endpointi
+        (`common.permissions.HasPanelAccess`) shu qoidaga tayanadi.
+        """
+        return self.has_role_permission(PANEL_ACCESS_CODE)
 
     class Meta:
         verbose_name = _("Foydalanuvchi")

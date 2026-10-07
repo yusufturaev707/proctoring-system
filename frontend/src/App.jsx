@@ -6,6 +6,7 @@ import AppLayout from './layout/AppLayout'
 import Login from './pages/Login'
 import { NAVIGATION, ROUTE_LOADERS } from './layout/navigation'
 import { ForbiddenState, RegionMissingState } from './components/feedback/States'
+import NoPanelAccess from './components/feedback/NoPanelAccess'
 import { useAuth } from './context/AuthContext'
 
 // Sahifalar `ROUTE_LOADERS` dan olinadi — bir joyda saqlangani menyu
@@ -40,7 +41,7 @@ const AuditLogs = lazy(ROUTE_LOADERS['/audit'])
 const Profile = lazy(ROUTE_LOADERS['/profile'])
 
 function RequireAuth({ children }) {
-  const { isAuthenticated, loading } = useAuth()
+  const { isAuthenticated, hasPanelAccess, loading } = useAuth()
   if (loading) {
     return (
       <Box sx={{ display: 'grid', placeItems: 'center', minHeight: '100vh' }}>
@@ -48,7 +49,9 @@ function RequireAuth({ children }) {
       </Box>
     )
   }
-  return isAuthenticated ? children : <Navigate to="/login" replace />
+  if (!isAuthenticated) return <Navigate to="/login" replace />
+  // Client roli (Operator) — menyu ham, sahifalar ham chizilmaydi.
+  return hasPanelAccess ? children : <NoPanelAccess />
 }
 
 /**
