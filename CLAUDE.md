@@ -1651,6 +1651,11 @@ Yangi domen xatosi — `DomainError` merosxo'ri; `code` React'da tarjima kaliti.
 * **(tuzoq) `sx` dagi son `borderRadius` 12 ga ko'paytiriladi** — aniq qiymat
   uchun satr (`'12px'`), kapsula — `999`.
 * Shrift — `@fontsource-variable/inter`, paket ichida (CDN emas).
+* **Tafsilot kartasi** (qator bosilganda): `ResourcePage onRowClick` +
+  `components/data/DetailDialog.jsx` (qobiq, `StatTiles`, `InfoNote`) va
+  `DetailFields` (`Section`/`Field`). Muammo (nima uchun ishlamaydi)
+  karta TEPASIDA `problems` bilan. Ro'yxat qiymatlari — JSON matn emas,
+  `components/controls/ChipListInput.jsx`.
 * **Ommaviy amal — `ResourcePage bulkActions`** (+ `isRowSelectable`).
   Backend `common.mixins.BulkSelectionMixin`: `{"ids": [...]}` yoki
   `{"all": true}` + ro'yxat query parametrlari (`useResource.scopeParams`),
@@ -1756,6 +1761,13 @@ Yangi domen xatosi — `DomainError` merosxo'ri; `code` React'da tarjima kaliti.
 * **(client) Windows tizim binarlarining PE resursi `.mui` dan** —
   `OriginalFilename` `mstsc.exe.mui` bo'ladi (`process_identity._strip_mui`).
 * **(client) Imtihon sahifasida `MessageBar` emas, `Snackbar`.**
+* **Tezkor tugma lug'ati UCH joyda**: client `services/lockdown.py`
+  (manba), server `controls/hotkeys.py` (saqlashda tekshiradi, kanonik
+  shakl; testda client bilan solishtiriladi), panel `utils/hotkeys.js`.
+  Client tanimagan kodni BLOKLAMAYDI — yangi tugma nomi uchalasiga.
+  RDP qoidasi kamida bitta belgisiz saqlanmaydi (belgisiz qoida hech
+  narsani tutmaydi). Dastur/tugma faqat profilga (`Setting.rdp_objects`
+  / `hotkeys`) kirsa client'ga yetadi — API `profiles` maydoni.
 * **(frontend) Import qilinmagan komponent build'dan o'tadi**, faqat
   brauzerda `ReferenceError` beradi (ESLint yo'q, Vite `no-undef` ni
   tekshirmaydi). Yangi JSX'da aniqlanmagan identifikatorlarni tekshiring

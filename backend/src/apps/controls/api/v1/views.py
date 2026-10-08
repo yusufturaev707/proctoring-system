@@ -1,4 +1,4 @@
-from django.db.models import Q
+from django.db.models import Prefetch, Q
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import viewsets
 from rest_framework.decorators import action
@@ -15,10 +15,10 @@ from apps.controls.api.v1.serializers import (
     CocoObjectGroupSerializer,
     CocoObjectSerializer,
     EventRiskWeightSerializer,
-    HotKeyboardKeySerializer,
+    HotKeyboardKeyListSerializer,
     ModelVersionSerializer,
     ProctoringPolicySerializer,
-    RdpObjectSerializer,
+    RdpObjectListSerializer,
     SettingSerializer,
 )
 from apps.controls.models import (
@@ -229,9 +229,20 @@ class CocoObjectViewSet(ControlsBaseViewSet):
     ordering_fields = ["code", "name", "severity"]
 
 
+def _with_profiles(queryset):
+    """Profillar ro'yxati bitta qo'shimcha so'rovda (`_ProfilesMixin`)."""
+    return queryset.prefetch_related(
+        Prefetch(
+            "settings",
+            queryset=Setting.objects.alive().only("id", "name", "is_active").order_by("-is_active", "name"),
+            to_attr="alive_profiles",
+        )
+    )
+
+
 class RdpObjectViewSet(ControlsBaseViewSet):
-    queryset = RdpObject.objects.all()
-    serializer_class = RdpObjectSerializer
+    queryset = _with_profiles(RdpObject.objects.all())
+    serializer_class = RdpObjectListSerializer
     audit_object_type = "RdpObject"
     filterset_fields = ["is_active"]
     search_fields = ["name", "code"]
@@ -239,8 +250,8 @@ class RdpObjectViewSet(ControlsBaseViewSet):
 
 
 class HotKeyboardKeyViewSet(ControlsBaseViewSet):
-    queryset = HotKeyboardKey.objects.all()
-    serializer_class = HotKeyboardKeySerializer
+    queryset = _with_profiles(HotKeyboardKey.objects.all())
+    serializer_class = HotKeyboardKeyListSerializer
     audit_object_type = "HotKeyboardKey"
     filterset_fields = ["is_active"]
     search_fields = ["name", "code"]

@@ -162,11 +162,84 @@ class RdpObjectSerializer(serializers.ModelSerializer):
             "service_names", "ports", "is_blocking", "is_active",
         )
 
+    #: Client qoidani shu ro'yxatlar bo'yicha qidiradi
+    #: (`client/services/device_watch.py`) — hammasi bo'sh qoida HECH
+    #: NARSANI tutmaydi, panelda esa "taqiqlangan" bo'lib ko'rinardi.
+    SIGN_FIELDS = (
+        "publishers", "original_filenames", "products",
+        "service_names", "ports", "process_names",
+    )
+
+    def validate(self, attrs):
+        def current(name):
+            if name in attrs:
+                return attrs[name]
+            return getattr(self.instance, name, None) if self.instance else None
+
+        if not any(current(name) for name in self.SIGN_FIELDS):
+            raise serializers.ValidationError(
+                {"process_names": "Kamida bitta aniqlash belgisi kiriting — belgisiz yozuvni client topa olmaydi"}
+            )
+        return attrs
+
 
 class HotKeyboardKeySerializer(serializers.ModelSerializer):
     class Meta:
         model = HotKeyboardKey
         fields = ("id", "name", "code", "is_active")
+
+    def validate_code(self, value):
+        # Client tanimagan kod imtihonda JIMGINA bloklanmaydi
+        # (`controls/hotkeys.py`) — shuning uchun saqlashdan oldin.
+        from apps.controls.hotkeys import clean_hotkey
+
+        try:
+            canonical = clean_hotkey(value)
+        except ValueError as exc:
+            raise serializers.ValidationError(str(exc)) from exc
+        # Model `unique` tekshiruvi XOM qiymatga qaradi: `printscreen` va
+        # `print screen` bitta tugma — kanonik shakl bo'yicha qayta.
+        duplicate = HotKeyboardKey.objects.filter(code=canonical)
+        if self.instance is not None:
+            duplicate = duplicate.exclude(pk=self.instance.pk)
+        if duplicate.exists():
+            raise serializers.ValidationError("Bu kombinatsiya allaqachon ro'yxatda bor")
+        return canonical
+
+
+class _ProfilesMixin(serializers.Serializer):
+    """
+    Yozuv qaysi sozlama profillarida yoqilgan.
+
+    Dastur yoki tugma O'ZI hech narsa qilmaydi: client faqat imtihon
+    profiliga (`Setting.rdp_objects` / `hotkeys`) kirganlarini oladi
+    (`services._serialize`). Ilgari panel buni ko'rsatmasdi — yangi
+    yozuv qo'shilib, hech bir profilga kiritilmasa ham "ishlayapti"
+    deb o'ylanardi. Ro'yxat viewset'dagi `Prefetch(to_attr=...)` dan
+    (N+1 yo'q); faqat ro'yxat/tafsilot javobida — `SettingSerializer`
+    ichidagi nusxa (`*_detail`) bu maydonni olmaydi.
+    """
+
+    profiles = serializers.SerializerMethodField()
+
+    def get_profiles(self, obj):
+        profiles = getattr(obj, "alive_profiles", None)
+        if profiles is None:
+            profiles = obj.settings.alive().order_by("-is_active", "name")
+        return [
+            {"id": item.id, "name": item.name, "is_default": item.is_active}
+            for item in profiles
+        ]
+
+
+class RdpObjectListSerializer(_ProfilesMixin, RdpObjectSerializer):
+    class Meta(RdpObjectSerializer.Meta):
+        fields = (*RdpObjectSerializer.Meta.fields, "profiles", "created_at", "updated_at")
+
+
+class HotKeyboardKeyListSerializer(_ProfilesMixin, HotKeyboardKeySerializer):
+    class Meta(HotKeyboardKeySerializer.Meta):
+        fields = (*HotKeyboardKeySerializer.Meta.fields, "profiles", "created_at", "updated_at")
 
 
 class SettingSerializer(serializers.ModelSerializer):
