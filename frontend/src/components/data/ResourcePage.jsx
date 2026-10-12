@@ -71,6 +71,12 @@ export default function ResourcePage({
   /** Ro'yxatni o'zi yangilash oralig'i (ms) — `useResource` ga uzatiladi. */
   refetchInterval = false,
   height = 620,
+  /**
+   * Qator balandligi (`DataGrid getRowHeight`, piksel). Standart zich
+   * qator ikki qatorli katakka (yirik nom + manzil) sig'maydi. MODUL
+   * DOIMIYSI bering — inline funksiya jadvalni har renderda qayta chizadi.
+   */
+  getRowHeight,
   rowActions,
   // Amallar ustuni kengligi: bir nechta tugmali sahifalar uchun.
   actionsWidth = 170,
@@ -727,6 +733,7 @@ export default function ResourcePage({
           sortModel={resource.sortModel}
           onSortModelChange={resource.setSortModel}
           height={height}
+          getRowHeight={getRowHeight}
           toolbar={toolbar}
           {...(selectable
             ? {

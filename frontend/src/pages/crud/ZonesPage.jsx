@@ -14,6 +14,21 @@ import { useAuth } from '../../context/AuthContext'
 const cell = { height: '100%', display: 'flex', alignItems: 'center' }
 const rightCell = (params) => <Box sx={{ ...cell, justifyContent: 'flex-end' }}>{countCell(params)}</Box>
 
+// Bino nomi — jadvaldagi ASOSIY ma'lumot, operator binoni nomidan
+// izlaydi: u yirikroq va qalinroq. Rang aniq `text.primary` — tema
+// uni yorug' va tungi rejimda fonga nisbatan yuqori kontrastda beradi
+// (katak rangini meros qilish ba'zi temalarda xiraroq chiqardi).
+const NAME_SX = {
+  fontSize: '0.98rem',
+  fontWeight: 650,
+  letterSpacing: '-0.01em',
+  lineHeight: 1.3,
+  color: 'text.primary',
+}
+// Yirik nom + manzil ikki qator — zich jadvalning 36 px qatoriga
+// sig'maydi. Modul doimiysi: `DataGrid` props barqaror bo'lishi kerak.
+const zoneRowHeight = () => 56
+
 const FORM_SECTIONS = {
   'Joylashuv': { icon: PlaceIcon, description: 'Viloyat va raqam — Excel import va FaceID integratsiyasi binoni shu juftlik bo‘yicha topadi' },
   'Sig‘im': { icon: EventSeatIcon, description: 'Imtihon o‘rinlari soni — rejalashtirish uchun' },
@@ -36,7 +51,10 @@ export default function ZonesPage() {
         api={zonesApi}
         permission="regions.manage"
         searchPlaceholder="Nomi yoki manzili bo‘yicha…"
-        defaultSort={{ field: 'number', sort: 'asc' }}
+        // `defaultSort` ATAYLAB yo'q: standart tartib serverda — viloyat
+        // kodi, bino raqami, holat (`ZoneViewSet`). `?ordering=number`
+        // yuborilsa binolar viloyatlar aralash chiqardi.
+        getRowHeight={zoneRowHeight}
         defaults={{
           is_active: true,
           number: '',
@@ -75,12 +93,12 @@ export default function ZonesPage() {
             renderCell: (params) => (
               <Stack sx={{ height: '100%', justifyContent: 'center', minWidth: 0 }}>
                 <Stack direction="row" spacing={0.75} alignItems="center" sx={{ minWidth: 0 }}>
-                  <Typography variant="body2" fontWeight={600} noWrap>{params.value}</Typography>
+                  <Typography noWrap sx={NAME_SX}>{params.value}</Typography>
                   {params.row.is_part && <Chip size="small" variant="outlined" label="Anklav" />}
                   {params.row.deleted_at && <Chip size="small" color="error" variant="outlined" label="O‘chirilgan" />}
                 </Stack>
                 {params.row.address && (
-                  <Typography variant="caption" color="text.secondary" noWrap sx={{ lineHeight: 1.2 }}>
+                  <Typography variant="caption" color="text.secondary" noWrap sx={{ lineHeight: 1.3, mt: 0.25 }}>
                     {params.row.address}
                   </Typography>
                 )}

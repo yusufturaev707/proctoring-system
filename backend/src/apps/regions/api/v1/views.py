@@ -46,7 +46,12 @@ class ZoneViewSet(
                 "cameras", filter=Q(cameras__deleted_at__isnull=True), distinct=True
             ),
         )
-        .order_by("region__name", "number")  # annotate() Meta.ordering ni bekor qiladi
+        # annotate() Meta.ordering ni bekor qiladi. Tartib — viloyatning
+        # rasmiy kodi (`dtm_id`), nomi emas: alifbo tartibi DTM
+        # ro'yxatlaridagi tartibga mos kelmaydi. Raqam viloyat ichida
+        # faqat tirik yozuvlar orasida unikal — o'chirilgan bino bilan
+        # to'qnashsa faoli oldinda; `id` sahifalash barqaror bo'lishi uchun.
+        .order_by("region__dtm_id", "number", "-is_active", "id")
     )
     serializer_class = ZoneSerializer
     permission_classes = [IsAuthenticated, HasRolePermission]
