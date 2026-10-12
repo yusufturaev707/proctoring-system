@@ -29,6 +29,38 @@ const NAME_SX = {
 // sig'maydi. Modul doimiysi: `DataGrid` props barqaror bo'lishi kerak.
 const zoneRowHeight = () => 56
 
+// Bino raqami — Material 3 kapsulasi (label-large: 14 px, 600, tabular
+// raqamlar). Faol bino — `secondaryContainer` to'ldirilgan kapsula,
+// nofaoli — konturli va xira: holat rangsiz ham (shakldan) ajraladi.
+// `lineHeight: 1` SHART: DataGrid katakka qator balandligiga teng
+// `line-height` beradi va meros qolsa raqam kapsulaning pastiga tushardi.
+const NUMBER_BADGE_SX = {
+  minWidth: 40, height: 28, px: 1.25, boxSizing: 'border-box',
+  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+  borderRadius: 999, border: '1px solid',
+  fontSize: '0.875rem', fontWeight: 600, lineHeight: 1, letterSpacing: '0.01em',
+  fontVariantNumeric: 'tabular-nums',
+}
+const ACTIVE_BADGE_SX = {
+  ...NUMBER_BADGE_SX,
+  bgcolor: 'm3.secondaryContainer', color: 'm3.onSecondaryContainer', borderColor: 'transparent',
+}
+const INACTIVE_BADGE_SX = {
+  ...NUMBER_BADGE_SX,
+  bgcolor: 'transparent', color: 'text.secondary', borderColor: 'm3.outlineVariant',
+}
+const numberCell = (params) => (
+  <Box sx={{ ...cell, justifyContent: 'center' }}>
+    <Box
+      component="span"
+      sx={params.row.is_active ? ACTIVE_BADGE_SX : INACTIVE_BADGE_SX}
+      title={params.row.is_active ? undefined : 'Nofaol bino'}
+    >
+      {params.value}
+    </Box>
+  </Box>
+)
+
 const FORM_SECTIONS = {
   'Joylashuv': { icon: PlaceIcon, description: 'Viloyat va raqam — Excel import va FaceID integratsiyasi binoni shu juftlik bo‘yicha topadi' },
   'Sig‘im': { icon: EventSeatIcon, description: 'Imtihon o‘rinlari soni — rejalashtirish uchun' },
@@ -71,23 +103,6 @@ export default function ZonesPage() {
         onRowClick={(params, { openEdit }) => setDetail({ row: params.row, openEdit })}
         columns={[
           {
-            field: 'number', headerName: 'Raqam', width: 84,
-            renderCell: (params) => (
-              <Box sx={cell}>
-                <Box
-                  sx={{
-                    minWidth: 32, height: 26, px: 0.75, borderRadius: '8px',
-                    display: 'grid', placeItems: 'center', fontSize: 13, fontWeight: 700,
-                    bgcolor: params.row.is_active ? 'm3.secondaryContainer' : 'm3.surfaceContainerHighest',
-                    color: params.row.is_active ? 'm3.onSecondaryContainer' : 'text.disabled',
-                  }}
-                >
-                  {params.value}
-                </Box>
-              </Box>
-            ),
-          },
-          {
             field: 'name', headerName: 'Bino', flex: 1.4, minWidth: 210,
             exportValue: (value, row) => (row.address ? `${value} (${row.address})` : value),
             renderCell: (params) => (
@@ -104,6 +119,10 @@ export default function ZonesPage() {
                 )}
               </Stack>
             ),
+          },
+          {
+            field: 'number', headerName: 'Raqam', width: 96,
+            align: 'center', headerAlign: 'center', renderCell: numberCell,
           },
           {
             field: 'region_name', headerName: 'Viloyat', flex: 1, minWidth: 150, sortable: false,
