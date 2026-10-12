@@ -44,7 +44,7 @@ ALLOWED_KEYS = {
     "pid": "joriy UI jarayoni",
     "started_at": "jarayon boshlangan vaqt (unix)",
     "updated_at": "oxirgi yozuv (unix)",
-    "stage": "oqim bosqichi (preflight/login/exam_select/candidate/faceid/exam)",
+    "stage": "oqim bosqichi (login/exam_select/candidate/faceid/exam)",
     "exam_id": "tanlangan imtihon id",
     "exam_name": "imtihon nomi (maxfiy emas, ekranda ko'rinadi)",
     "schedule_id": "test sessiyasi (ExamSchedule) id",
@@ -144,7 +144,7 @@ class StateStore:
             "app_version": app_version,
             "pid": int(pid),
             "started_at": now,
-            "stage": "preflight",
+            "stage": "login",
             "clean_exit": False,
             "restart_count": int(restart_count or 0),
         }

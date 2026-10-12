@@ -76,10 +76,11 @@ topadi:
 
 1. **MAC manzil** — asosiy belgi (global unikal, apparatga bog'langan).
 2. **Inventar kodi** — ixtiyoriy `.env` qiymati (`INVENTORY_CODE`).
-3. **LAN IP + bino** — bino so'rovning tashqi IP'si orqali aniqlanganda
-   (`controls.AllowedPublicIp`). Bino noma'lum bo'lsa IP bo'yicha
-   qidiruv umuman qilinmaydi: `192.168.1.10` turli binolarda takrorlanadi
-   va client jimgina boshqa binoga biriktirilib qolardi.
+3. **LAN IP + bino** — bino so'rov KELGAN manzil (server ko'rgan IP yoki
+   bino tarmog'i) orqali aniqlanganda (`controls.AllowedPublicIp`). Bino
+   noma'lum bo'lsa IP bo'yicha qidiruv umuman qilinmaydi: `192.168.1.10`
+   turli binolarda takrorlanadi va client jimgina boshqa binoga
+   biriktirilib qolardi.
 
 `device_id` yo'qolsa (masalan `%APPDATA%` tozalansa) client o'zini
 tiklaydi: apparat izi mos kelsa, server mavjud identifikatorni

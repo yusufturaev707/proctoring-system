@@ -738,9 +738,9 @@ export default function Settings() {
                     to‘xtamagan holatda).
                   </Typography>
                   <Divider sx={{ my: 0.5 }} />
-                  {/* Tugmalar clientga uch marta ketadi: preflight'da
-                      (login'dan oldin), handshake'da va imtihon profilida.
-                      Undan OLDIN (dastur ochilishi bilan) clientning
+                  {/* Tugmalar clientga ikki marta ketadi: handshake'da
+                      (login'dan keyin) va imtihon profilida. Undan OLDIN
+                      (dastur ochilishi bilan, login ekranida) clientning
                       .env dagi BLOCKED_HOTKEYS standarti ishlaydi; bo'sh
                       ro'yxat o'sha standartni qoldiradi. */}
                   <MultiPicker
@@ -749,7 +749,7 @@ export default function Settings() {
                     value={form.hotkeys}
                     onChange={setIds('hotkeys')}
                     disabled={!canManage}
-                    helperText="Tanlanmasa — client o‘z standart ro‘yxatini (.env) qo‘llaydi. Kiosk rejimida ishlaydi; ctrl+q hech qachon bloklanmaydi"
+                    helperText="Tanlanmasa — client o‘z standart ro‘yxatini (.env) qo‘llaydi. Kiosk rejimida ishlaydi; Ctrl+Q va Alt+Shift hech qachon bloklanmaydi"
                     emptyText="Tezkor tugmalar ma’lumotnomasi bo‘sh"
                   />
                 </Section>

@@ -173,7 +173,7 @@ class AllowedPublicIpViewSet(ControlsBaseViewSet):
 
     def get_queryset(self):
         # Ilgari ro'yxat umuman cheklanmagan edi: viloyat xodimi barcha
-        # binolarning tashqi manzillarini (tarmoq chegarasi) ko'rardi.
+        # binolarning manzillarini (tarmoq chegarasi) ko'rardi.
         # Binosiz (umumiy) manzil — `ExamSchedule` dagi naqsh: viloyatga
         # HAM amal qiladi, shuning uchun uni O'QIYDI, lekin o'zgartira
         # olmaydi (yozish — faqat o'z binolari).

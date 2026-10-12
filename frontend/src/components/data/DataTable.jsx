@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import {
   Box, Card, IconButton, LinearProgress, MenuItem, Pagination, Stack, TextField,
   Tooltip, Typography, useMediaQuery, useTheme,
@@ -16,6 +16,7 @@ const LOCALE = {
 }
 
 const PAGE_SIZES = [25, 50, 100]
+const defaultRowId = (row) => row.id
 
 /**
  * Tartib raqami ustuni.
@@ -102,7 +103,25 @@ export default function DataTable({
   ...rest
 }) {
   const serverSide = typeof rowCount === 'number'
-  const resolveId = getRowId || ((row) => row.id)
+  // BARQAROR PROPS — `DataGrid` o'zi `React.memo`: props o'zgarmasa u
+  // umuman render bo'lmaydi. Ilgari `getRowId`, `onRowClick`, `sx` va
+  // `slots` har renderda yangi edi va qidiruvga har harf yozilganda
+  // (toolbar shu komponentda) butun jadval — yuzlab katak va tooltip —
+  // qayta chizilardi (React Scan: 10 harf = ~8 500 katak renderi).
+  // Yangi `getRowId` esa gridni qatorlarni qaytadan hisoblashga majbur
+  // qiladi.
+  const resolveId = getRowId || defaultRowId
+
+  // Ota inline funksiya bersa ham grid'ga bitta barqaror o'ram ketadi;
+  // chaqiruv paytida eng so'nggi `onRowClick` ishlatiladi.
+  const onRowClickRef = useRef(onRowClick)
+  onRowClickRef.current = onRowClick
+  const hasRowClick = Boolean(onRowClick)
+  const handleRowClick = useCallback((params, event) => {
+    // Belgilash katakchasini bosish qatorni OCHMASLIGI kerak.
+    if (event?.target?.closest?.('.MuiDataGrid-cellCheckbox')) return
+    onRowClickRef.current?.(params, event)
+  }, [])
 
   // TOR EKRANDA JADVAL QAT'IY BALANDLIKDA EMAS (`autoHeight`): qatorlar
   // sahifa bilan birga suriladi. Qat'iy balandlik telefonda ikki xil
@@ -140,14 +159,19 @@ export default function DataTable({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [columns, showRowNumber, offset, rows])
 
+  // `emptyAction` ko'pincha inline obyekt — `slots` uning MATNIGA
+  // bog'lanadi, bosish esa ref orqali so'nggi funksiyani chaqiradi.
+  const emptyActionRef = useRef(emptyAction)
+  emptyActionRef.current = emptyAction
+  const emptyActionLabel = emptyAction?.label
   const slots = useMemo(
     () => ({
       noRowsOverlay: () => (
         <EmptyState
           title={emptyTitle}
           description={emptyDescription}
-          actionLabel={emptyAction?.label}
-          onAction={emptyAction?.onClick}
+          actionLabel={emptyActionLabel}
+          onAction={emptyActionLabel ? () => emptyActionRef.current?.onClick?.() : undefined}
           dense
         />
       ),
@@ -155,8 +179,31 @@ export default function DataTable({
         <EmptyState title="Natija topilmadi" description="Filtr shartlarini o‘zgartirib ko‘ring" dense />
       ),
     }),
-    [emptyTitle, emptyDescription, emptyAction],
+    [emptyTitle, emptyDescription, emptyActionLabel],
   )
+
+  const dimmed = fetching && !loading
+  const gridStyle = useMemo(() => ({
+    border: 0,
+    '& .MuiDataGrid-columnHeaders': { bgcolor: 'm3.surfaceContainerLow' },
+    // Sarlavhalar ODDIY registrda: katta harfli qisqa sarlavhalar
+    // o'zbekcha uzun so'zlarda ("OXIRGI FAOLLIK") ustunni kengaytirib,
+    // o'qishni sekinlashtirardi.
+    '& .MuiDataGrid-columnHeaderTitle': {
+      fontWeight: 650, fontSize: '0.8rem', color: 'text.secondary',
+    },
+    '& .MuiDataGrid-cell:focus, & .MuiDataGrid-cell:focus-within': { outline: 'none' },
+    // `№` ustuni ma'lumot emas, yo'naltirgich — u past kontrastda
+    // turishi kerak, aks holda ko'z birinchi navbatda unga tushadi.
+    '& .MuiDataGrid-cell[data-field="__rownum"]': { bgcolor: 'm3.surfaceContainerLow' },
+    '& .MuiDataGrid-row': {
+      cursor: hasRowClick ? 'pointer' : 'default',
+      transition: (theme) => theme.transitions.create('background-color', { duration: 120 }),
+    },
+    '& .MuiDataGrid-row:hover': { bgcolor: 'action.hover' },
+    '& .MuiDataGrid-overlayWrapper': { height: 'auto !important', minHeight: 260 },
+    ...(gridSx || {}),
+  }), [hasRowClick, gridSx])
 
   if (error && !rows.length) {
     return (
@@ -185,18 +232,25 @@ export default function DataTable({
         {fetching && !loading && <LinearProgress sx={{ height: 3 }} />}
       </Box>
 
-      <Box sx={{ height: compact ? 'auto' : height, width: '100%' }}>
+      {/* Yangi sahifa kelayotganda eski qatorlar xiralashadi — "bo'sh
+          ekran" o'rniga uzluksizlik hissi. Shaffoflik QOBIQDA, grid'ning
+          `sx` ida emas: aks holda har fon so'rovi (boshlanish/tugash)
+          butun jadvalni ikki marta qayta chizardi. */}
+      <Box
+        sx={{
+          height: compact ? 'auto' : height,
+          width: '100%',
+          opacity: dimmed ? 0.55 : 1,
+          transition: (theme) => theme.transitions.create('opacity', { duration: 140 }),
+        }}
+      >
         <DataGrid
           autoHeight={compact}
           rows={rows}
           columns={gridColumns}
           loading={loading}
           getRowId={resolveId}
-          // Belgilash katakchasini bosish qatorni OCHMASLIGI kerak.
-          onRowClick={onRowClick && ((params, event) => {
-            if (event?.target?.closest?.('.MuiDataGrid-cellCheckbox')) return
-            onRowClick(params, event)
-          })}
+          onRowClick={hasRowClick ? handleRowClick : undefined}
           rowCount={serverSide ? rowCount : undefined}
           paginationMode={serverSide ? 'server' : 'client'}
           sortingMode={serverSide ? 'server' : 'client'}
@@ -211,31 +265,7 @@ export default function DataTable({
           localeText={LOCALE}
           slots={slots}
           hideFooter
-          sx={{
-            border: 0,
-            // Yangi sahifa kelayotganda eski qatorlar xiralashadi —
-            // "bo'sh ekran" o'rniga uzluksizlik hissi.
-            opacity: fetching && !loading ? 0.55 : 1,
-            transition: (theme) => theme.transitions.create('opacity', { duration: 140 }),
-            '& .MuiDataGrid-columnHeaders': { bgcolor: 'm3.surfaceContainerLow' },
-            // Sarlavhalar ODDIY registrda: katta harfli qisqa sarlavhalar
-            // o'zbekcha uzun so'zlarda ("OXIRGI FAOLLIK") ustunni kengaytirib,
-            // o'qishni sekinlashtirardi.
-            '& .MuiDataGrid-columnHeaderTitle': {
-              fontWeight: 650, fontSize: '0.8rem', color: 'text.secondary',
-            },
-            '& .MuiDataGrid-cell:focus, & .MuiDataGrid-cell:focus-within': { outline: 'none' },
-            // `№` ustuni ma'lumot emas, yo'naltirgich — u past kontrastda
-            // turishi kerak, aks holda ko'z birinchi navbatda unga tushadi.
-            '& .MuiDataGrid-cell[data-field="__rownum"]': { bgcolor: 'm3.surfaceContainerLow' },
-            '& .MuiDataGrid-row': {
-              cursor: onRowClick ? 'pointer' : 'default',
-              transition: (theme) => theme.transitions.create('background-color', { duration: 120 }),
-            },
-            '& .MuiDataGrid-row:hover': { bgcolor: 'action.hover' },
-            '& .MuiDataGrid-overlayWrapper': { height: 'auto !important', minHeight: 260 },
-            ...(gridSx || {}),
-          }}
+          sx={gridStyle}
           {...rest}
         />
       </Box>

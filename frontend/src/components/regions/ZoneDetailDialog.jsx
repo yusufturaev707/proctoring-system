@@ -4,7 +4,7 @@ import { Box, Button, Chip, Skeleton } from '@mui/material'
 import ApartmentIcon from '@mui/icons-material/ApartmentOutlined'
 import ComputerIcon from '@mui/icons-material/DesktopWindowsOutlined'
 import VideocamIcon from '@mui/icons-material/VideocamOutlined'
-import PublicIcon from '@mui/icons-material/PublicOutlined'
+import RouterIcon from '@mui/icons-material/RouterOutlined'
 import LanIcon from '@mui/icons-material/LanOutlined'
 import PlaceIcon from '@mui/icons-material/PlaceOutlined'
 
@@ -18,7 +18,7 @@ import { useAuth } from '../../context/AuthContext'
 /**
  * Bino kartasi: joylashuv, sig'im va jihozlar, binoga biriktirilgan
  * IP/tarmoqlar (qurilma ro'yxatdan o'tishda bino SHULAR orqali
- * aniqlanadi — `devices.services.resolve_zone_by_public_ip`).
+ * aniqlanadi — `devices.services.resolve_zone_by_ip`).
  */
 export default function ZoneDetailDialog({ row, onEdit, onClose }) {
   const navigate = useNavigate()
@@ -122,8 +122,8 @@ export default function ZoneDetailDialog({ row, onEdit, onClose }) {
           ) : ips.length ? ips.map((item) => (
             <Field
               key={item.id}
-              icon={item.ip_address ? <PublicIcon fontSize="small" /> : <LanIcon fontSize="small" />}
-              label={[item.ip_address ? 'Tashqi IP' : 'Tarmoq', item.name, !item.is_active && 'o‘chiq'].filter(Boolean).join(' · ')}
+              icon={item.ip_address ? <RouterIcon fontSize="small" /> : <LanIcon fontSize="small" />}
+              label={[item.ip_address ? 'IP manzil' : 'Tarmoq', item.name, !item.is_active && 'o‘chiq'].filter(Boolean).join(' · ')}
               value={item.ip_address || item.network}
               mono
               onCopy={copy}

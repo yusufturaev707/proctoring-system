@@ -284,8 +284,9 @@ export default function SessionDetail() {
                     UCHTA MANZIL UCHTA SAVOLGA javob beradi va ular
                     ataylab alohida ko'rsatiladi: LAN — qaysi mashina,
                     manba — serverga qaysi manzildan kelgan (NAT ortida
-                    butun bino uchun bitta), tashqi — bino qaysi IP
-                    bilan internetga chiqadi.
+                    butun bino uchun bitta), tashqi — binoning tashqi
+                    manzili: SERVER operator login'ida aniqlagan va u
+                    `AllowedPublicIp` dagi aniq IP yozuvi bo'lgan.
                   */}
                   <InfoRow label="IP manzil (mashina)" value={session.ip_address || '—'} />
                   <InfoRow label="So‘rov manbai" value={network.source_ip || '—'} />

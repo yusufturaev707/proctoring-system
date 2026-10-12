@@ -351,8 +351,6 @@ REST_FRAMEWORK = {
         "staff_login": env("THROTTLE_STAFF_LOGIN", "60/min"),
         "staff_login_device": env("THROTTLE_STAFF_LOGIN_DEVICE", "10/min"),
         "device_register": env("THROTTLE_DEVICE_REGISTER", "20/hour"),
-        "preflight": env("THROTTLE_PREFLIGHT", "30/min"),
-        "access_attempt": env("THROTTLE_ACCESS_ATTEMPT", "30/min"),
         "user": env("THROTTLE_USER", "1000/min"),
         "anon": env("THROTTLE_ANON", "60/min"),
     },
@@ -467,7 +465,7 @@ PROCTORING = {
     # talabgor o'z kompyuterida bo'lishi SHART.
     "REQUIRE_COMPUTER_BOOKING": env_bool("REQUIRE_COMPUTER_BOOKING", False),
 
-    # --- Ruxsat etilgan tashqi IP'lar ---
+    # --- Ruxsat etilgan IP'lar ---
     # `AllowedPublicIp` da FAOL yozuv qolmaganda nima bo'ladi:
     #
     #   true (standart) — HECH KIM kira olmaydi. "Ro'yxat bo'sh" degani
@@ -482,22 +480,16 @@ PROCTORING = {
 
     # --- Server imtihon tarmog'ining ICHIDAMI ---
     #
-    # `AllowedPublicIp` — bu binolarning TASHQI (NAT) manzillari
-    # ro'yxati. U faqat server clientlarni internet orqali ko'rganda
-    # ma'noga ega:
+    # `AllowedPublicIp` server KO'RGAN manzilni tekshiradi (client
+    # aytganini emas). Ikki topologiya:
     #
-    #   A) server internetda (nginx ortida) — client NAT orqali keladi,
-    #      server binoning tashqi manzilini ko'radi, ro'yxat ishlaydi;
-    #   B) server BINO ICHIDA (yoki dev'da o'sha mashinada) — client
-    #      unga LAN manzili bilan yetib boradi va server uning tashqi
-    #      manzilini printsipial ravishda KO'RA OLMAYDI.
+    #   A) server binodan tashqarida — bino NAT orqali bitta manzil
+    #      bilan keladi: ro'yxatga shu IP yoziladi;
+    #   B) server BINO ICHIDA yoki yopiq kanalda (dev'da o'sha mashinada)
+    #      — server har mashinaning o'z xususiy manzilini ko'radi:
+    #      ro'yxatga bino TARMOG'I (CIDR) yoziladi, binoga bog'lanadi.
     #
-    # B holatida ommaviy manzillar ro'yxati xususiy manzilga hech qachon
-    # mos kelmaydi, ya'ni `check_source_ip` HAMMANI rad etadi. Har bir
-    # ish stantsiyasining 192.168.x.x manzilini ro'yxatga kiritish esa
-    # yechim emas (`network_preflight` docstring'i buni tushuntiradi).
-    #
-    # Shuning uchun qaror TAXMIN QILINMAYDI, u sozlamada aytiladi:
+    # B holati uchun qo'pol muqobil ham bor — bu sozlama:
     #
     #   true  — xususiy (LAN/loopback) manba manzili tekshiruvdan
     #           o'tadi. Bu B holati: LAN'ning O'ZI perimetr, unga
@@ -544,8 +536,8 @@ PROCTORING = {
 
     # --- Avtomatik inventarizatsiya ---
     # `true` bo'lsa, ro'yxatda yo'q kompyuter avtomatik yaratiladi -
-    # LEKIN faqat binoning tashqi IP'si `AllowedPublicIp` da qayd
-    # etilgan bo'lsa. 500 mashinani qo'lda kiritish yukini olib
+    # LEKIN faqat so'rov kelgan manzil `AllowedPublicIp` da binoga
+    # bog'langan bo'lsa (bino shu orqali aniqlanadi). 500 mashinani qo'lda kiritish yukini olib
     # tashlaydi; qurilma baribir `PENDING` bo'lib qoladi va admin
     # tasdig'ini kutadi.
     #

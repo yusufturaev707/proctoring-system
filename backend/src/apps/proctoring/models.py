@@ -1086,6 +1086,9 @@ class AuditLog(models.Model):
         IDENTITY_CONFIRM = "identity_confirm", _("Shaxs tasdiqlandi")
         IDENTITY_REJECT = "identity_reject", _("Shaxs tasdiqlanmadi")
         CLIENT_EXIT = "client_exit", _("Client'dan chiqish")
+        # Ctrl+Q oynasidan oldingi sahifaga qaytish — parol bilan
+        # (kiosk ichidagi navigatsiya), dastur yopilmagan.
+        CLIENT_BACK = "client_back", _("Client'da orqaga qaytish")
         TP_RESOLVE = "tp_resolve", _("Texnik muammo qarori")
         SETTING_CHANGE = "setting_change", _("Sozlama o'zgarishi")
         DEVICE_REVOKE = "device_revoke", _("Qurilmani bloklash")

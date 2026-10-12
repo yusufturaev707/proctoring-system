@@ -27,7 +27,7 @@ class ResolveHotkeysTests(unittest.TestCase):
         self.assertEqual(resolve_hotkeys([], DEFAULT), DEFAULT)
 
     def test_missing_server_list_keeps_default(self):
-        """Eski server yoki preflight javob bermadi."""
+        """Eski server yoki handshake javob bermadi."""
         self.assertEqual(resolve_hotkeys(None, DEFAULT), DEFAULT)
 
     def test_both_empty(self):

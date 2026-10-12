@@ -31,6 +31,7 @@ from PyQt6.QtWidgets import (
 )
 
 from config import APP_VERSION
+from core.errors import ERROR_MESSAGES
 from services.app_state import Staff
 from services.auth_service import AuthService
 from services.workers import ApiWorker, WorkerHolder
@@ -182,16 +183,6 @@ class LoginPage(BrandBackdrop):
         # o'qigan bo'lishi shart.
         outer.addWidget(version, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        # Preflight aniqlagan bino/manzil. Login'dan OLDIN ma'lum
-        # bo'ladi, shuning uchun shu yerda ko'rsatiladi: noto'g'ri bino
-        # biriktirilgani imtihon boshlangunga qadar sezilishi kerak.
-        self._network_label = QLabel("")
-        self._network_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._network_label.setStyleSheet(
-            "color: rgba(255,255,255,0.55); background: transparent; font-size: 12px;"
-        )
-        self._network_label.hide()
-        outer.addWidget(self._network_label, alignment=Qt.AlignmentFlag.AlignCenter)
         outer.addStretch()
 
         self._status_pill = StatusPill(self)
@@ -215,24 +206,6 @@ class LoginPage(BrandBackdrop):
         # Enter bilan o'tish: login -> parol -> kirish.
         self.username_input.returnPressed.connect(self.password_input.setFocus)
         self.password_input.returnPressed.connect(self._on_login)
-
-    # ------------------------------------------------------------------
-    # Tarmoq holati (preflight natijasi)
-    # ------------------------------------------------------------------
-    def set_network_info(self, result: dict) -> None:
-        """Preflight qaytargan bino va tashqi manzilni ko'rsatadi."""
-        parts = []
-        zone = (result or {}).get("zone") or {}
-        region = (result or {}).get("region") or {}
-        if zone.get("name"):
-            parts.append(zone["name"])
-        if region.get("name"):
-            parts.append(region["name"])
-        # if (result or {}).get("public_ip"):
-        #     parts.append(result["public_ip"])
-        text = "  ·  ".join(parts)
-        self._network_label.setText(text)
-        self._network_label.setVisible(bool(text))
 
     # ------------------------------------------------------------------
     # Model holati (MainWindow'dan)
@@ -301,7 +274,9 @@ class LoginPage(BrandBackdrop):
         self._set_busy(True, "Tekshirilmoqda...")
         worker = ApiWorker(self._login_flow, username, password, parent=self)
         worker.succeeded.connect(self._on_success)
-        worker.failed.connect(self._on_failed)
+        # `failed_details`: IP rad etilganda server ko'rgan manzil
+        # `details` da keladi (`check_client_login`).
+        worker.failed_details.connect(self._on_failed)
         self._workers.run(worker)
 
     def _login_flow(self, username: str, password: str) -> Staff:
@@ -332,8 +307,19 @@ class LoginPage(BrandBackdrop):
         self.message.clear_message()
         self.login_success.emit(staff)
 
-    def _on_failed(self, message: str, code: str) -> None:
+    def _on_failed(self, message: str, code: str, details=None) -> None:
         self._set_busy(False)
+        if code == "ip_not_allowed":
+            # Alohida preflight yo'q — IP to'sig'i login'da. Ikki holat
+            # operator uchun boshqa-boshqa: "ro'yxat bo'sh" administrator
+            # sozlamasi, "manzil ro'yxatda yo'q" esa shu kompyuter
+            # joylashuvi — operator administratorga AYNAN shu raqamni
+            # aytadi (server ko'rgan manzil, client o'zi aniqlamaydi).
+            details = details or {}
+            if details.get("allowlist_empty"):
+                message = ERROR_MESSAGES["ip_allowlist_empty"]
+            elif details.get("observed_ip"):
+                message = "{}\nIP manzil: {}".format(message, details["observed_ip"])
         kind = "warning" if code in ("device_not_registered", "throttled") else "error"
         self.message.show_message(message, kind)
         log.info("Login muvaffaqiyatsiz (%s): %s", code or "-", message)

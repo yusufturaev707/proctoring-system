@@ -95,9 +95,11 @@ admin.set_password("SmokeTest!2026")
 admin.role = Role.objects.filter(name="Administrator").first()
 admin.save()
 
+# `surface: panel` — panel login'i IP ro'yxatidan o'tmaydi (ro'yxat hali
+# sozlanmagan bo'lishi mumkin); client login'i esa o'tadi (1b-bo'lim).
 resp = client.post(
     "/api/v1/auth/login/",
-    data=json.dumps({"username": "smoke_admin", "password": "SmokeTest!2026"}),
+    data=json.dumps({"username": "smoke_admin", "password": "SmokeTest!2026", "surface": "panel"}),
     content_type="application/json",
 )
 data = body(resp)
@@ -118,10 +120,10 @@ for path in ["/api/v1/users/", "/api/v1/roles/", "/api/v1/regions/", "/api/v1/zo
     resp = client.get(path, **AUTH)
     check(f"GET {path}", resp.status_code == 200, f"{resp.status_code} {body(resp)}")
 
-print("\n=== 1b. Preflight — login formasidan oldingi tarmoq tekshiruvi ===")
-# Client dastur ishga tushishi bilan shu endpointni chaqiradi va javob
-# "yo'q" bo'lsa login formasini umuman ko'rsatmaydi.
-# Test O'ZINING ruxsat yozuvi bilan ishlaydi.
+print("\n=== 1b. Ruxsat etilgan IP — client login'i shu ro'yxatdan o'tadi ===")
+# Alohida preflight yo'q: IP client login'ida tekshiriladi
+# (`devices.services.check_client_login`). Test O'ZINING ruxsat yozuvi
+# bilan ishlaydi.
 #
 # Adminning ro'yxati bo'sh ham, to'la ham bo'lishi mumkin va yozuvlar
 # boshqa binoga bog'langan bo'lishi mumkin — test esa undan qat'iy
@@ -151,66 +153,31 @@ def _restore_allowed_ip():
     invalidate_ip_cache()
 
 
-resp = client.post(
-    "/api/v1/client/preflight/",
-    data=json.dumps({"public_ip": SMOKE_IP}),
-    content_type="application/json",
-    REMOTE_ADDR="203.0.113.1",
-)
-data = body(resp)
-check("preflight 200", resp.status_code == 200, f"{resp.status_code} {data}")
-_pre = data.get("data") or {}
-# Qaror FAQAT client aytgan public IP bo'yicha: manba manzili begona
-# bo'lsa ham ruxsat beriladi (server bino ichida turgan holat).
-check("ruxsat public IP bo'yicha berildi", _pre.get("allowed") is True, str(_pre))
-check("javobda public IP qaytdi", _pre.get("public_ip") == SMOKE_IP, str(_pre))
-check("manba manzili farq qilgani belgilandi", _pre.get("matches_observed") is False, str(_pre))
+# Ro'yxatda YO'Q manba manzili. 100.64.0.0/10 (CGNAT) Python'da xususiy
+# EMAS — dev'dagi `ALLOW_PRIVATE_SOURCE_IP=true` uni o'tkazib yubormaydi.
+FOREIGN_IP = "100.64.255.254"
 
+# Ro'yxatda yo'q manzildan client login'i rad etiladi va sabab jurnalga
+# tushadi. Login'ning o'zi keyingi bo'limda (operator) — bu yerda faqat
+# rad etish (parol tekshiruvidan KEYIN — shuning uchun admin hisobi).
+_log_path = Path(settings.CLIENT_ACCESS_LOG)
+_before = _log_path.stat().st_size if _log_path.exists() else 0
 resp = client.post(
-    "/api/v1/client/preflight/",
-    data=json.dumps({"public_ip": "203.0.113.1"}),
+    "/api/v1/auth/login/",
+    data=json.dumps({"username": "smoke_admin", "password": "SmokeTest!2026"}),
     content_type="application/json",
+    REMOTE_ADDR=FOREIGN_IP,
 )
 data = body(resp)
-check("ro'yxatda yo'q IP -> 403", resp.status_code == 403, f"{resp.status_code} {data}")
+check("ro'yxatda yo'q manbadan client login -> 403", resp.status_code == 403,
+      f"{resp.status_code} {data}")
 _err = data.get("error") or {}
 check("kod ip_not_allowed", _err.get("code") == "ip_not_allowed", str(_err))
 check(
     "rad etilgan manzil ko'rsatildi",
-    (_err.get("details") or {}).get("public_ip") == "203.0.113.1",
+    (_err.get("details") or {}).get("observed_ip") == FOREIGN_IP,
     str(_err),
 )
-
-resp = client.post(
-    "/api/v1/client/preflight/", data=json.dumps({}), content_type="application/json"
-)
-data = body(resp)
-check("public IP siz -> 400", resp.status_code == 400, f"{resp.status_code} {data}")
-check(
-    "kod public_ip_unknown",
-    (data.get("error") or {}).get("code") == "public_ip_unknown",
-    str(data.get("error")),
-)
-
-# Kirish urinishi jurnalga yoziladi (natijadan qat'iy nazar).
-_log_path = Path(settings.CLIENT_ACCESS_LOG)
-_before = _log_path.stat().st_size if _log_path.exists() else 0
-resp = client.post(
-    "/api/v1/client/access-attempt/",
-    data=json.dumps(
-        {
-            "mac_address": "AA:00:00:00:00:01",
-            "ip_address": "10.255.255.254",
-            "public_ip": "203.0.113.1",
-            "hostname": "SMOKE-TEST",
-            "app_version": "1.0.0",
-            "entered_login": False,
-            "code": "ip_not_allowed",
-        }
-    ),
-    content_type="application/json",
-)
-check("access-attempt 202", resp.status_code == 202, f"{resp.status_code} {body(resp)}")
 # BAYT bo'yicha kesiladi, belgi bo'yicha emas: `st_size` baytda, matnda
 # esa ko'p baytli belgilar bor (— va o'xshashlari) va belgi bo'yicha
 # kesish qatorning boshini yeb qo'yardi.
@@ -219,10 +186,15 @@ _written = (
     if _log_path.exists()
     else ""
 )
-check("jurnalga yozildi", "KIRISH URINISHI" in _written, _written[-200:])
-check("jurnalda MAC bor", "AA:00:00:00:00:01" in _written)
-check("jurnalda natija bor", "ruxsat=YO'Q" in _written and "login_sahifasi=OCHILMADI" in _written,
+check("jurnalga yozildi", "KIRISH |" in _written and "ruxsat=YO'Q" in _written,
       _written[-200:])
+resp = client.post(
+    "/api/v1/auth/login/",
+    data=json.dumps({"username": "smoke_admin", "password": "SmokeTest!2026", "surface": "panel"}),
+    content_type="application/json",
+    REMOTE_ADDR=FOREIGN_IP,
+)
+check("panel login IP ro'yxatidan o'tmaydi", resp.status_code == 200, str(resp.status_code))
 
 
 print("\n=== 2. Qurilmani ro'yxatga olish ===")
@@ -273,9 +245,13 @@ resp = client.post(
     "/api/v1/auth/login/",
     data=json.dumps({"username": "smoke_operator", "password": "SmokeOp!2026"}),
     content_type="application/json",
+    HTTP_X_DEVICE_ID=device.device_id,
 )
 op_data = body(resp)
 check("operator login 200", resp.status_code == 200, f"{resp.status_code} {op_data}")
+# Tashqi IP'ni SERVER aniqlaydi: manba manzili ro'yxatdagi aniq IP yozuvi.
+device.refresh_from_db()
+check("tashqi IP login'da yozildi", device.public_ip == SMOKE_IP, str(device.public_ip))
 op_access = op_data.get("data", {}).get("access", "")
 op_perms = op_data.get("data", {}).get("user", {}).get("permissions", [])
 check("client.operate ruxsati bor", "client.operate" in op_perms, str(op_perms))

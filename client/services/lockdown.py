@@ -114,7 +114,7 @@ _KEY_ALIASES = {
 }
 
 
-#: HECH QACHON bloklanmaydigan kombinatsiya.
+#: HECH QACHON bloklanmaydigan kombinatsiyalar -> sababi (log uchun).
 #:
 #: Ctrl+Q - dasturdan chiqishning yagona yo'li (login sahifasidan
 #: boshlab). Uni panelga "bloklanadigan tugmalar" ro'yxatiga qo'shish
@@ -122,7 +122,18 @@ _KEY_ALIASES = {
 #: ochib bo'lmaydi, Alt+F4 allaqachon bloklangan, `closeEvent` esa
 #: parolsiz yopilishni rad etadi. Bu xatoni administrator o'zi ham
 #: sezmasligi mumkin, shuning uchun qoida KODDA.
-_NEVER_BLOCKED = frozenset({"ctrl+q"})
+#:
+#: Alt+Shift - klaviatura tilini almashtirishning yagona yo'li: ekrandagi
+#: til tugmasi olib tashlangan, kioskda vazifalar paneli yashirin.
+#: Bloklansa operator login/JSHSHIR ni boshqa tilda yoza olmay qolardi.
+#:
+#: Lug'at (to'plam emas) — server nusxasi (`controls/hotkeys.py`) bilan
+#: testda `ast.literal_eval` orqali solishtiriladi.
+_NEVER_BLOCKED = {
+    "ctrl+q": "dasturdan chiqishning yagona yo'li",
+    "alt+shift": "klaviatura tilini almashtirishning yagona yo'li",
+    "shift+alt": "klaviatura tilini almashtirishning yagona yo'li",
+}
 
 
 #: Modifikator nomi -> Windows virtual-key kodlari (birortasi bosilgan
@@ -243,9 +254,9 @@ def resolve_hotkeys(server: Optional[list], default: Optional[list]) -> list:
     Qaysi ro'yxat qo'llanadi: serverniki yoki `.env` standarti.
 
     IKKI QATLAM. `.env` dagi `BLOCKED_HOTKEYS` dastur ishga tushishi
-    bilan, preflight'dan OLDIN qo'llanadi - server javob bermasa ham
-    mashina qulfsiz qolmasligi kerak. Server ro'yxati kelsa (preflight,
-    handshake, imtihon profili) u standartni ALMASHTIRADI, ustiga
+    bilan qo'llanadi va login ekranida shu turadi - server javob bermasa
+    ham mashina qulfsiz qolmasligi kerak. Server ro'yxati kelsa
+    (handshake, imtihon profili) u standartni ALMASHTIRADI, ustiga
     qo'shilmaydi: bino yoki imtihon profilidan olib tashlangan tugma
     bloklangan holda qolib ketmasligi kerak (masalan chet tili
     imtihonida ruxsat etilgan kombinatsiya).
@@ -312,8 +323,8 @@ class KeyPolicy:
                 continue
             if code in _NEVER_BLOCKED:
                 log.warning(
-                    "'%s' bloklanmaydi: u dasturdan chiqishning yagona "
-                    "yo'li. Ro'yxatdan olib tashlang.", code
+                    "'%s' bloklanmaydi: u %s. Ro'yxatdan olib tashlang.",
+                    code, _NEVER_BLOCKED[code],
                 )
                 continue
             try:
@@ -446,9 +457,9 @@ class _Lockdown:
     """
     Qulflash holati - yagona nusxa (`lockdown`).
 
-    Holatni saqlash SHART: siyosat to'rt marta keladi (`.env`
-    standarti ishga tushishda, keyin preflight, handshake va imtihon
-    profili) va har biri oldingisini ALMASHTIRISHI kerak, ustiga
+    Holatni saqlash SHART: siyosat uch marta keladi (`.env`
+    standarti ishga tushishda, keyin handshake va imtihon profili) va
+    har biri oldingisini ALMASHTIRISHI kerak, ustiga
     qo'shmasligi. Aks holda bino sozlamasidan o'chirilgan tugma
     bloklangan holda qolardi. Qaysi ro'yxat qo'llanishini
     `resolve_hotkeys` hal qiladi.
@@ -541,7 +552,7 @@ class _Lockdown:
 
         Idempotent: ro'yxat ALMASHTIRILADI. Hook esa QAYTA
         o'rnatilmaydi - faqat jadvali almashadi, ya'ni siyosat
-        almashinuvida (preflight -> handshake -> imtihon) qulfsiz lahza
+        almashinuvida (`.env` -> handshake -> imtihon) qulfsiz lahza
         yo'q. Xato bo'lgan bitta kod butun ro'yxatni yiqitmaydi - u
         o'tkazib yuboriladi va log'da qoladi, chunki panelga qo'lda
         kiritilgan "ctrl+shft+i" kabi xato yozuv tufayli qolgan

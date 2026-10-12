@@ -168,6 +168,13 @@ class LockdownPolicyTests(unittest.TestCase):
         self.press("d:alt", "d:space", "u:space", "u:alt")
         self.assertIn("space↓", self.delivered)
 
+    def test_language_switch_and_exit_are_never_blocked(self):
+        """Ekranda til tugmasi yo'q — Alt+Shift serverdan kelsa ham o'tadi."""
+        blocked = self.policy.set_codes(["Alt+Shift", "shift+alt", "ctrl+q", "alt+tab"])
+        self.assertEqual(blocked, ["alt+tab"])
+        self.press("d:alt", "d:shift", "u:shift", "u:alt")
+        self.assertEqual(self.delivered, ["alt↓", "shift↓", "shift↑", "alt↑"])
+
     def test_reset_passes_everything(self):
         self.policy.reset()
         self.press("d:alt", "d:space", "u:space", "u:alt")

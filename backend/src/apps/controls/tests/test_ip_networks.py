@@ -3,9 +3,9 @@ Ruxsat ro'yxatida TARMOQ (CIDR), binoga bog'langan.
 
 Uch topologiya bitta mexanizmda:
 
-  * viloyat binosi internet orqali — bitta tashqi (NAT) IP (avvalgidek);
+  * bino serverga bitta manzil bilan keladi (NAT) — IP yozuvi;
   * server joylashgan bino — server clientlarni LAN manzili bilan ko'radi;
-  * kelajakdagi VPN — har bino o'z subnet'i bilan.
+  * yopiq kanal NAT'siz — har bino o'z subnet'i bilan.
 
 `ALLOW_PRIVATE_SOURCE_IP` istalgan xususiy manzilni binoga bog'lamasdan
 o'tkazardi; tarmoq yozuvi esa faqat o'sha tarmoqni va faqat o'sha binoni
@@ -20,7 +20,7 @@ from rest_framework.test import APIClient
 
 from apps.controls import services
 from apps.controls.models import AllowedPublicIp
-from apps.devices.services import resolve_zone_by_public_ip
+from apps.devices.services import resolve_zone_by_ip
 from apps.proctoring.tests import factories
 from apps.proctoring.tests.test_client_api import bearer
 
@@ -122,45 +122,15 @@ class NetworkAllowlistTests(_CacheCleared):
         self.assertTrue(services.ip_check_enforced())
 
     def test_building_is_resolved_from_network(self):
-        """Qurilmani ro'yxatga olishda bino (VPN'da tashqi IP yo'q)."""
-        self.assertEqual(resolve_zone_by_public_ip("192.168.0.20"), self.hq)
-        self.assertIsNone(resolve_zone_by_public_ip("192.168.1.20"))
+        """Qurilmani ro'yxatga olishda bino — server ko'rgan LAN manzil bo'yicha."""
+        self.assertEqual(resolve_zone_by_ip("192.168.0.20"), self.hq)
+        self.assertIsNone(resolve_zone_by_ip("192.168.1.20"))
 
     def test_global_network_does_not_resolve_a_building(self):
         AllowedPublicIp.objects.create(network="10.20.0.0/16")
         services.invalidate_ip_cache()
 
-        self.assertIsNone(resolve_zone_by_public_ip("10.20.3.4"))
-
-
-class NetworkPreflightTests(_CacheCleared):
-    def setUp(self):
-        super().setUp()
-        self.hq = factories.make_zone()
-        AllowedPublicIp.objects.create(network=HQ_NETWORK, zone=self.hq)
-
-    def test_observed_lan_address_passes_without_public_ip_in_list(self):
-        """VPN/LAN: binoning tashqi IP'si ro'yxatda bo'lmasa ham login formasi ochiladi."""
-        result = services.network_preflight(public_ip="84.54.0.1", observed_ip="192.168.0.168")
-
-        self.assertTrue(result["allowed"])
-        self.assertEqual(result["zone"]["id"], self.hq.pk)
-
-    def test_unknown_addresses_are_refused(self):
-        result = services.network_preflight(public_ip="84.54.0.1", observed_ip="192.168.7.7")
-
-        self.assertFalse(result["allowed"])
-        self.assertIsNone(result["zone"])
-
-    def test_public_ip_still_decides_for_internet_buildings(self):
-        other = factories.make_zone()
-        AllowedPublicIp.objects.create(ip_address="8.8.8.8", zone=other)
-        services.invalidate_ip_cache()
-
-        result = services.network_preflight(public_ip="8.8.8.8", observed_ip="8.8.8.8")
-
-        self.assertTrue(result["allowed"])
-        self.assertEqual(result["zone"]["id"], other.pk)
+        self.assertIsNone(resolve_zone_by_ip("10.20.3.4"))
 
 
 class AllowedIpApiTests(_CacheCleared):

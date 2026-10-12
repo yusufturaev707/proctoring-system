@@ -9,7 +9,7 @@ Har `ExamClient` = bitta imtihon kompyuteri (operator + talabgor), client
 kodi (`client/services/*`, `client/ui/pages/*`) bilan AYNAN bir xil
 ketma-ketlik va chastotada:
 
-    preflight -> access-attempt -> auth/login -> handshake -> presence ->
+    auth/login (IP tekshiruvi shu yerda) -> handshake -> presence ->
     camera/config -> camera/check -> exam/config -> candidate/lookup ->
     [face/attempt] -> face/verify -> identity/confirm -> exam/access ->
     proctoring/start -> (ws/client) ->
@@ -204,7 +204,7 @@ class ExamClient(BaseHttpUser):
         if self.opts.lt_conn_close:
             h["Connection"] = "close"
         if self.opts.lt_real_ip:
-            h["X-Real-IP"] = self.ident["public_ip"]
+            h["X-Real-IP"] = self.ident["source_ip"]
         if auth and self.access:
             h["Authorization"] = f"Bearer {self.access}"
             h["X-Device-ID"] = self.ident["device_id"]
@@ -267,19 +267,7 @@ class ExamClient(BaseHttpUser):
         self.ws = None
         self.rnd = random.Random(self.ident["index"])
         manifest = _MANIFEST
-        ip = self.ident["public_ip"]
 
-        # Preflight: ishga tushishda. 429 da operator "Qayta urinish" ni bosadi.
-        for attempt in range(3):
-            if self.call("client/preflight", "POST", f"{API}/client/preflight/",
-                         json_body={"public_ip": ip}, auth=False, session=False) is not None:
-                break
-            self._think(5, 15)
-        self.call("client/access-attempt", "POST", f"{API}/client/access-attempt/", json_body={
-            "machine_uuid": self.ident["machine_uuid"], "mac_address": self.ident["mac"],
-            "ip_address": self.ident["lan_ip"], "public_ip": ip, "hostname": self.ident["inventory_code"],
-            "app_version": "1.0.0", "entered_login": True, "code": "",
-        }, auth=False, session=False, expect=(202,))
         self._think(5, 20)  # login formasini to'ldirish
 
         data = self.call("auth/login", "POST", f"{API}/auth/login/", json_body={
@@ -495,7 +483,7 @@ class ExamClient(BaseHttpUser):
             try:
                 headers = [f"X-Proctoring-Session: {self.session_token}"]
                 if self.opts.lt_real_ip:
-                    headers.append(f"X-Real-IP: {self.ident['public_ip']}")
+                    headers.append(f"X-Real-IP: {self.ident['source_ip']}")
                 ws = websocket.create_connection(self._ws_url(), header=headers, timeout=15)
                 first = ws.recv()
                 _fire_ws("ws/client connect", started, length=len(first or ""))

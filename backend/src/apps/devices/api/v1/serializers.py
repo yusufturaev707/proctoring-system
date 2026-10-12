@@ -337,7 +337,7 @@ class DeviceTokenSerializer(serializers.ModelSerializer):
             "computer_zone", "computer_region",
             "hardware_fingerprint", "app_version", "app_hash", "status",
             "computer_status", "is_online", "online_staff", "online_state",
-            "last_used_at", "last_ip", "reported_public_ip", "reported_lan_ip",
+            "last_used_at", "last_ip", "reported_lan_ip",
             "reported_machine_uuid", "computer_machine_uuid",
             "reported_mac", "computer_mac_address",
             "gpu_name", "performance_profile",
@@ -411,9 +411,6 @@ class DeviceRegisterSerializer(serializers.Serializer):
     )
     mac_address = serializers.CharField(max_length=17, required=False, allow_blank=True)
     ip_address = serializers.IPAddressField(required=False, allow_blank=True)
-    # Client o'zi aniqlagan tashqi manzil. Ixtiyoriy: internet bo'lmasa
-    # yoki provayderlar javob bermasa client uni bo'sh yuboradi.
-    public_ip = serializers.IPAddressField(required=False, allow_blank=True)
     hardware_fingerprint = serializers.CharField(max_length=128, required=False, allow_blank=True)
     app_version = serializers.CharField(max_length=32, required=False, allow_blank=True)
     app_hash = serializers.CharField(max_length=64, required=False, allow_blank=True)

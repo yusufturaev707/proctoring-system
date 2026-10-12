@@ -55,15 +55,12 @@ ERROR_MESSAGES = {
     "device_already_registered": "Bu kompyuter boshqa mashinaga biriktirilgan. Administratorga murojaat qiling.",
     "device_computer_inactive": "Kompyuter hisobdan chiqarilgan. Administratorga murojaat qiling.",
     "ip_not_allowed": (
-        "Tashqi IP manzilga ruxsat yo'q. Bu kompyuter ro'yxatga olinmagan "
+        "IP manzilga ruxsat yo'q. Bu kompyuter ro'yxatga olinmagan "
         "tarmoqdan ulanmoqda - administratorga murojaat qiling."
     ),
     "ip_allowlist_empty": (
         "Ruxsat etilgan IP'lar ro'yxati bo'sh - administrator hali birorta "
         "manzilni qo'shmagan. Administratorga murojaat qiling."
-    ),
-    "public_ip_unknown": (
-        "Internetga chiqish manzili aniqlanmadi. Tarmoq ulanishini tekshiring."
     ),
     # `candidate_not_found` — platforma JSHSHIR'ni UMUMAN topmadi.
     # Birinchi harakat: raqamni tekshirish, shuning uchun matn ham

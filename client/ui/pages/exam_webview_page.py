@@ -66,6 +66,7 @@ from services.screen_capture import ScreenshotService
 from services.screen_recorder import ScreenRecorder
 from services.workers import ApiWorker, WorkerHolder
 from ui.dialogs.finish_dialog import FinishDialog
+from ui.dialogs.reload_dialog import ReloadDialog
 from ui.widgets.icons import GlyphButton, StatusDot
 from ui.pages.webview_errors import (
     ERR_BLOCKED_BY_CLIENT,
@@ -431,6 +432,15 @@ class ExamWebViewPage(QWidget):
 
         self.status_dot = StatusDot(12)
         layout.addWidget(self.status_dot, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        # QAYTA YUKLASH — sahifa qotib, lekin xato bermaganda yagona yo'l:
+        # kioskda F5 va manzil satri yo'q, brauzer menyusi esa ataylab
+        # o'chirilgan («Back» tufayli). Tasdiq bilan (`ReloadDialog`).
+        self.reload_btn = GlyphButton(
+            "refresh", size=38, tooltip="Test sahifasini qayta yuklash"
+        )
+        self.reload_btn.clicked.connect(self._on_reload_clicked)
+        layout.addWidget(self.reload_btn)
 
         self.problem_btn = GlyphButton(
             "warning", size=38, tooltip="Texnik muammo haqida xabar berish"
@@ -1807,6 +1817,37 @@ class ExamWebViewPage(QWidget):
         )
         worker.failed.connect(lambda message, code: self.message.show_message(message, "error"))
         self._workers.run(worker)
+
+    def _on_reload_clicked(self) -> None:
+        """
+        Operator test sahifasini qayta yuklaydi (panel tugmasi).
+
+        Xato ekranidagi bilan BIR XIL yo'l (`_reload_page`): joriy sahifa
+        GET bilan qayta ochiladi — forma qayta yuborilmaydi (brauzerning
+        `Reload` amali POST natijasini qayta jo'natardi). Manzil yaroqsiz
+        bo'lsa — oxirgi ochilgan sahifa, keyin `test_link`.
+
+        Serverga hodisa YUBORILMAYDI: `client_anomaly` xavf balliga
+        qo'shiladi, qayta yuklash esa shubhali harakat emas.
+        """
+        if not self._exam_open or self.web_view is None:
+            return
+        if self._reload_timer.isActive():
+            return  # qayta yuklash allaqachon navbatda
+        # Ota — OYNA: dialog ekran markazida (`_on_finish_clicked` bilan bir xil).
+        if ReloadDialog(self.window()).exec() != ReloadDialog.DialogCode.Accepted:
+            return
+        # Dialog ochiq turganda imtihon yakunlangan bo'lishi mumkin.
+        if not self._exam_open or self.web_view is None:
+            return
+        log.info("Test sahifasini operator qayta yukladi")
+        if self._error_panel.isVisible():
+            # Xato ekrani o'z manzilini biladi (xato bergan sahifa).
+            self._on_error_retry()
+            return
+        current = self.web_view.url()
+        self._retry_url = QUrl(current) if self._usable(current) else QUrl()
+        self._reload_timer.start(0)
 
     def _on_finish_clicked(self) -> None:
         candidate = self._state.candidate

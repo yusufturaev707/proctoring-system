@@ -3,6 +3,8 @@ import { useSearchParams } from 'react-router-dom'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useUi } from '../../context/UiContext'
 
+const EMPTY_ROWS = Object.freeze([])
+
 /** Qidiruvni kechiktiradi — har bir harfda so'rov ketmasligi uchun. */
 export function useDebounced(value, delay = 350) {
   const [debounced, setDebounced] = useState(value)
@@ -276,8 +278,15 @@ export function useResource({
   }, [])
 
   // Keyingi sahifani oldindan yuklaymiz (ikkala rejim uchun ham).
+  //
+  // ESKI (placeholder) ma'lumotda — YO'Q. `keepPreviousData` bilan qidiruv
+  // o'zgargach `query.data` hali OLDINGI natija (masalan 230 ta yozuv),
+  // `buildParams` esa yangi qidiruvniki: effekt eski umumiy sonni yangi
+  // parametrlar bilan aralashtirib, mavjud bo'lmagan 2-sahifani so'rardi
+  // (har qidiruvda bekorga 404).
+  const isPlaceholder = query.isPlaceholderData
   useEffect(() => {
-    if (!query.data) return undefined
+    if (!query.data || isPlaceholder) return undefined
 
     if (isCursorMode) {
       if (!nextCursor) return undefined
@@ -299,7 +308,7 @@ export function useResource({
       staleTime: 15_000,
     })
     return undefined
-  }, [query.data, isCursorMode, nextCursor, paginationModel, key, api, buildParams, queryClient])
+  }, [query.data, isPlaceholder, isCursorMode, nextCursor, paginationModel, key, api, buildParams, queryClient])
 
   /**
    * Mavjud bo'lmagan sahifadan birinchisiga qaytish.
@@ -400,7 +409,9 @@ export function useResource({
 
   return {
     // Ma'lumot
-    rows: query.data?.results || [],
+    // Doimiy bo'sh massiv: `|| []` har renderda YANGI massiv berib,
+    // memo qilingan jadvalni yuklanish paytida qayta chizdirardi.
+    rows: query.data?.results || EMPTY_ROWS,
     // Kursorli rejimda umumiy son yo'q — `undefined` qaytaramiz, shunda
     // DataTable server sahifalashni yoqmaydi va bo'sh jadval chizmaydi.
     total: isCursorMode ? undefined : (query.data?.count ?? 0),

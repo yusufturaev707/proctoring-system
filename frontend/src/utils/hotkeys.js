@@ -37,7 +37,13 @@ export const KEY_ALIASES = {
   minus: '-',
 }
 
-export const NEVER_BLOCKED = new Set(['ctrl+q'])
+// Client ro'yxatda bo'lsa ham bloklamaydi — kod -> sabab (server bilan bir xil).
+const LANGUAGE_SWITCH = 'Alt+Shift bloklanmaydi — bu klaviatura tilini almashtirishning yagona yo‘li'
+export const NEVER_BLOCKED = new Map([
+  ['ctrl+q', 'Ctrl+Q bloklanmaydi — bu dasturdan chiqishning yagona yo‘li'],
+  ['alt+shift', LANGUAGE_SWITCH],
+  ['shift+alt', LANGUAGE_SWITCH],
+])
 
 const MODIFIERS = new Set([
   'alt', 'left alt', 'right alt', 'alt gr',
@@ -101,7 +107,7 @@ export function parseHotkey(raw) {
     else if (parts.filter((part) => !MODIFIERS.has(part)).length > 1) {
       error = 'Faqat bitta asosiy tugma bo‘lishi mumkin (qolganlari Ctrl/Alt/Shift/Win)'
     } else if (NEVER_BLOCKED.has(code)) {
-      error = 'Ctrl+Q bloklanmaydi — bu dasturdan chiqishning yagona yo‘li'
+      error = NEVER_BLOCKED.get(code)
     }
   }
   return { code, parts, error }

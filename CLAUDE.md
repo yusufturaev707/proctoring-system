@@ -33,6 +33,7 @@ celery -A config beat                                 # AYNAN BITTA instansiya
 # Frontend
 cd frontend && npm install && npm run dev             # :5173, /api va /ws proxy qilinadi
 npm run build
+npm run dev:scan                                      # React Scan (faqat dev): ortiqcha renderlar
 ```
 
 * **Windows'da Celery `threads` pool bilan** (`config/celery.py` o'zi
@@ -662,7 +663,7 @@ TANLANMAYDI. Faqat UUID yoki faqat MAC bo'yicha taxminiy moslik QO'SHMANG.
 | model | `unique_computer_uuid_mac` (juftlik), `unique_computer_mac` (MAC tizim bo'ylab); `machine_uuid` NULL mumkin va o'zi unikal EMAS |
 | shakl | `normalize_machine_uuid` va `normalize_mac` (katta harf, ikki nuqta) — client bilan AYNAN bir xil; panel, import, Django admin (`ComputerAdminForm`) kanonik shaklda yozadi; eski yozuvlardagi `2c-f0-...` shakli qidiruvda ham tanilanadi (`match_identity`) |
 | panel | UUID yangi kompyuterda MAJBURIY (bor UUID'ni o'chirib bo'lmaydi); MAC yangi VA tahrirlanayotgan yozuvda MAJBURIY |
-| client | UUID va MAC handshake, `candidate/lookup/`, `devices/register/`, `access-attempt/` da; sarlavhada UUID ko'rsatilmaydi |
+| client | UUID va MAC handshake, `candidate/lookup/`, `devices/register/` da; sarlavhada UUID ko'rsatilmaydi |
 | sessiya | `ExamSession.machine_uuid` — kompyuter yozuvidan |
 | qurilma | `DeviceToken.reported_machine_uuid` / `reported_mac` — client o'lchagani (`record_handshake`, ishonchsiz, faqat diagnostika) |
 
@@ -741,14 +742,24 @@ majburiy). Sahifada tab sonlari — `stats/`.
 
 **Uchta manzil, uchta ma'no**:
 
-| Qiymat | Kim aytdi | Nimani bildiradi |
+| Qiymat | Kim aniqladi | Nimani bildiradi |
 |---|---|---|
 | `DeviceToken.reported_lan_ip` | client | qaysi MASHINA |
 | `DeviceToken.last_ip` | server | so'rov qaysi manzildan kelgan |
-| `DeviceToken.reported_public_ip` | client | bino qaysi IP bilan chiqadi |
+| `DeviceToken.public_ip` | server, operator login'ida | binoning TASHQI manzili |
 
 `ExamSession.ip_address` ga birinchisi (yo'q bo'lsa manba manzili), qolganlari
-`meta.network` da. Bu qiymat faqat bayonnoma uchun — ruxsat qarori emas.
+`meta.network` da (`source_ip`, `public_ip` — panelda «Tashqi IP»). Bu
+qiymatlar faqat bayonnoma uchun — ruxsat qarori emas.
+
+**Tashqi IP'ni FAQAT server aniqlaydi** (`devices.services.check_client_login`):
+operator (`client.operate`) client'ga login qilganda so'rov kelgan manzil
+`AllowedPublicIp` dagi AYNAN IP yozuviga mos kelsa — o'sha manzil, aks holda
+bo'sh (tarmoq yozuviga mos kelgani kompyuterning o'z manzili). Client
+ipify kabi tashqi xizmatga so'rov YUBORMAYDI va qaytarmang: yopiq tarmoqda
+ishlamaydi, client aytgan qiymatni esa tekshirib bo'lmaydi. Ruxsat, binoni
+aniqlash (`resolve_zone_by_ip`) va chiqish paroli viloyati — FAQAT server
+ko'rgan manzil (`client_ip`).
 
 ### Toza mashina: IKKI TOZALOVCHI
 
@@ -945,6 +956,13 @@ progress (`update(rect)`) — Chromium bilan bitta thread. Chromium konteksti
 operator JSHSHIR yozayotganda oldindan ko'tariladi
 (`ExamWebViewPage.prewarm_browser`, `_on_exam_selected`; birinchi profil
 0.4–1.5 s, keyingilari ~1 ms).
+
+**Brauzer menyusi O'CHIQ** (`web_view` — `NoContextMenu`): Qt standart
+menyusida «Back» bor (talabgor platformaning oldingi sahifalariga qaytardi).
+Qotgan sahifani yangilashning yagona yo'li — imtihon panelidagi
+«Qayta yuklash» (`_on_reload_clicked`, tasdiq `ReloadDialog`): xato
+ekranidagi bilan bitta yo'l (`_reload_page`, GET — forma qayta
+yuborilmaydi). Serverga hodisa ketmaydi (`client_anomaly` ballga qo'shilardi).
 
 ### IP kamera holati va paneldagi jonli ko'rish
 
@@ -1268,8 +1286,8 @@ Qobiq bitta — `base.py:CardDialog` (ramkasiz, shaffof fon, 28 px karta, soya).
   COLOR_NONE`, `DWMWA_WINDOW_CORNER_PREFERENCE = DONOTROUND`), har
   `showEvent` da.
 * Dialoglar 520–560 px.
-* Til almashtirgich dialog ichida yo'q; modal ochiq paytda yagona yo'l
-  `alt+shift` (lockdown'da bloklanmagan bo'lishi kerak).
+* Til almashtirgich yo'q (dialogda ham, oynada ham); tilni almashtirishning
+  yagona yo'li — `alt+shift`, u hech qachon bloklanmaydi (`_NEVER_BLOCKED`).
 * **`QInputDialog`/`QMessageBox` ishlatilmaydi.** Yakunlash tasdig'i —
   `finish_dialog.py:FinishDialog` (kim, JSHSHIR niqobi, kompyuter, vaqt);
   fokus «Testga qaytish» da, «Yakunlash» — yagona to'ldirilgan qizil tugma
@@ -1277,14 +1295,14 @@ Qobiq bitta — `base.py:CardDialog` (ramkasiz, shaffof fon, 28 px karta, soya).
 * **Imtihon sahifasida xabar suzadi** (`indicators.Snackbar`, pastki chap);
   `MessageBar` layoutni surardi — faqat boshqa sahifalarda.
 
-### Klaviatura tili — OYNA darajasida
+### Klaviatura tili — faqat Alt+Shift
 
-`ui/widgets/language_bar.py` `MainWindow` ga qo'yiladi va `QStackedWidget`
-ustida suzadi. Kerak, chunki kioskda `alt+shift` bloklangan bo'lishi mumkin.
-`ActivateKeyboardLayout` yetarli emas — oynaga `WM_INPUTLANGCHANGEREQUEST`
-yuboriladi (`services/keyboard_layout.py`). Faqat joriy til ko'rinadi,
-bosilsa keyingisi (tooltip keyingisini aytadi); holat saqlanmaydi — sekundiga
-bir marta OS'dan so'raladi.
+Ekrandagi til tugmasi (pastki chap) olib tashlangan: tilni Windows'ning
+o'zi `alt+shift` bilan almashtiradi. Shuning uchun `alt+shift` (va
+`shift+alt`) HECH QACHON bloklanmaydi — `ctrl+q` kabi, uch joyda
+(`lockdown._NEVER_BLOCKED`, server `controls/hotkeys.py:NEVER_BLOCKED` —
+panelda saqlab bo'lmaydi, panel `utils/hotkeys.js`). Tugmani qaytarmang:
+qaytarilsa ham `alt+shift` ochiq qolishi shart.
 
 ### Client kamera qatlami (`client/proctoring/camera/`)
 
@@ -1350,7 +1368,7 @@ qo'shimcha qatlam; AI qismi faqat `services/monitoring.py` buferiga yozadi.
 
 | Qachon | Endpoint | Qaysi profil |
 |---|---|---|
-| Preflight (login'dan oldin) | `client/preflight/` | global — faqat `hotkeys` |
+| Login ekrani | — | `.env` `BLOCKED_HOTKEYS` (server ro'yxati hali yo'q) |
 | Login | `client/handshake/` | global standart (`get_client_config()`) |
 | "Davom etish" | `client/exam/config/?exam=` | **imtihonning o'z profili** |
 
@@ -1395,10 +1413,10 @@ Chegara ikki joyda: server validatorlari (heartbeat ≤ `HEARTBEAT_TIMEOUT`/2 �
 `validate_heartbeat_interval`) va client `SPECS.minimum/maximum`.
 
 **Tezkor tugmalar — almashtirish, bo'sh = standart.** Dastur ochilishi bilan
-(`MainWindow.show_start`, preflight'dan oldin) `.env` `BLOCKED_HOTKEYS`;
+(`MainWindow.show_start`, login ekranida ham) `.env` `BLOCKED_HOTKEYS`;
 keyingi har bosqich to'liq ro'yxat beradi (`lockdown.resolve_hotkeys`):
 server ro'yxati bo'lsa almashtiradi, bo'sh bo'lsa standart qoladi. `ctrl+q`
-hech qachon bloklanmaydi (`_NEVER_BLOCKED`), `alt+shift` standartda yo'q.
+va `alt+shift` hech qachon bloklanmaydi (`_NEVER_BLOCKED`).
 
 `client/.env.example`: avval lokal qiymatlar, oxirida «Admin paneldan
 boshqariladi (bu yerda faqat ZAXIRA)».
@@ -1536,22 +1554,23 @@ biznes-mantiq) / `api/v1/{serializers,views,urls}.py`. View'lar yupqa.
     `republic_write_only = True` (`RepublicLevelWrite`, 403
     `republic_level_only`); panelda `ResourcePage shared` /
     `AuthContext.canShared`. Viloyat admini respublika rolini bera olmaydi.
-* **`client/preflight/`** (ochiq, JWT'siz) — client aytgan `public_ip`
-  `AllowedPublicIp` da bo'lmasa login formasi ko'rsatilmaydi. Bu qulaylik
-  to'sig'i; haqiqiy tekshiruv `ClientBaseView.check_source_ip` (server
-  ko'rgan manzil).
-* **`ALLOW_PRIVATE_SOURCE_IP`**: server bino ichida/dev'da LAN/loopback
-  manzilni ko'radi — `false` bilan hamma rad (belgisi: preflight o'tadi,
-  keyin 403 `ip_not_allowed`). `local.py` da `true`, production'da `false`.
-  Faqat xususiy manzilga tegishli. **Production'da uning o'rniga TARMOQ
-  yozuvi** (`AllowedPublicIp.network`, CIDR, binoga bog'langan): server
-  joylashgan bino (LAN) va kelajakdagi VPN (har bino o'z subnet'i) uchun.
+* **Preflight YO'Q** (`client/preflight/`, `client/access-attempt/` olib
+  tashlangan): client dastur login formasidan boshlanadi. IP to'sig'i —
+  client LOGIN'ida (`auth/login/`, `surface` = `client`; panel o'tmaydi),
+  parol to'g'ri bo'lgandan keyin: `check_client_login`, qoida
+  `ClientBaseView.check_source_ip` bilan BITTA (`is_ip_allowed`, qurilma
+  binosiga bog'langan). Rad — 403 `ip_not_allowed`, `details.observed_ip`
+  (operator shuni administratorga aytadi) va `allowlist_empty`.
+* **`ALLOW_PRIVATE_SOURCE_IP`**: istalgan xususiy (LAN/loopback) manzilni
+  binoga bog'lamay o'tkazadi. `local.py` da `true`, production'da `false`.
+  **Production'da uning o'rniga TARMOQ yozuvi** (`AllowedPublicIp.network`,
+  CIDR, binoga bog'langan): server bino ichida yoki yopiq kanal NAT'siz
+  (har bino o'z subnet'i). Bino router ortidan bitta manzil bilan kelsa —
+  IP yozuvi (xususiy manzil ham bo'lishi mumkin).
   Yozuv — IP YOKI tarmoq (`allowed_ip_one_kind`); aniq IP tarmoqdan ustun;
   tarmoqlar kesishmaydi, /8 dan keng emas — qoida bitta joyda
   (`controls.services.clean_allowlist_entry`, panel + Django admin).
-  Preflight'da server ko'rgan manzil FAQAT tarmoq yozuviga mos kelsa
-  hisoblanadi; binoni aniqlash (`resolve_zone_by_public_ip`) ham tarmoq
-  bo'yicha.
+  Binoni aniqlash (`resolve_zone_by_ip`) ham shu yozuvlar bo'yicha.
 * **`REQUIRE_ALLOWED_IP`** (standart `true`): `AllowedPublicIp` bo'sh bo'lsa
   hech kim kirmaydi; `false` da bo'sh ro'yxat = tekshiruv o'chiq.
 * **Kiosk rejimi** (`KIOSK_MODE`, standart = `FULLSCREEN`): ramkasiz + doim
@@ -1580,8 +1599,12 @@ biznes-mantiq) / `api/v1/{serializers,views,urls}.py`. View'lar yupqa.
   (`WindowSystemMenuHint`, Min/Max/Close olinadi — qolsa Qt ramkani
   qaytaradi) + `install_system_menu_guard` (native filtr: Alt+Space
   `WM_SYSKEYDOWN`, `WM_SYSCHAR ' '`, `SC_KEYMENU`, `SC_MOUSEMENU`).
-* **Chiqish**: preflight ekranida parol so'ralmaydi; login sahifasidan
-  boshlab yagona yo'l — **Ctrl+Q** + parol ("Chiqish" tugmasi ataylab yo'q).
+* **Chiqish**: kioskda yagona yo'l — **Ctrl+Q** + parol, login sahifasida
+  ham ("Chiqish" tugmasi ataylab yo'q). IP rad etilgan mashinada — viloyat
+  chiqish paroli (viloyat noma'lum bo'lsa istalgan viloyatniki).
+  **Ctrl+Q oynasidagi «orqaga qaytish» ham PAROL bilan** (bitta maydon,
+  `exit/verify/` `purpose: back`, auditda `client_back`; Enter — xavfsiz
+  amal): Ctrl+Q ni talabgor ham bosa oladi.
 * **Chiqish paroli** — `client/exit/verify/`: xodimning o'z paroli (JWT
   bo'lsa) yoki `controls.ClientExitPassword` (har viloyat uchun, hash;
   API qaytarmaydi). Endpoint autentifikatsiyasiz (`ExitVerifyThrottle`).
@@ -1595,8 +1618,8 @@ biznes-mantiq) / `api/v1/{serializers,views,urls}.py`. View'lar yupqa.
   Faqat `user:{pk}` yoki IP kaliti butun binoni bitta byudjetga tiqadi.
   Kenglarini oshirish (`THROTTLE_*`) — mashina chegarasini emas. DRF ro'yxati
   har so'rovda to'liq qayta yoziladi — o'n minglab limit qo'ymang.
-* Har urinish `client/access-attempt/` → `backend/logs/client_access.log`
-  (`client_access` logger), `AuditLog` ga emas.
+* Har client login'i (ruxsat HA/YO'Q, manba IP, qurilma) →
+  `backend/logs/client_access.log` (`client_access` logger), `AuditLog` ga emas.
 
 > `README.md` dagi qurilma HMAC imzosi (`X-Device-Signature`) **olib
 > tashlangan** (sababi `authentication.py` docstring'ida). Client oqimida
@@ -1621,6 +1644,15 @@ Yangi domen xatosi — `DomainError` merosxo'ri; `code` React'da tarjima kaliti.
 * **CRUD sahifalari bitta dvigateldan**: `components/data/ResourcePage.jsx` +
   `useResource.js` + `ResourceForm.jsx` + `DataTable.jsx`; yangi sahifa =
   `columns` va `fields` (`pages/crud/*.jsx`). Dvigateldan chetga chiqmang.
+* **Jadval props BARQAROR** (`DataGrid` o'zi `React.memo`): `ResourcePage`
+  `resource` ni ustun/callback'larga fasad orqali beradi (`stableResource`,
+  `useResource` har renderda yangi obyekt), `DataTable` `getRowId`,
+  `onRowClick`, `sx`, `slots` ni barqaror qiladi; signaturada `= {}` / `= []`
+  / inline funksiya standart qiymat YOZMANG (modul doimiysi). Buzilsa
+  qidiruvga har harf butun jadvalni (yuzlab katak + tooltip) qayta chizadi.
+  Sahifa `isFetching` ni o'qisa har fon so'rovida qayta chiziladi — holatni
+  kichik komponentda kuzating (`Dashboard:DashboardRefreshButton`). Tekshiruv —
+  `npm run dev:scan` (`src/devtools/reactScan.js`, `__renderStats.top()`).
 * Marshrutlar `App.jsx` da, lazy chunk'lar `layout/navigation.js:ROUTE_LOADERS`
   (menyu prefetch bilan bir xil loader). `Guard` — faqat UI qulayligi.
 * **Hodisa turkumlari faqat frontendda** (`utils/events.js`: `integrity` /

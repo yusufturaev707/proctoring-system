@@ -108,7 +108,7 @@ def apply_font(widget, size: int, *, bold: bool = False, extra: str = "") -> Non
     `GLOBAL_STYLESHEET` da `QWidget { font-size: 15px }` qoidasi bor va
     Qt'da uslub `setFont` dan ustun turadi; uslubdagi `font-size` esa
     `sizeHint` ga har doim ham yetib bormaydi va matn kesiladi.
-    Ikkalasi ham kerak (`ui/pages/preflight_page.py` dagi bilan bir xil).
+    Ikkalasi ham kerak.
     """
     font = QFont()
     font.setFamilies(["Segoe UI", "Inter", "Roboto"])

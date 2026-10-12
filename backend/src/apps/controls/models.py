@@ -34,12 +34,13 @@ class AllowedPublicIp(TimeStampedModel):
     Client uydan emas, aynan imtihon markazidan ulanayotganini tekshiradi —
     bu JSHSHIR qidiruvi hujum yuzasini keskin toraytiradi.
 
-    Yozuv ikki turdan biri (bazada `allowed_ip_one_kind` bilan majburlangan):
+    Manzil — server KO'RGAN manzil (`client_ip`). Yozuv ikki turdan biri
+    (bazada `allowed_ip_one_kind` bilan majburlangan):
 
-      * `ip_address` — binoning tashqi (NAT) manzili: bino server bilan
-        internet orqali ulanadi;
+      * `ip_address` — bino serverga bitta manzil bilan keladi (NAT):
+        internet orqali yoki yopiq kanalda bino routeri ortidan;
       * `network` — tarmoq, masalan `192.168.0.0/24`: server BINO ICHIDA
-        turadi yoki binolar bitta VPN tarmog'ida. Server bu clientlarni
+        turadi yoki binolar yopiq kanalda NAT'siz. Server bu clientlarni
         xususiy manzil bilan ko'radi va bitta IP bilan ularni sanab
         bo'lmaydi. `ALLOW_PRIVATE_SOURCE_IP` dan farqi — tarmoq BINOGA
         bog'lanadi: boshqa ichki tarmoq yoki boshqa binoning qurilmasi

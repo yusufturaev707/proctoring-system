@@ -102,8 +102,6 @@ if env_bool("LT_THROTTLING", True):
         "staff_login": "60/min",
         "staff_login_device": "10/min",
         "device_register": "20/hour",
-        "preflight": "30/min",
-        "access_attempt": "30/min",
         "user": "1000/min",
         "anon": "60/min",
     }

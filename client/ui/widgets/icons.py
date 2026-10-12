@@ -58,6 +58,63 @@ _SPIN_STEP = 6
 _SPIN_INTERVAL_MS = 16
 
 
+def draw_refresh(painter: QPainter, center: QPointF, radius: float, color: QColor,
+                 *, angle: float = 0.0) -> None:
+    """
+    "Yangilash" belgisi: ochiq halqa + uchidagi strelka.
+
+    Bitta joyda — sarlavhadagi `RefreshButton` (aylanadi, `angle`) va
+    imtihon panelidagi `GlyphButton("refresh")` bir xil belgini chizadi.
+
+    Halqa 270 gradus: to'liq aylana "yuklanmoqda" indikatoriga
+    o'xshab qolardi va strelka uchun joy qolmasdi.
+    """
+    start_deg = 55 + angle
+    span_deg = 270
+
+    pen = QPen(color, max(2.0, radius * 0.26))
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    painter.setPen(pen)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    # `drawArc` 1/16 gradus birligida ishlaydi.
+    painter.drawArc(
+        QRectF(center.x() - radius, center.y() - radius, radius * 2, radius * 2),
+        int(start_deg * 16),
+        int(span_deg * 16),
+    )
+
+    # Strelka yoyning OXIRIDA va uning urinma yo'nalishida.
+    #
+    # Qt'da y pastga o'sadi, burchak esa soat strelkasiga teskari:
+    #     P(t) = (cx + r*cos t, cy - r*sin t)
+    # Demak t ortgan sari yo'nalish (-sin t, -cos t) bo'ladi.
+    end = math.radians(start_deg + span_deg)
+    tip_dir = QPointF(-math.sin(end), -math.cos(end))
+    normal = QPointF(tip_dir.y(), -tip_dir.x())
+    point = QPointF(
+        center.x() + radius * math.cos(end),
+        center.y() - radius * math.sin(end),
+    )
+
+    head = radius * 0.62
+    arrow = QPolygonF(
+        [
+            QPointF(point.x() + tip_dir.x() * head, point.y() + tip_dir.y() * head),
+            QPointF(
+                point.x() - tip_dir.x() * head * 0.35 + normal.x() * head * 0.72,
+                point.y() - tip_dir.y() * head * 0.35 + normal.y() * head * 0.72,
+            ),
+            QPointF(
+                point.x() - tip_dir.x() * head * 0.35 - normal.x() * head * 0.72,
+                point.y() - tip_dir.y() * head * 0.35 - normal.y() * head * 0.72,
+            ),
+        ]
+    )
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(color)
+    painter.drawPolygon(arrow)
+
+
 class RefreshButton(QPushButton):
     """
     Dumaloq "yangilash" tugmasi (MD3 standard icon button).
@@ -149,56 +206,7 @@ class RefreshButton(QPushButton):
         painter.end()
 
     def _draw_glyph(self, painter: QPainter, center: QPointF, radius: float, color: QColor) -> None:
-        """
-        Ochiq halqa + uchidagi strelka.
-
-        Halqa 270 gradus: to'liq aylana "yuklanmoqda" indikatoriga
-        o'xshab qolardi va strelka uchun joy qolmasdi.
-        """
-        start_deg = 55 + self._angle
-        span_deg = 270
-
-        pen = QPen(color, max(2.0, radius * 0.26))
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        painter.setPen(pen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        # `drawArc` 1/16 gradus birligida ishlaydi.
-        painter.drawArc(
-            QRectF(center.x() - radius, center.y() - radius, radius * 2, radius * 2),
-            int(start_deg * 16),
-            int(span_deg * 16),
-        )
-
-        # Strelka yoyning OXIRIDA va uning urinma yo'nalishida.
-        #
-        # Qt'da y pastga o'sadi, burchak esa soat strelkasiga teskari:
-        #     P(t) = (cx + r*cos t, cy - r*sin t)
-        # Demak t ortgan sari yo'nalish (-sin t, -cos t) bo'ladi.
-        end = math.radians(start_deg + span_deg)
-        tip_dir = QPointF(-math.sin(end), -math.cos(end))
-        normal = QPointF(tip_dir.y(), -tip_dir.x())
-        point = QPointF(
-            center.x() + radius * math.cos(end),
-            center.y() - radius * math.sin(end),
-        )
-
-        head = radius * 0.62
-        arrow = QPolygonF(
-            [
-                QPointF(point.x() + tip_dir.x() * head, point.y() + tip_dir.y() * head),
-                QPointF(
-                    point.x() - tip_dir.x() * head * 0.35 + normal.x() * head * 0.72,
-                    point.y() - tip_dir.y() * head * 0.35 + normal.y() * head * 0.72,
-                ),
-                QPointF(
-                    point.x() - tip_dir.x() * head * 0.35 - normal.x() * head * 0.72,
-                    point.y() - tip_dir.y() * head * 0.35 - normal.y() * head * 0.72,
-                ),
-            ]
-        )
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(color)
-        painter.drawPolygon(arrow)
+        draw_refresh(painter, center, radius, color, angle=self._angle)
 
     # ------------------------------------------------------------------
     def enterEvent(self, event) -> None:
@@ -298,7 +306,7 @@ class GlyphButton(QPushButton):
     """
 
     #: Chizish qoidalari: nom -> chizuvchi metod.
-    GLYPHS = ("warning", "power")
+    GLYPHS = ("warning", "power", "refresh")
 
     def __init__(self, glyph: str, *, size: int = 40, tone: str = "neutral",
                  tooltip: str = "", parent=None) -> None:
@@ -333,6 +341,8 @@ class GlyphButton(QPushButton):
 
         if self._glyph == "power":
             self._draw_power(painter, center, side * 0.28, color)
+        elif self._glyph == "refresh":
+            draw_refresh(painter, center, side * 0.26, color)
         else:
             self._draw_warning(painter, center, side * 0.30, color)
         painter.end()

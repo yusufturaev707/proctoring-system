@@ -29,6 +29,7 @@ import logging
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
+    QDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -57,16 +58,20 @@ class ExitDialog(CardDialog):
     tuzoqqa tushardi.
 
     Shuning uchun `back_label` berilganda dialog ikkita yo'l
-    taklif qiladi:
+    taklif qiladi va IKKALASI HAM PAROL BILAN (bitta maydon):
 
-        Orqaga qaytish  - xavfsiz, tez-tez kerak bo'ladigan amal;
-                          parol SO'RALMAYDI, chunki dastur ochiq
-                          qoladi va kiosk buzilmaydi.
-        Chiqish         - dasturni yopadi, parol MAJBURIY.
+        Orqaga qaytish  - oldingi sahifaga; dastur ochiq qoladi.
+        Chiqish         - dasturni yopadi.
 
-    Birinchisi tepada va tonal (MD3 "filled tonal") - u tavsiya
-    etiladigan amal. Ikkinchisi pastda, parol maydonining ostida:
-    shakl o'zi "bu boshqa, jiddiyroq yo'l" deb turadi.
+    Orqaga qaytish ham parolsiz EMAS: Ctrl+Q ni talabgor ham bosa
+    oladi va oqimni orqaga surib (masalan FaceID'dan talabgor
+    sahifasiga) operator qilishi kerak bo'lgan amalni o'zi qilardi.
+    Server qaysi amal ekanini biladi (`purpose`) va auditga alohida
+    yozadi (`client_back` / `client_exit`).
+
+    ENTER — XAVFSIZ AMAL: orqaga qaytish bo'lsa o'sha, aks holda
+    chiqish. Imtihon sahifasida chiqish sessiyani yakunlaydi va uni
+    Enter bilan tasodifan qilish mumkin bo'lmasligi kerak.
     """
 
     #: `exec()` qaytaradigan uchinchi natija.
@@ -96,6 +101,8 @@ class ExitDialog(CardDialog):
         #: Server "bu viloyatda parol sozlanmagan" dedi - dialog
         #: tasdiqlash rejimiga o'tadi.
         self._unconfigured = False
+        #: Parol tekshirilayotgan amal: `Accepted` (chiqish) yoki `BACK`.
+        self._pending = QDialog.DialogCode.Accepted
 
         self._setup_ui()
 
@@ -115,7 +122,7 @@ class ExitDialog(CardDialog):
         layout.addLayout(badge_row)
         layout.addSpacing(16)
 
-        title = QLabel("Dasturdan chiqish")
+        title = QLabel("Orqaga qaytish yoki chiqish" if self._back_label else "Dasturdan chiqish")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         _apply_font(title, 21, bold=True, extra="color: {};".format(COLORS["text"]))
         layout.addWidget(title)
@@ -126,7 +133,7 @@ class ExitDialog(CardDialog):
         # Bu farqni yashirish operatorni "qaysi parolni yozay?" degan
         # savol bilan qoldirardi.
         subtitle = QLabel(
-            "{} sifatida chiqasiz — o'z parolingizni kiriting.".format(self._staff_name)
+            "{} — o'z parolingizni kiriting.".format(self._staff_name)
             if self._staff_name
             else "Tizimga kirilmagan — viloyatning chiqish parolini kiriting."
         )
@@ -152,26 +159,9 @@ class ExitDialog(CardDialog):
             )
             layout.addWidget(warning)
 
-        # --- Xavfsiz yo'l: orqaga qaytish ------------------------------
-        if self._back_label:
-            layout.addSpacing(20)
-            self.back_btn = QPushButton(self._back_label)
-            self.back_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            self.back_btn.setStyleSheet(tonal_button_style(46))
-            self.back_btn.clicked.connect(lambda: self.done(self.BACK))
-            layout.addWidget(self.back_btn)
+        layout.addSpacing(20)
 
-            hint = QLabel("yoki dasturdan butunlay chiqish uchun parolni kiriting")
-            hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            hint.setWordWrap(True)
-            _apply_font(hint, 13, extra="color: {};".format(COLORS["text_muted"]))
-            layout.addSpacing(14)
-            layout.addWidget(hint)
-            layout.addSpacing(10)
-        else:
-            self.back_btn = None
-            layout.addSpacing(20)
-
+        # Parol BIRINCHI: ikkala amal ham undan o'tadi.
         self.password_input = QLineEdit()
         self.password_input.setPlaceholderText("Parol")
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
@@ -180,15 +170,26 @@ class ExitDialog(CardDialog):
         # fokus paytida placeholder'ni chizmaydi va maydon bo'sh
         # kvadratga aylanib qoladi. Qolgan formalar ham chapga
         # tekislangan - bir xil bo'lgani yaxshi.
-        self.password_input.returnPressed.connect(self._on_confirm)
+        self.password_input.returnPressed.connect(self._on_enter)
         layout.addWidget(self.password_input)
 
         self.message = MessageBar()
         layout.addSpacing(12)
         layout.addWidget(self.message)
 
-        # --- Amallar: preflight ekrani bilan BIR XIL shakl -------------
-        layout.addSpacing(18)
+        # --- Xavfsiz yo'l: orqaga qaytish (tonal, to'liq kenglik) -------
+        if self._back_label:
+            layout.addSpacing(18)
+            self.back_btn = QPushButton(self._back_label)
+            self.back_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.back_btn.setStyleSheet(tonal_button_style(46))
+            self.back_btn.setAutoDefault(False)
+            self.back_btn.clicked.connect(lambda: self._on_confirm(self.BACK))
+            layout.addWidget(self.back_btn)
+            layout.addSpacing(10)
+        else:
+            self.back_btn = None
+            layout.addSpacing(18)
         buttons = QHBoxLayout()
         buttons.setSpacing(10)
 
@@ -203,23 +204,32 @@ class ExitDialog(CardDialog):
         self.confirm_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.confirm_btn.setStyleSheet(outlined_button_style(44, "primary"))
         self.confirm_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.confirm_btn.setDefault(True)
-        self.confirm_btn.clicked.connect(self._on_confirm)
+        self.confirm_btn.setAutoDefault(False)
+        self.confirm_btn.clicked.connect(
+            lambda: self._on_confirm(QDialog.DialogCode.Accepted)
+        )
         buttons.addWidget(self.confirm_btn, 1)
 
         layout.addLayout(buttons)
         self.refit()
 
     # ------------------------------------------------------------------
-    def _on_confirm(self) -> None:
+    def _on_enter(self) -> None:
+        """Enter — xavfsiz amal (sinf docstring'iga qarang)."""
+        self._on_confirm(self.BACK if self.back_btn is not None else QDialog.DialogCode.Accepted)
+
+    def _on_confirm(self, action) -> None:
+        """`action` — `QDialog.DialogCode.Accepted` (chiqish) yoki `BACK`."""
         if self._busy:
             return
+        self._pending = action
         # Parol sozlanmagan holat: server shunday deb javob bergan va
         # dialog tasdiqlashga aylangan. Qayta so'rov yubormaymiz -
         # javob o'zgarmaydi.
         if self._unconfigured:
-            log.warning("Chiqish parolsiz bajarildi - viloyatda parol sozlanmagan")
-            self.accept()
+            log.warning("Parolsiz ruxsat berildi (%s) - viloyatda parol sozlanmagan",
+                        "orqaga" if action == self.BACK else "chiqish")
+            self.done(action)
             return
 
         password = self.password_input.text()
@@ -232,15 +242,24 @@ class ExitDialog(CardDialog):
         # solishtiriladi. Shuning uchun u fon thread'ida ketadi - aks
         # holda dialog so'rov davomida muzlab qolardi.
         self._set_busy(True)
-        worker = ApiWorker(self._repo.verify_exit, password=password, parent=self)
+        worker = ApiWorker(
+            self._repo.verify_exit,
+            password=password,
+            purpose="back" if action == self.BACK else "exit",
+            parent=self,
+        )
         worker.succeeded.connect(self._on_verified)
         worker.failed.connect(self._on_rejected)
         self._workers.run(worker)
 
     def _on_verified(self, result) -> None:
         self._set_busy(False)
-        log.info("Chiqishga ruxsat berildi (%s)", (result or {}).get("method") or "-")
-        self.accept()
+        log.info(
+            "%s ruxsat berildi (%s)",
+            "Orqaga qaytishga" if self._pending == self.BACK else "Chiqishga",
+            (result or {}).get("method") or "-",
+        )
+        self.done(self._pending)
 
     def _on_rejected(self, message: str, code: str) -> None:
         self._set_busy(False)
@@ -256,7 +275,7 @@ class ExitDialog(CardDialog):
                 "Bu viloyat uchun chiqish paroli sozlanmagan. "
                 "Administratorga xabar bering."
             )
-            self.message.show_message("Parolsiz chiqishga ruxsat berildi", "warning")
+            self.message.show_message("Parolsiz ruxsat berildi", "warning")
             self.confirm_btn.setText("Baribir chiqish")
             self.refit()
             log.error("Viloyat uchun chiqish paroli sozlanmagan")
@@ -270,20 +289,28 @@ class ExitDialog(CardDialog):
         # dialog o'sishi kerak, aks holda matn tugmalar ustiga
         # chiqib qolardi.
         self.refit()
-        log.warning("Chiqish rad etildi (%s): %s", code or "-", message)
+        log.warning(
+            "%s rad etildi (%s): %s",
+            "Orqaga qaytish" if self._pending == self.BACK else "Chiqish",
+            code or "-", message,
+        )
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
         self.confirm_btn.setEnabled(not busy)
         self.cancel_btn.setEnabled(not busy)
         if self.back_btn is not None:
-            # Parol tekshirilayotganda orqaga qaytish ham bloklanadi:
+            # Parol tekshirilayotganda ikkinchi amal ham bloklanadi:
             # dialog yopilsa, javob kelganda u allaqachon yo'q
             # obyektga signal yuborardi.
             self.back_btn.setEnabled(not busy)
+            self.back_btn.setText(
+                "Tekshirilmoqda..." if busy and self._pending == self.BACK
+                else self._back_label
+            )
         self.password_input.setEnabled(not busy)
         self.confirm_btn.setText(
-            "Tekshirilmoqda..." if busy
+            "Tekshirilmoqda..." if busy and self._pending != self.BACK
             else ("Baribir chiqish" if self._unconfigured else "Chiqish")
         )
         if busy:

@@ -72,8 +72,8 @@ export default function HotkeyDetailDialog({ row, onEdit, onClose }) {
       <InfoNote icon={<InfoIcon fontSize="small" />}>
         Client imtihon profilidagi ro‘yxatni oladi va u o‘z standart ro‘yxatini ALMASHTIRADI.
         Profilda birorta ham tugma tanlanmagan bo‘lsa, client mashinadagi standartni
-        (<code>BLOCKED_HOTKEYS</code>) ishlatadi. <b>Ctrl+Q</b> hech qachon bloklanmaydi —
-        bu dasturdan chiqishning yagona yo‘li.
+        (<code>BLOCKED_HOTKEYS</code>) ishlatadi. <b>Ctrl+Q</b> (dasturdan chiqish) va{' '}
+        <b>Alt+Shift</b> (klaviatura tili) hech qachon bloklanmaydi.
       </InfoNote>
 
       <Section title="Yozuv">

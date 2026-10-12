@@ -173,21 +173,6 @@ class IpNotAllowed(DomainError):
     default_code = "ip_not_allowed"
 
 
-class PublicIpUnknown(DomainError):
-    """
-    Client qaysi tashqi manzildan kelayotgani ANIQLANMADI.
-
-    `ip_not_allowed` dan farq qiladi va shuning uchun alohida kod: u
-    yerda manzil ma'lum va u ro'yxatda yo'q (administrator IP qo'shishi
-    kerak), bu yerda esa manzilning o'zi yo'q — clientda internet yo'q.
-    Ikkalasi operatorga butunlay boshqa harakatni ko'rsatadi.
-    """
-
-    status_code = status.HTTP_400_BAD_REQUEST
-    default_detail = "Tashqi IP manzil aniqlanmadi — internet aloqasini tekshiring"
-    default_code = "public_ip_unknown"
-
-
 class ExternalPlatformError(DomainError):
     status_code = status.HTTP_502_BAD_GATEWAY
     default_detail = "Tashqi test platformasi javob bermayapti"

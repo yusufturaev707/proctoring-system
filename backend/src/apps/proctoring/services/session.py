@@ -816,11 +816,12 @@ def _create_session(
             #   lan     - talabgor qaysi MASHINADA o'tirgan;
             #   source  - server so'rovni qaysi manzildan ko'rgan
             #             (NAT ortida butun bino uchun bitta);
-            #   public  - bino qaysi tashqi manzil bilan chiqadi.
+            #   public  - binoning tashqi manzili: SERVER operator
+            #             login'ida aniqlagan (`check_client_login`).
             "network": {
                 "lan_ip": lan_ip or "",
                 "source_ip": ip_address or "",
-                "public_ip": getattr(device, "reported_public_ip", "") or "",
+                "public_ip": getattr(device, "public_ip", None) or "",
             },
         },
         external_access_from=_parse_dt(pending.get("external_access_from")),

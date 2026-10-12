@@ -14,8 +14,6 @@ import json
 import logging
 from typing import Any, Optional
 
-from config import APP_VERSION
-from core.errors import ClientError
 from services import system_info
 from services.api_client import ApiClient
 
@@ -54,24 +52,15 @@ class AuthRepository:
 
 class DeviceRepository:
     """
-    Mashinaning o'zi haqidagi ikkita OCHIQ endpoint (JWT talab qilmaydi):
+    Mashinaning o'zi haqidagi OCHIQ endpoint (JWT talab qilmaydi):
 
-        `/client/preflight/`  - "shu tarmoqdan kirish mumkinmi?"
         `/devices/register/`  - "bu mashinani ro'yxatga ol"
 
-    Ikkalasi ham login'dan OLDIN chaqiriladi, shuning uchun ular bir
-    joyda. Mashina haqidagi barcha ma'lumot `services/system_info.py`
-    da yig'iladi: LAN IP, MAC, public IP va apparat izi. Repository
+    Login'dan OLDIN chaqiriladi. Tarmoq (IP) tekshiruvi alohida emas —
+    server uni login'da qiladi (`check_client_login`). Mashina haqidagi barcha ma'lumot `services/system_info.py`
+    da yig'iladi: Machine UUID, LAN IP, MAC va apparat izi. Repository
     faqat uni serverga uzatadi.
     """
-
-    #: Preflight'da public IP ni kutish muddati (soniya).
-    #:
-    #: Bu YAGONA joy kutishga ruxsat berilgan: qolgan hamma joyda
-    #: qiymat keshdan olinadi va bo'sh bo'lsa so'rov usiz ketaveradi.
-    #: Dastur ishga tushishi bilan `prefetch()` boshlangani uchun
-    #: amalda kutish deyarli bo'lmaydi.
-    PUBLIC_IP_WAIT_SECONDS = 6.0
 
     def __init__(self, api: Optional[ApiClient] = None) -> None:
         self._api = api or ApiClient()
@@ -80,92 +69,6 @@ class DeviceRepository:
     hardware_fingerprint = staticmethod(system_info.hardware_fingerprint)
     local_ip = staticmethod(system_info.local_ip)
     mac_address = staticmethod(system_info.mac_address)
-    public_ip = staticmethod(system_info.public_ip)
-
-    def preflight(self) -> dict:
-        """
-        Login formasini ko'rsatishdan oldingi tarmoq tekshiruvi.
-
-        Ikki bosqich, ikkalasi ham to'sadi:
-
-          1. LOKAL - kompyuterning tashqi manzili aniqlanadimi? Yo'q
-             bo'lsa, internet yo'q degani va bu yerda to'xtaymiz. Bu
-             serverdan QAT'IYROQ shart (server o'zi ko'rgan LAN manzil
-             ro'yxatda bo'lsa ruxsat berardi), lekin ataylab shunday:
-             imtihon tashqi platformada o'tadi, ya'ni internetsiz
-             operator baribir birinchi sahifadan nariga o'tolmaydi -
-             buni oqim boshida aytish halolroq.
-          2. SERVER - manzil `AllowedPublicIp` ro'yxatidami.
-
-        Public IP shu yerda KUTILADI (boshqa joylarda kutilmaydi):
-        tekshiruv usiz ma'nosiz bo'lardi.
-        """
-        public_ip = system_info.public_ip(self.PUBLIC_IP_WAIT_SECONDS)
-        if not public_ip:
-            # Kod backend kodlari bilan bir xil shaklda - sahifalar
-            # xatolarni faqat `code` bo'yicha ajratadi va xato qayerda
-            # tug'ilgani ular uchun ahamiyatsiz.
-            raise ClientError(
-                "Internetga chiqish manzili aniqlanmadi.",
-                code="public_ip_unknown",
-            )
-
-        try:
-            return self._api.post(
-                "/client/preflight/",
-                json_body={"public_ip": public_ip},
-                with_auth=False,
-                # Faqat o'qiydi ("ro'yxatdami?") — takrorlash xavfsiz.
-                idempotent=True,
-            )
-        except ClientError as exc:
-            # Server ikki xil rad javobini bitta kod bilan qaytaradi
-            # (`ip_not_allowed`), farqi `details` da. Ularni SHU YERDA
-            # ajratamiz: sahifalar faqat `code` bo'yicha qaror qabul
-            # qiladi va operatorga ko'rsatiladigan matn butunlay
-            # boshqacha bo'lishi kerak - biri administrator xatosi,
-            # ikkinchisi kompyuterning joylashuvi haqida.
-            if (exc.details or {}).get("allowlist_empty"):
-                raise ClientError(
-                    "Ruxsat etilgan IP'lar ro'yxati bo'sh.",
-                    code="ip_allowlist_empty",
-                    details=exc.details,
-                    status=exc.status,
-                ) from exc
-            raise
-
-    def report_access_attempt(self, *, entered_login: bool, code: str = "") -> None:
-        """
-        Kirish urinishini serverga xabar qiladi (`client_access.log`).
-
-        Mashinani ANIQLAYDIGAN qiymatlar yuboriladi - Machine UUID, MAC,
-        LAN IP va public IP. Har biri boshqa savolga javob beradi va
-        administrator jurnalni ularning istalgani bo'yicha qidiradi:
-        "shu kompyuter", "shu xona", "shu bino".
-
-        BEST-EFFORT: bu chaqiruv oqimga ta'sir qilmaydi. Jurnalga
-        yozib bo'lmagani operatorni to'xtatish uchun sabab emas -
-        u allaqachon to'xtagan yoki allaqachon o'tgan.
-        """
-        try:
-            snapshot = system_info.snapshot()
-            self._api.post(
-                "/client/access-attempt/",
-                json_body={
-                    "machine_uuid": snapshot["machine_uuid"],
-                    "mac_address": snapshot["mac_address"],
-                    "ip_address": snapshot["ip_address"],
-                    "public_ip": snapshot["public_ip"],
-                    "hostname": snapshot["info_pc"].get("hostname", ""),
-                    "app_version": APP_VERSION,
-                    "entered_login": bool(entered_login),
-                    "code": code or "",
-                },
-                with_auth=False,
-                retries=0,
-            )
-        except Exception as exc:
-            log.info("Kirish urinishini jurnalga yozib bo'lmadi (e'tiborsiz): %s", exc)
 
     def register(self, *, app_version: str, app_hash: str = "",
                  inventory_code: str = "") -> dict:
@@ -174,10 +77,7 @@ class DeviceRepository:
 
         Server ularni ISHONCHLILIK tartibida ishlatadi: Machine UUID (ona
         plata) -> MAC (UUID'siz eski yozuvlar) -> inventar kodi -> LAN
-        IP + bino. Public IP esa
-        binoni aniqlash uchun zaxira signal: server o'zi ko'rgan manzil
-        xususiy bo'lsa (masalan server o'sha binoning ichida tursa),
-        client aytgan public IP ishga tushadi.
+        IP + bino. Binoni server so'rov KELGAN manzil bo'yicha aniqlaydi.
         """
         payload = system_info.snapshot()
         payload.update(
@@ -251,9 +151,6 @@ class ProctoringRepository:
             "app_hash": app_hash,
             # Iz so'rovdagi MAC bilan BITTA adapterdan (`machine["mac"]`).
             "hardware_fingerprint": system_info.hardware_fingerprint(machine.get("mac") or None),
-            # Har handshake'da yangilanadi: bino rezerv kanalga
-            # o'tsa, panelda eski manzil qolib ketmasligi kerak.
-            "public_ip": system_info.public_ip(),
             "monitors": monitors,
             "cameras": cameras,
         }
@@ -737,7 +634,7 @@ class ProctoringRepository:
             json_body={"kind": kind, "description": description},
         )
 
-    def verify_exit(self, *, password: str) -> dict:
+    def verify_exit(self, *, password: str, purpose: str = "exit") -> dict:
         """
         Client'dan chiqishga ruxsat - IKKI xil parol qabul qilinadi.
 
@@ -746,11 +643,15 @@ class ProctoringRepository:
         BILMAYDI va bilishi ham shart emas: u bitta maydon ko'rsatadi
         va javobdagi `method` ni faqat log uchun ishlatadi.
 
-        `public_ip` yuboriladi, chunki login qilinmagan holatda
-        viloyatni aniqlashning yagona yo'li shu (qurilma ro'yxatdan
-        o'tgan bo'lsa, server uni `X-Device-ID` orqali ham topadi).
+        Viloyatni server o'zi topadi: `X-Device-ID` orqali, qurilma
+        ro'yxatdan o'tmagan bo'lsa — so'rov kelgan manzil qaysi binoga
+        tegishli ekanidan.
+
+        `purpose` — `exit` (dasturdan chiqish) yoki `back` (Ctrl+Q
+        oynasidan oldingi sahifaga qaytish): qoida bir xil, auditda
+        alohida amal.
         """
         return self._api.post(
             "/client/exit/verify/",
-            json_body={"password": password, "public_ip": system_info.public_ip()},
+            json_body={"password": password, "purpose": purpose},
         )

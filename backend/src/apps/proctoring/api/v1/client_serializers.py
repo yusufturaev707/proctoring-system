@@ -40,47 +40,6 @@ class MachineUuidField(serializers.CharField):
         return normalize_machine_uuid(value) or value
 
 
-class PreflightSerializer(serializers.Serializer):
-    """
-    Ishga tushishdagi tarmoq tekshiruvi — qaror shu yagona maydonda.
-
-    Maydon IXTIYORIY, lekin usiz javob har doim rad etish bo'ladi
-    (`public_ip_unknown`): clientda internet bo'lmasa u tashqi manzilni
-    aniqlay olmaydi va tekshirish uchun hech narsa qolmaydi.
-    """
-
-    public_ip = serializers.IPAddressField(
-        protocol="IPv4", required=False, allow_blank=True
-    )
-
-
-class AccessAttemptSerializer(serializers.Serializer):
-    """
-    Dasturga kirish urinishi — kim, qayerdan va nima bilan tugadi.
-
-    Barcha maydonlar CLIENT aytadi va ular tekshirilmaydi: bu jurnal
-    yozuvi, kirish qarori emas. Qaror `preflight` da chiqarilgan va
-    server o'z xulosasini shu yerda qaytadan hisoblaydi — client
-    aytgani bilan farq qilsa, jurnalda ikkalasi ham qoladi.
-
-    MAC formati tekshiriladi, chunki u jurnalda IZLASH kaliti: buzilgan
-    qiymat keyin hech qachon topilmaydi.
-    """
-
-    machine_uuid = MachineUuidField()
-    mac_address = serializers.CharField(
-        max_length=17, required=False, allow_blank=True, validators=[mac_address_validator]
-    )
-    ip_address = serializers.IPAddressField(protocol="IPv4", required=False, allow_blank=True)
-    public_ip = serializers.IPAddressField(protocol="IPv4", required=False, allow_blank=True)
-    hostname = serializers.CharField(max_length=64, required=False, allow_blank=True)
-    app_version = serializers.CharField(max_length=32, required=False, allow_blank=True)
-    #: Client oqimi natijasi: login sahifasi ochildimi?
-    entered_login = serializers.BooleanField(default=False)
-    #: Client tomondagi xato kodi (`ip_not_allowed`, `network`, ...).
-    code = serializers.CharField(max_length=64, required=False, allow_blank=True)
-
-
 class HandshakeSerializer(serializers.Serializer):
     app_version = serializers.CharField(max_length=32, required=False, allow_blank=True)
     app_hash = serializers.CharField(max_length=64, required=False, allow_blank=True)
@@ -89,9 +48,6 @@ class HandshakeSerializer(serializers.Serializer):
     hardware_fingerprint = serializers.CharField(
         max_length=128, required=False, allow_blank=True
     )
-    # Client o'zi aniqlagan tashqi manzil (diagnostika uchun; kirish
-    # ruxsatini u EMAS, server ko'rgan manzil hal qiladi).
-    public_ip = serializers.IPAddressField(required=False, allow_blank=True)
     # MASHINA IDENTIFIKATORI - ona platadagi SMBIOS UUID. Server uni
     # `Computer.machine_uuid` bilan solishtiradi va mos kelmasa imtihonni
     # boshlashga ruxsat bermaydi (`devices.services.verify_machine`).
@@ -429,12 +385,11 @@ class IdentityConfirmSerializer(serializers.Serializer):
 
 class ExitVerifySerializer(serializers.Serializer):
     password = serializers.CharField(max_length=120)
-    # Login qilinmagan holatda viloyatni aniqlashning yagona yo'li.
-    # Ixtiyoriy: qurilma ro'yxatdan o'tgan bo'lsa, viloyat `X-Device-ID`
-    # orqali kompyuter -> bino -> viloyat zanjiri bilan topiladi.
-    public_ip = serializers.IPAddressField(
-        protocol="IPv4", required=False, allow_blank=True
-    )
+    #: Parol NIMA uchun so'raldi (Ctrl+Q oynasi): dasturdan chiqish yoki
+    #: oldingi sahifaga qaytish. Qoida bir xil — faqat audit yozuvi
+    #: boshqa: qaytish "chiqish" bo'lib ko'rinmasin. Eski client
+    #: yubormaydi — standart `exit`.
+    purpose = serializers.ChoiceField(choices=("exit", "back"), required=False, default="exit")
 
 
 class SessionFinishSerializer(serializers.Serializer):

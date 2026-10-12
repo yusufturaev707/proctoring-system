@@ -1,11 +1,15 @@
 """
-Mashina haqidagi ma'lumot: LAN IP, MAC, public IP, apparat izi.
+Mashina haqidagi ma'lumot: LAN IP, MAC, apparat izi.
 
-Uchta manzil uchta boshqa savolga javob beradi va ular ARALASHTIRILMAYDI:
+Ikki manzil ikki boshqa savolga javob beradi va ular ARALASHTIRILMAYDI:
 
     LAN IP     - mashina bino ichida qaysi manzilda (`Computer.ip_address`)
     MAC        - mashinaning o'zi kim (global unikal, asosiy belgi)
-    public IP  - bino internetga qaysi manzil bilan chiqadi
+
+Tashqi (public) IP ATAYLAB aniqlanmaydi: u internetdagi xizmatga
+(ipify) so'rov talab qilardi va yopiq tarmoqda client login'gacha
+yetmasdi. Qaysi tarmoqdan ulanganini server o'zi ko'rgan manzil
+bo'yicha hal qiladi.
 
 Har biri uchun gibrid strategiya: eng ISHONCHLI usul birinchi,
 ishlamasa keyingisi. Sabab - imtihon markazlaridagi mashinalar bir
@@ -21,8 +25,6 @@ to'g'ri ro'yxatga olingan mashina ham "ro'yxatda yo'q" bo'lib
 chiqardi.
 
 QOIDA: bu moduldagi hech bir funksiya UI thread'ni uzoq bloklamaydi.
-Public IP tashqi so'rov talab qiladi, shuning uchun u FON rejimida
-oldindan olinadi va keshlanadi (`PublicIpResolver`).
 """
 
 from __future__ import annotations
@@ -34,7 +36,6 @@ import socket
 import subprocess
 import sys
 import threading
-import time
 import uuid
 from typing import Optional
 
@@ -294,123 +295,6 @@ def mac_address() -> str:
 
 
 # ---------------------------------------------------------------------
-# Public IP
-# ---------------------------------------------------------------------
-#: (url, JSON kaliti yoki None = oddiy matn)
-_PUBLIC_IP_PROVIDERS = (
-    ("https://api.ipify.org/?format=json", "ip"),
-    ("https://ifconfig.me/ip", None),
-    ("https://icanhazip.com", None),
-    ("http://api.ipify.org/?format=json", "ip"),
-)
-
-
-class PublicIpResolver:
-    """
-    Public IP ni fon rejimida oladi va keshlaydi.
-
-    Nega kesh va fon: bu YAGONA tashqi tarmoq so'rovi. Login oqimida
-    sinxron chaqirilsa, internet sekin bo'lganda operator har kirishda
-    bir necha soniya kutardi - imtihon kunida bu yuzlab yo'qotilgan
-    soniya. Shuning uchun qiymat dastur ishga tushganda oldindan
-    olinadi; tayyor bo'lmasa, so'rov bo'sh qiymat bilan ketaveradi
-    (server buni "noma'lum" deb qabul qiladi).
-    """
-
-    #: Kesh muddati. Bino kanali kun davomida o'zgarishi mumkin
-    #: (rezerv kanalga o'tish), lekin har daqiqada emas.
-    TTL_SECONDS = 15 * 60
-
-    def __init__(self) -> None:
-        self._value = ""
-        self._fetched_at = 0.0
-        self._lock = threading.Lock()
-        self._thread: Optional[threading.Thread] = None
-
-    @property
-    def cached(self) -> str:
-        """Bloklamaydi: kesh bo'sh yoki eskirgan bo'lsa '' qaytaradi."""
-        if self._value and (time.time() - self._fetched_at) < self.TTL_SECONDS:
-            return self._value
-        return ""
-
-    def prefetch(self) -> None:
-        """Fon thread'ida yangilaydi (dastur ishga tushganda chaqiriladi)."""
-        with self._lock:
-            if self._thread is not None and self._thread.is_alive():
-                return
-            if self.cached:
-                return
-            self._thread = threading.Thread(
-                target=self._refresh, name="public-ip", daemon=True
-            )
-            self._thread.start()
-
-    def resolve(self, timeout: float = 0.0) -> str:
-        """
-        Keshdagi qiymat. `timeout` berilsa - shuncha kutadi.
-
-        Login oqimi `timeout=0` bilan chaqiradi: kutish yo'q.
-        """
-        if self.cached:
-            return self.cached
-        self.prefetch()
-        if timeout > 0 and self._thread is not None:
-            self._thread.join(timeout)
-        return self.cached
-
-    def _refresh(self) -> None:
-        value = self._fetch()
-        if value:
-            self._value = value
-            self._fetched_at = time.time()
-            log.info("Public IP: %s", value)
-        else:
-            log.info("Public IP aniqlanmadi (internet yo'q yoki provayderlar javob bermadi)")
-
-    @staticmethod
-    def _fetch() -> str:
-        import httpx
-
-        for url, json_key in _PUBLIC_IP_PROVIDERS:
-            # SSL: avval odatdagi tekshiruv. Imtihon markazlarida
-            # antivirus/proxy o'z sertifikatini kiritib qo'ygan bo'lishi
-            # mumkin - u holda tekshiruvsiz urinamiz. Bu xavfsiz:
-            # javobdan faqat IPv4 satri olinadi, hech qanday sir
-            # uzatilmaydi.
-            for verify in (True, False):
-                try:
-                    response = httpx.get(
-                        url,
-                        timeout=4.0,
-                        verify=verify,
-                        headers={"User-Agent": "ProctoringClient/1.0"},
-                        follow_redirects=True,
-                    )
-                except Exception:
-                    continue
-                if response.status_code != 200:
-                    continue
-                try:
-                    raw = response.json().get(json_key, "") if json_key else response.text
-                except Exception:
-                    continue
-                ip = str(raw or "").strip()
-                if _IPV4_RE.match(ip):
-                    return ip
-                break  # bu provayder javob berdi, lekin yaroqsiz - keyingisiga
-        return ""
-
-
-#: Yagona nusxa - kesh butun dastur bo'ylab bitta bo'lishi kerak.
-public_ip_resolver = PublicIpResolver()
-
-
-def public_ip(timeout: float = 0.0) -> str:
-    return public_ip_resolver.resolve(timeout)
-
-
-# ---------------------------------------------------------------------
 # Umumiy
 # ---------------------------------------------------------------------
 def hardware_fingerprint(mac: Optional[str] = None) -> str:
@@ -587,7 +471,7 @@ def _all_addresses(primary_ip: str = "") -> list:
     return entries
 
 
-def snapshot(public_ip_timeout: float = 0.0) -> dict:
+def snapshot() -> dict:
     """Ro'yxatdan o'tish va handshake uchun to'liq to'plam."""
     # MAC bir marta o'qiladi: `mac_address` maydoni va iz bitta
     # qiymatdan bo'lishi kerak (server ikkalasini solishtiradi).
@@ -597,7 +481,6 @@ def snapshot(public_ip_timeout: float = 0.0) -> dict:
         "machine_uuid": machine_uuid(),
         "mac_address": mac,
         "ip_address": local_ip(),
-        "public_ip": public_ip(public_ip_timeout),
         "hardware_fingerprint": hardware_fingerprint(mac),
         "info_pc": info_pc(),
     }

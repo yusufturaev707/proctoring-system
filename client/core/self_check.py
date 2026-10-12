@@ -9,7 +9,7 @@ kerak" matni bilan aytadi.
 
 QOIDALAR:
   * HECH NARSA TO'SILMAYDI. Tekshiruv faqat ma'lumot beradi: tarmoq
-    (preflight), yuz modeli (FaceID sahifasi), kamera (kamera
+    (server login'da), yuz modeli (FaceID sahifasi), kamera (kamera
     tekshiruvi) o'z joyida o'z qarorini qabul qiladi. Bu yerdagi
     to'siq operatorni Ctrl+Q ga ham yetkazmay qo'yardi.
   * Hamma narsa FON thread'ida (`run_all`) - UI hech qachon kutmaydi.
@@ -338,10 +338,13 @@ def tcp_reachable(host: str, port: int, timeout: float = TCP_TIMEOUT_S) -> bool:
 
 def check_network(api_base_url: str, *, probe: Callable = tcp_reachable) -> list:
     """
-    Server va internet - FAQAT TCP ulanish (ma'lumot yuborilmaydi).
+    Server - FAQAT TCP ulanish (ma'lumot yuborilmaydi).
 
-    Haqiqiy ruxsat tekshiruvi preflight'da; bu yerda faqat "qayerda
-    uzilgan" degan savolga aniq javob.
+    Haqiqiy ruxsat tekshiruvi serverda (login); bu yerda faqat "qayerda
+    uzilgan" degan savolga aniq javob. Internet ATAYLAB tekshirilmaydi:
+    yopiq tarmoqda (server bino ichida yoki yopiq kanalda) u yo'q
+    bo'lishi odatiy va ogohlantirish soxta bo'lardi; test platformasiga
+    yetib bo'lmasa WebView o'zi aniq xato ko'rsatadi.
     """
     problems = []
     parsed = urlparse(api_base_url or "")
@@ -354,13 +357,6 @@ def check_network(api_base_url: str, *, probe: Callable = tcp_reachable) -> list
             "Serverga ulanib bo'lmadi ({}:{}).".format(host or "?", port),
             "Tarmoq kabelini tekshiring. Boshqa kompyuterlar ham ulanolmasa - "
             "server yoki tarmoq administratoriga murojaat qiling.",
-        ))
-    if not probe("api.ipify.org", 443):
-        problems.append(Problem(
-            "internet_unreachable", WARNING,
-            "Internetga chiqib bo'lmadi.",
-            "Imtihon tashqi platformada o'tadi - internet ulanishini "
-            "tekshiring (tarmoq kabeli, proxy, firewall).",
         ))
     return problems
 

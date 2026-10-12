@@ -233,12 +233,16 @@ QLineEdit:disabled {{
     border-color: {border};
 }}
 
+/* Shrift PUNKTDA, piksel emas (11.25pt = 15px, Qt mantiqiy 96 DPI).
+   Qt 6.11 `windows11` uslubi ro'yxat ochilganda shriftning punkt
+   o'lchamini qayta qo'yadi; piksel bilan berilgan shriftda u -1 va
+   log'ga "QFont::setPointSize: Point size <= 0 (-1)" tushadi. */
 QComboBox {{
     background-color: {surface};
     border: 1px solid {outline_variant};
     border-radius: {radius}px;
     padding: 11px 16px;
-    font-size: 15px;
+    font-size: 11.25pt;
     min-height: 44px;
 }}
 QComboBox:hover {{

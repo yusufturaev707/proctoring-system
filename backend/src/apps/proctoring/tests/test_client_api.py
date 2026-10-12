@@ -46,150 +46,90 @@ def bearer(user) -> str:
     return f"Bearer {AccessToken.for_user(user)}"
 
 
-class PreflightTests(TestCase):
+class ClientLoginNetworkTests(TestCase):
     """
-    Ishga tushishdagi tarmoq tekshiruvi — OCHIQ endpoint.
-
-    U hech narsani ochmaydi: client so'rov yuborgan manzilni allaqachon
-    biladi, biz faqat "shu manzil ro'yxatdami" degan javobni beramiz.
+    Client login'i: IP tekshiruvi (alohida preflight yo'q) va binoning
+    tashqi IP'si — SERVER aniqlaydi, faqat operator login'ida.
     """
 
     def setUp(self):
-        # Ruxsat etilgan IP'lar ro'yxati keshlanadi (`IP_CACHE_KEY`,
-        # 300 s). Tozalanmasa testlar bir-birining ro'yxatini ko'radi
-        # va tartibga bog'liq bo'lib qoladi.
         cache.clear()
         self.addCleanup(cache.clear)
         self.client = APIClient()
-        self.url = reverse("client-preflight")
+        self.url = "/api/v1/auth/login/"
+        self.zone = factories.make_zone()
+        self.device = factories.make_device(computer=factories.make_computer(zone=self.zone))
+        self.operator = self.user(["client.operate"])
 
-    def test_allowed_ip_returns_hotkeys(self):
-        """
-        Ruxsat berilganda qulflash siyosati ham qaytadi.
+    @staticmethod
+    def user(permissions):
+        user = factories.make_user(permissions=permissions)
+        user.set_password("parol-123")
+        user.save()
+        return user
 
-        U login'dan OLDIN qo'llanadi: aynan o'sha ekranda kompyuter eng
-        ochiq holatda turadi — operator hali kirmagan, lekin mashina
-        allaqachon talabgor oldida.
-        """
-        from apps.controls.models import HotKeyboardKey
+    def login(self, user, ip, **extra):
+        return self.client.post(
+            self.url,
+            {"username": user.username, "password": "parol-123", **extra},
+            format="json",
+            REMOTE_ADDR=ip,
+            HTTP_X_DEVICE_ID=self.device.device_id,
+        )
 
-        zone = factories.make_zone()
-        AllowedPublicIp.objects.create(ip_address="203.0.113.10", zone=zone)
-        setting = factories.make_setting(is_active=True)
-        key = HotKeyboardKey.objects.create(name="Alt+Tab", code="alt+tab")
-        setting.hotkeys.set([key])
-
-        response = self.client.post(self.url, {"public_ip": "203.0.113.10"}, format="json")
-
-        self.assertEqual(response.status_code, 200)
-        data = response.json()["data"]
-        self.assertTrue(data["allowed"])
-        self.assertEqual(data["hotkeys"], ["alt+tab"])
-        self.assertEqual(data["zone"]["name"], zone.name)
-
-    def test_denied_ip_returns_403_with_details(self):
-        """
-        Rad etishda AYNAN qaysi manzil rad etilgani qaytadi.
-
-        Operator shu raqamni administratorga aytadi — shuning uchun
-        konvert bu yerda qo'lda yig'iladi (`IpNotAllowed` istisnosi
-        `details` ni yo'qotadi).
-        """
-        AllowedPublicIp.objects.create(ip_address="203.0.113.10")
-
-        response = self.client.post(self.url, {"public_ip": "198.51.100.1"}, format="json")
-
+    def test_denied_ip_returns_403_with_observed_ip(self):
+        AllowedPublicIp.objects.create(ip_address="8.8.8.8", zone=self.zone)
+        response = self.login(self.operator, "8.8.4.4")
         self.assertEqual(response.status_code, 403)
         error = response.json()["error"]
         self.assertEqual(error["code"], "ip_not_allowed")
-        self.assertEqual(error["details"]["public_ip"], "198.51.100.1")
+        self.assertEqual(error["details"]["observed_ip"], "8.8.4.4")
         self.assertFalse(error["details"]["allowlist_empty"])
+        self.assertIn("8.8.4.4", error["message"])
 
     def test_empty_allowlist_is_reported_separately(self):
-        """
-        Bo'sh ro'yxat - ADMINISTRATOR xatosi, operatorniki emas.
-
-        Uni "IP'ingiz noto'g'ri" deb ko'rsatish nosozlikni soatlab
-        qidirishga olib keladi.
-        """
-        response = self.client.post(self.url, {"public_ip": "203.0.113.10"}, format="json")
-
+        response = self.login(self.operator, "8.8.8.8")
         self.assertEqual(response.status_code, 403)
         self.assertTrue(response.json()["error"]["details"]["allowlist_empty"])
 
-    def test_requires_no_authentication(self):
-        """
-        Preflight login'dan OLDIN chaqiriladi.
+    def test_other_building_ip_is_denied(self):
+        """Qoida `check_source_ip` bilan bitta — qurilma binosiga bog'langan."""
+        AllowedPublicIp.objects.create(ip_address="8.8.8.8", zone=factories.make_zone())
+        self.assertEqual(self.login(self.operator, "8.8.8.8").status_code, 403)
 
-        Unda hali na JWT, na `device_id` bor — endpoint ochiq bo'lishi
-        SHART, aks holda noto'g'ri tarmoqdagi operator avval login
-        qilishga majbur bo'lardi.
-        """
-        AllowedPublicIp.objects.create(ip_address="203.0.113.10")
-        response = self.client.post(self.url, {"public_ip": "203.0.113.10"}, format="json")
+    def test_panel_login_is_not_checked(self):
+        """Panel IP ro'yxatidan o'tmaydi — administrator birinchi IP'ni kiritadi."""
+        admin = self.user(["panel.access"])
+        response = self.login(admin, "8.8.4.4", surface="panel")
         self.assertEqual(response.status_code, 200)
 
-    def test_invalid_ip_is_rejected_by_serializer(self):
-        response = self.client.post(self.url, {"public_ip": "umuman-ip-emas"}, format="json")
-        self.assertEqual(response.status_code, 400)
+    def test_operator_login_records_building_public_ip(self):
+        AllowedPublicIp.objects.create(ip_address="8.8.8.8", zone=self.zone)
+        response = self.login(self.operator, "8.8.8.8", public_ip="1.2.3.4")
+        self.assertEqual(response.status_code, 200)
+        self.device.refresh_from_db()
+        # Client aytgan qiymat emas — server ko'rgan manzil.
+        self.assertEqual(self.device.public_ip, "8.8.8.8")
 
+    def test_network_entry_clears_public_ip(self):
+        """Tarmoq yozuvi — kompyuterning o'z manzili, tashqi IP emas."""
+        self.device.public_ip = "8.8.8.8"
+        self.device.save(update_fields=["public_ip"])
+        AllowedPublicIp.objects.create(network="10.20.0.0/24", zone=self.zone)
+        self.assertEqual(self.login(self.operator, "10.20.0.7").status_code, 200)
+        self.device.refresh_from_db()
+        self.assertIsNone(self.device.public_ip)
 
-class AccessAttemptTests(TestCase):
-    def setUp(self):
-        cache.clear()
-        self.addCleanup(cache.clear)
-        self.client = APIClient()
-        self.url = reverse("client-access-attempt")
+    def test_non_operator_does_not_record_public_ip(self):
+        AllowedPublicIp.objects.create(ip_address="8.8.8.8", zone=self.zone)
+        staff = self.user(["sessions.view"])
+        self.assertEqual(self.login(staff, "8.8.8.8").status_code, 200)
+        self.device.refresh_from_db()
+        self.assertIsNone(self.device.public_ip)
 
-    def test_logs_attempt_and_returns_202(self):
-        """
-        202: yozib olindi, lekin client uchun hech nimani o'zgartirmaydi.
-
-        Client bu javobni kutmaydi ham — jurnalga yozish oqimni
-        to'xtatmasligi kerak.
-        """
-        with self.assertLogs("client_access", level="INFO") as logs:
-            response = self.client.post(
-                self.url,
-                {
-                    "mac_address": "AA:BB:CC:DD:EE:FF",
-                    "ip_address": "192.168.1.5",
-                    "public_ip": "203.0.113.10",
-                    "hostname": "PC-01",
-                    "entered_login": False,
-                },
-                format="json",
-            )
-
-        self.assertEqual(response.status_code, 202)
-        self.assertIn("KIRISH URINISHI", logs.output[0])
-        self.assertIn("AA:BB:CC:DD:EE:FF", logs.output[0])
-
-    def test_disagreement_between_client_and_server_is_flagged(self):
-        """
-        Server o'z xulosasini QAYTADAN hisoblaydi.
-
-        Client "login ochildi" desa-yu server "ruxsat yo'q" desa - bu
-        alohida signal: yo client eskirgan, yo o'zgartirilgan.
-        """
-        with self.assertLogs("client_access", level="INFO") as logs:
-            self.client.post(
-                self.url,
-                {"public_ip": "198.51.100.1", "entered_login": True},
-                format="json",
-            )
-        self.assertTrue(any("ZIDLIK" in line for line in logs.output))
-
-    def test_invalid_mac_is_rejected(self):
-        """
-        MAC formati tekshiriladi - u jurnalda IZLASH kaliti.
-
-        Buzilgan qiymat keyin hech qachon topilmaydi.
-        """
-        response = self.client.post(
-            self.url, {"mac_address": "mac-emas"}, format="json"
-        )
-        self.assertEqual(response.status_code, 400)
+    def test_preflight_endpoint_is_gone(self):
+        response = self.client.post("/api/v1/client/preflight/", {}, format="json")
+        self.assertEqual(response.status_code, 404)
 
 
 class ExitVerifyTests(TestCase):
@@ -215,6 +155,32 @@ class ExitVerifyTests(TestCase):
         row.save()
         return row
 
+    def test_back_needs_password_and_is_audited_separately(self):
+        """
+        Ctrl+Q oynasidan orqaga qaytish ham parol bilan; auditda u
+        "chiqish" emas — dastur yopilmagan.
+        """
+        self._set_password("chiqish-paroli")
+        headers = {"HTTP_X_DEVICE_ID": self.device.device_id}
+
+        wrong = self.client.post(
+            self.url, {"password": "xato", "purpose": "back"}, format="json", **headers
+        )
+        self.assertEqual(wrong.status_code, 403)
+
+        response = self.client.post(
+            self.url, {"password": "chiqish-paroli", "purpose": "back"}, format="json", **headers
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(AuditLog.objects.filter(action="client_back").exists())
+        self.assertFalse(AuditLog.objects.filter(action="client_exit").exists())
+
+    def test_unknown_purpose_rejected(self):
+        response = self.client.post(
+            self.url, {"password": "x", "purpose": "hammasi"}, format="json"
+        )
+        self.assertEqual(response.status_code, 400)
+
     def test_region_password_allows_exit(self):
         self._set_password("chiqish-paroli")
         response = self.client.post(
@@ -225,6 +191,34 @@ class ExitVerifyTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["data"]["method"], "region")
+
+    def test_region_found_by_source_address_without_device(self):
+        """
+        Ro'yxatdan o'tmagan mashina: viloyat so'rov KELGAN manzil
+        bo'yicha topiladi — client aytgan manzil endi yuborilmaydi va
+        qabul qilinmaydi.
+        """
+        cache.clear()
+        self.addCleanup(cache.clear)
+        AllowedPublicIp.objects.create(ip_address="203.0.113.10", zone=self.zone)
+        self._set_password("chiqish-paroli")
+
+        other = ClientExitPassword(region=factories.make_region())
+        other.set_password("boshqa-viloyat")
+        other.save()
+
+        response = self.client.post(
+            self.url, {"password": "chiqish-paroli"}, format="json", REMOTE_ADDR="203.0.113.10"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["method"], "region")
+
+        # Viloyat aniqlangach FAQAT uning paroli sinaladi: boshqa
+        # viloyat paroli bu binoda ishlamaydi.
+        response = self.client.post(
+            self.url, {"password": "boshqa-viloyat"}, format="json", REMOTE_ADDR="203.0.113.10"
+        )
+        self.assertEqual(response.status_code, 403)
 
     def test_staff_password_allows_exit_and_names_the_person(self):
         """
@@ -374,6 +368,17 @@ class FaceEndpointTests(RedisStateMixin, TestCase):
         log = FaceVerificationLog.objects.get()
         self.assertEqual(log.score, 88)
         self.assertTrue(log.image_path)
+
+    def test_session_keeps_server_determined_public_ip(self):
+        """Login'da server aniqlagan tashqi IP sessiya bayonnomasiga ko'chadi."""
+        self.device.public_ip = "8.8.8.8"
+        self.device.save(update_fields=["public_ip"])
+        response = self._post(
+            "client-face-verify",
+            {"challenge": self.challenge, "embedding": [0.1] * 512, "score": 88, "faces_detected": 1},
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(ExamSession.objects.get().meta["network"]["public_ip"], "8.8.8.8")
 
     def test_verify_refuses_score_below_threshold(self):
         response = self._post(

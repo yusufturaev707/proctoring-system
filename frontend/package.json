@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:scan": "vite --mode scan",
     "build": "vite build",
     "preview": "vite preview",
     "lint": "eslint src --ext js,jsx"
@@ -29,6 +30,7 @@
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
+    "react-scan": "^0.5.7",
     "vite": "^6.0.7"
   }
 }

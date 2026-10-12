@@ -62,8 +62,8 @@ $taskAction = New-ScheduledTaskAction -Execute $ExePath -WorkingDirectory (Split
 
 $trigger = New-ScheduledTaskTrigger -AtLogOn
 # Ish stoli va tarmoq ko'tarilishiga vaqt: darhol ishga tushgan client
-# preflight so'rovini tarmoq hali yo'q paytda yuborib, "server javob
-# bermadi" ekranida qolardi.
+# qurilma ro'yxatdan o'tishi va login so'rovlarini tarmoq hali yo'q
+# paytda yuborardi.
 $trigger.Delay = "PT10S"
 
 $principal = New-ScheduledTaskPrincipal -GroupId $usersGroup -RunLevel Highest

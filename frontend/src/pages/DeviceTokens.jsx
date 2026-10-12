@@ -201,7 +201,7 @@ export default function DeviceTokens() {
       },
       { field: 'last_used_at', headerName: 'Oxirgi faollik', width: 120, renderCell: LastSeenCell },
       {
-        // UCHTA MANZIL, UCHTA MA'NO (`CLAUDE.md`). Bu — "qaysi MASHINA":
+        // IKKI MANZIL, IKKI MA'NO (`CLAUDE.md`). Bu — "qaysi MASHINA":
         // client serverga chiqadigan adapterning LAN manzili va
         // sessiyaga ham aynan shu yoziladi. Ilgari ustun yo'q edi, ya'ni
         // panelda mashinani IP bo'yicha topishning yo'li yo'q edi.

@@ -8,7 +8,6 @@ throttling, boshqa xavf profili.
 from django.urls import path
 
 from apps.proctoring.api.v1.client_views import (
-    AccessAttemptView,
     CameraCheckView,
     CameraConfigView,
     CameraStreamView,
@@ -25,7 +24,6 @@ from apps.proctoring.api.v1.client_views import (
     HeartbeatView,
     IdentityConfirmView,
     PeriodicFaceView,
-    PreflightView,
     PresenceView,
     ProctoringStartView,
     ProctoringStopView,
@@ -38,13 +36,8 @@ from apps.proctoring.api.v1.client_views import (
 )
 
 urlpatterns = [
-    # Kirish oqimi
-    # Preflight login'dan OLDIN chaqiriladi va JWT talab qilmaydi —
-    # shuning uchun u ro'yxatda ham birinchi turadi.
-    path("preflight/", PreflightView.as_view(), name="client-preflight"),
-    # Urinish natijasi (ruxsat berildi/berilmadi, login ochildi/ochilmadi)
-    # shu yerga keladi va `client_access.log` ga tushadi.
-    path("access-attempt/", AccessAttemptView.as_view(), name="client-access-attempt"),
+    # Kirish oqimi. IP tekshiruvi login'da (`auth/login/`,
+    # `devices.services.check_client_login`) — alohida preflight yo'q.
     path("handshake/", HandshakeView.as_view(), name="client-handshake"),
     # "Client ishlab turibdi" signali - SESSIYASIZ ham yuboriladi
     # (operator kirgan, talabgor kutilmoqda).

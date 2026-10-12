@@ -1,8 +1,32 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-export default defineConfig({
-  plugins: [react()],
+/**
+ * React Scan (`npm run dev:scan`) — FAQAT dev serverda va `--mode scan` da.
+ *
+ * Skript `index.html` ga ilova kodidan OLDIN qo'yiladi: React Scan
+ * React'dan oldin yuklanishi shart (DevTools hook). Modul skriptlar
+ * hujjat tartibida bajariladi, ya'ni `main.jsx` dan keyin emas.
+ * Production build'ga ham, oddiy `npm run dev` ga ham hech narsa
+ * qo'shilmaydi (`src/devtools/reactScan.js`).
+ */
+function reactScanPlugin(enabled) {
+  return {
+    name: 'react-scan-dev',
+    apply: 'serve',
+    transformIndexHtml() {
+      if (!enabled) return []
+      return [{
+        tag: 'script',
+        attrs: { type: 'module', src: '/src/devtools/reactScan.js' },
+        injectTo: 'head-prepend',
+      }]
+    },
+  }
+}
+
+export default defineConfig(({ mode }) => ({
+  plugins: [react(), reactScanPlugin(mode === 'scan')],
   server: {
     port: 5175,
     proxy: {
@@ -27,4 +51,4 @@ export default defineConfig({
       },
     },
   },
-})
+}))

@@ -66,7 +66,7 @@ def known_device_pk(request) -> int | None:
     """
     `X-Device-ID` bazadagi qurilmaniki bo'lsa — uning `pk` si, aks holda `None`.
 
-    Ochiq endpointlarda (`preflight`, `access-attempt`, `devices/register`)
+    Ochiq endpointlarda (`auth/login`, `devices/register`)
     `DeviceResolution` ishlamaydi, shuning uchun qurilma shu yerda
     aniqlanadi. Header'ning O'ZIGA ishonilmaydi: uni istalgan client
     yozadi va har so'rovda yangi ID yuborib chegarani chetlab o'tardi.
@@ -319,40 +319,6 @@ class DeviceRegisterThrottle(BaseScopedThrottle):
     """
 
     scope = "device_register"
-
-    def get_ident_value(self, request, view):
-        return device_or_ip_ident(request)
-
-
-class PreflightThrottle(BaseScopedThrottle):
-    """
-    Ishga tushishdagi tarmoq tekshiruvi — OCHIQ endpoint.
-
-    Chegara `device_register` dan yumshoqroq: preflight hech narsa
-    YARATMAYDI, u faqat o'qiydi. Lekin cheksiz bo'lishi ham mumkin emas
-    — ro'yxatdagi IP'larni tashqaridan sanab chiqish yo'liga aylanardi.
-    Kalit — `device_or_ip_ident` (bino NAT'i ortidagi ommaviy ishga
-    tushish uchun); tashqi skaner noma'lum qurilma sifatida IP
-    chegarasida qoladi.
-    """
-
-    scope = "preflight"
-
-    def get_ident_value(self, request, view):
-        return device_or_ip_ident(request)
-
-
-class AccessAttemptThrottle(BaseScopedThrottle):
-    """
-    Kirish urinishi haqidagi xabar — OCHIQ endpoint.
-
-    Chegara preflight'nikidan yumshoqroq bo'lishi mumkin emas: aks holda
-    u jurnalni ma'nosiz yozuvlar bilan to'ldirish (log flooding) yo'liga
-    aylanardi va haqiqiy urinishlar ular orasida ko'rinmay qolardi.
-    Kalit preflight'niki bilan bir xil (`device_or_ip_ident`).
-    """
-
-    scope = "access_attempt"
 
     def get_ident_value(self, request, view):
         return device_or_ip_ident(request)

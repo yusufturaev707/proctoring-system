@@ -33,7 +33,7 @@ class _FakeApi:
 class MachineIdentityPayloadTests(unittest.TestCase):
     def setUp(self):
         for name, value in (
-            ("machine_uuid", UUID), ("mac_address", MAC), ("public_ip", ""), ("info_pc", {}),
+            ("machine_uuid", UUID), ("mac_address", MAC), ("info_pc", {}),
         ):
             patcher = mock.patch.object(system_info, name, return_value=value)
             patcher.start()

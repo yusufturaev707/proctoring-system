@@ -283,10 +283,9 @@ class HardwareProbe:
     `nvidia-smi` ni ikki marta chaqirardi (~200-800 ms) va natija
     baribir bir xil bo'lardi - apparat imtihon o'rtasida o'zgarmaydi.
 
-    Kesh MUDDATSIZ, `PublicIpResolver` dan farqli: tashqi IP bino
-    kanali o'zgarganda o'zgaradi, videokarta esa yo'q.
+    Kesh MUDDATSIZ: videokarta dastur ishlab turganda o'zgarmaydi.
 
-    Naqsh o'sha yerdan olingan: dastur ishga tushganda fon
+    Dastur ishga tushganda fon
     thread'ida boshlanadi, chaqiruvchi esa tayyor bo'lmasa
     KUTMAYDI - handshake'ni apparat aniqlash uchun sekinlashtirish
     login oqimini uzaytirardi, holbuki maydonlar ixtiyoriy

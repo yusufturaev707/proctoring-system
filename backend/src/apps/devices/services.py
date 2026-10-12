@@ -15,6 +15,9 @@ from apps.common.utils.validators import normalize_mac, normalize_machine_uuid
 from apps.devices.models import Camera, Computer, DeviceToken
 
 logger = logging.getLogger(__name__)
+#: Client kirish jurnali (`CLIENT_ACCESS_LOG`) — administrator "falon
+#: kompyuter nega kira olmayapti?" degan savolga shu yerdan javob topadi.
+access_logger = logging.getLogger("client_access")
 
 
 @transaction.atomic
@@ -24,7 +27,6 @@ def register_device(
     hardware_fingerprint: str = "",
     app_version: str = "",
     app_hash: str = "",
-    reported_public_ip: str | None = None,
     auto_activate: bool = False,
 ) -> DeviceToken:
     """
@@ -44,7 +46,6 @@ def register_device(
         hardware_fingerprint=hardware_fingerprint[:128],
         app_version=app_version[:32],
         app_hash=app_hash[:64],
-        reported_public_ip=reported_public_ip or None,
         status=DeviceToken.Status.ACTIVE if auto_activate else DeviceToken.Status.PENDING,
     )
     logger.info("Qurilma ro'yxatdan o'tdi: %s (pc=%s)", device.device_id, computer.pk)
@@ -83,7 +84,6 @@ def record_handshake(
     app_version: str = "",
     app_hash: str = "",
     hardware_fingerprint: str = "",
-    reported_public_ip: str = "",
     reported_lan_ip: str = "",
     reported_machine_uuid: str = "",
     reported_mac: str = "",
@@ -115,11 +115,6 @@ def record_handshake(
         "last_used_at": timezone.now(),
         "last_ip": ip_address or device.last_ip,
     }
-    # Client aytgan tashqi manzil - har handshake'da yangilanadi:
-    # bino rezerv kanalga o'tsa, panelda eski manzil qolib ketmasligi
-    # kerak. Ishonchsiz qiymat, faqat diagnostika uchun.
-    if reported_public_ip and reported_public_ip != device.reported_public_ip:
-        updates["reported_public_ip"] = reported_public_ip
     if reported_lan_ip and reported_lan_ip != device.reported_lan_ip:
         updates["reported_lan_ip"] = reported_lan_ip
     reported_machine_uuid = normalize_machine_uuid(reported_machine_uuid)
@@ -209,31 +204,85 @@ def record_handshake(
     return anomalies
 
 
-def resolve_zone_by_public_ip(public_ip: str):
+def check_client_login(*, user, device_id: str, ip_address: str) -> None:
     """
-    Binoni tashqi (NAT) IP bo'yicha aniqlaydi.
+    Desktop client'ga login: IP tekshiruvi va binoning tashqi IP'si.
 
-    Ma'lumot manbai - `controls.AllowedPublicIp`. Alohida `Zone.public_ip`
+    Login formasidan OLDINGI alohida tekshiruv (preflight) olib
+    tashlangan — to'siq endi login'da, parol to'g'ri bo'lgandan keyin.
+    Qoida `ClientBaseView.check_source_ip` bilan BITTA (`is_ip_allowed`,
+    qurilma binosiga bog'langan): login'dan o'tgan client keyingi
+    so'rovda IP sababli rad etilmaydi.
+
+    Rad etilsa `IpNotAllowed`, `details` da server ko'rgan manzil —
+    operator shu raqamni administratorga aytadi.
+
+    Tashqi IP FAQAT operator (`client.operate`) login'ida yoziladi va
+    faqat server ko'rgan manzil `AllowedPublicIp` dagi aniq IP yozuvi
+    bo'lsa (`controls.services.building_public_ip`); aks holda
+    tozalanadi — bino kanali o'zgarsa eski manzil qolib ketmasin.
+    """
+    from apps.common.exceptions import IpNotAllowed
+    from apps.controls import services as controls_services
+
+    device = (
+        DeviceToken.objects.select_related("computer").filter(device_id=device_id).first()
+        if device_id
+        else None
+    )
+    zone_id = device.computer.zone_id if device is not None and device.computer_id else None
+    allowed = controls_services.is_ip_allowed(ip_address, zone_id)
+
+    access_logger.info(
+        "KIRISH | xodim=%s qurilma=%s manba_ip=%s bino=%s | ruxsat=%s",
+        user.username,
+        device.device_id if device is not None else "-",
+        ip_address,
+        zone_id or "-",
+        "HA" if allowed else "YO'Q",
+    )
+    if not allowed:
+        empty = controls_services.allowlist_empty()
+        raise IpNotAllowed(
+            "Ruxsat etilgan IP'lar ro'yxati bo'sh — administrator hali birorta "
+            "manzilni qo'shmagan."
+            if empty
+            else "IP manzilga ruxsat yo'q ({}). Bu kompyuter ro'yxatga olinmagan "
+            "tarmoqdan ulanmoqda.".format(ip_address),
+            extra={"observed_ip": ip_address, "allowlist_empty": empty},
+        )
+
+    if device is not None and user.has_role_permission("client.operate"):
+        public_ip = controls_services.building_public_ip(ip_address)
+        if public_ip != device.public_ip:
+            DeviceToken.objects.filter(pk=device.pk).update(public_ip=public_ip)
+
+
+def resolve_zone_by_ip(ip_address: str):
+    """
+    Binoni server KO'RGAN manzil bo'yicha aniqlaydi.
+
+    Ma'lumot manbai - `controls.AllowedPublicIp`. Alohida `Zone.ip`
     maydoni ATAYLAB kiritilmagan: u ikkinchi haqiqat manbasi bo'lar va
     ikkalasi zid kelganda qaysi biri ustunligi noaniq qolardi. Bir zonaga
-    bir nechta tashqi IP biriktirish ham shu jadval orqali ishlaydi
-    (rezerv kanal).
+    bir nechta manzil biriktirish ham shu jadval orqali ishlaydi
+    (rezerv kanal, bir nechta subnet).
 
     `zone=NULL` yozuv - "barcha binolar uchun ruxsat etilgan" degani, u
     binoni ANIQLAMAYDI, shuning uchun bunday qatorlar hisobga olinmaydi.
 
     Manzil aniq IP YOKI bino TARMOG'I (`AllowedPublicIp.network`) bo'yicha
     taniladi - qoida `is_ip_allowed` bilan bitta (`controls.services.
-    zone_id_for_ip`). VPN'da server binoni tashqi IP bilan emas, bino
-    tarmog'idagi xususiy manzil bilan ko'radi.
+    zone_id_for_ip`). Client aytgan manzil bu yerga KELMAYDI: uni
+    o'zgartirib qurilmani boshqa binoga yozdirish mumkin edi.
     """
-    if not public_ip:
+    if not ip_address:
         return None
 
     from apps.controls.services import zone_id_for_ip
     from apps.regions.models import Zone
 
-    zone_id = zone_id_for_ip(public_ip)
+    zone_id = zone_id_for_ip(ip_address)
     if zone_id is None:
         return None
     zone = Zone.objects.select_related("region").filter(pk=zone_id).first()
@@ -512,9 +561,9 @@ def auto_create_computer(
     """
     Ro'yxatda yo'q mashinani avtomatik inventarizatsiya qiladi.
 
-    FAQAT `AUTO_REGISTER_COMPUTERS` yoqilganda va bino tashqi IP orqali
-    ANIQLANGANDA chaqiriladi. Xavfsizlik pasaymaydi, chunki uch qavat
-    to'siq joyida qoladi: so'rov ro'yxatga olingan tashqi IP dan kelishi
+    FAQAT `AUTO_REGISTER_COMPUTERS` yoqilganda va bino so'rov kelgan
+    manzil orqali ANIQLANGANDA chaqiriladi. Xavfsizlik pasaymaydi, chunki
+    uch qavat to'siq joyida qoladi: so'rov binoga bog'langan manzildan kelishi
     kerak, endpoint throttled, va yaratilgan qurilma baribir `PENDING`
     bo'lib qoladi.
 

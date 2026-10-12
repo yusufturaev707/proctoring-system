@@ -215,7 +215,6 @@ def handshake_body(ident: dict) -> dict:
         "app_version": "1.0.0",
         "app_hash": "",
         "hardware_fingerprint": f"muid:{ident['machine_uuid']}",
-        "public_ip": ident["public_ip"],
         "monitors": 1,
         "cameras": 1,
         "machine_uuid": ident["machine_uuid"],

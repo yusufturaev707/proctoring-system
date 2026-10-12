@@ -45,6 +45,16 @@ class LoginView(APIView):
 
         user = serializer.validated_data["user"]
         ip_address = client_ip(request)
+        if serializer.validated_data["surface"] == "client":
+            # Panel bu ro'yxatdan o'tmaydi — aks holda administrator
+            # birinchi IP'ni kiritish uchun ham kira olmasdi.
+            from apps.devices.services import check_client_login
+
+            check_client_login(
+                user=user,
+                device_id=(request.META.get("HTTP_X_DEVICE_ID") or "").strip(),
+                ip_address=ip_address,
+            )
         services.record_login(user, ip_address)
         record_audit(actor=user, action="login", object_type="User", object_id=user.pk, request=request)
 

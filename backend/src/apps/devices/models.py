@@ -321,17 +321,13 @@ class DeviceToken(TimeStampedModel):
     last_used_at = models.DateTimeField(null=True, blank=True)
     #: So'rovning MANBA manzili (server o'zi ko'rgan).
     last_ip = models.GenericIPAddressField(null=True, blank=True)
-    #: Client O'ZI aniqlagan tashqi manzil (ipify va h.k.).
-    #
-    # `last_ip` dan farqi: server bino ichida tursa, u client'ning LAN
-    # manzilini ko'radi va binoning haqiqiy tashqi manzilini bilmaydi.
-    # Bu maydon administratorga "bu bino qaysi IP bilan chiqadi" degan
-    # savolga javob beradi - `AllowedPublicIp` ni to'g'ri to'ldirish uchun.
-    #
-    # DIQQAT: bu qiymat client'dan keladi, ya'ni ISHONCHSIZ. U hech
-    # qachon kirish ruxsatini hal qilmaydi (`is_ip_allowed` faqat server
-    # ko'rgan manzil bilan ishlaydi) - u ma'lumot va diagnostika uchun.
-    reported_public_ip = models.GenericIPAddressField(null=True, blank=True)
+    #: Binoning TASHQI manzili — SERVER aniqlaydi, operator client'ga
+    #: login qilganda (`services.check_client_login`): so'rov kelgan
+    #: manzil `AllowedPublicIp` dagi aniq IP yozuviga mos kelsa, aks
+    #: holda bo'sh. Client o'zi aniqlamaydi (ipify kabi tashqi xizmat
+    #: yopiq tarmoqda ishlamaydi va client aytgan qiymatni tekshirib
+    #: bo'lmaydi). Sessiyaga `meta.network.public_ip` bo'lib ko'chadi.
+    public_ip = models.GenericIPAddressField(null=True, blank=True)
     #: Client O'ZI aniqlagan LOKAL (LAN) manzil.
     #
     # NIMA UCHUN KERAK: panelda "bu sessiya qaysi mashinada o'tdi"
@@ -340,8 +336,7 @@ class DeviceToken(TimeStampedModel):
     # bo'lishi mumkin, dev'da esa u umuman `127.0.0.1` - ya'ni
     # bayonnomada foydasiz qiymat qolardi.
     #
-    # ISHONCHSIZ, `reported_public_ip` bilan bir xil sababdan: uni
-    # client yuboradi. Hech qanday ruxsat qarori bunga tayanmaydi -
+    # ISHONCHSIZ: uni client yuboradi. Hech qanday ruxsat qarori bunga tayanmaydi -
     # u faqat ma'lumot va diagnostika uchun.
     reported_lan_ip = models.GenericIPAddressField(null=True, blank=True)
     #: Client O'ZI o'lchagan Machine UUID - oxirgi handshake'dagi.

@@ -87,7 +87,7 @@ class VerifyExitPasswordTests(TestCase):
 
         Bu ONGLI kelishuv: muqobili mashinani umuman yopib
         bo'lmaydigan holatda qoldirish (viloyat aynan eng kerakli
-        paytda - preflight rad etgan ekranda - noma'lum bo'ladi).
+        paytda - login IP sababli rad etilgan ekranda - noma'lum bo'ladi).
         """
         row = services.verify_exit_password("samarqand-paroli", region_id=None)
         self.assertIsNotNone(row)

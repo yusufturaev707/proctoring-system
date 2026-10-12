@@ -1,5 +1,5 @@
 import { Chip, Typography } from '@mui/material'
-import PublicIcon from '@mui/icons-material/PublicOutlined'
+import RouterIcon from '@mui/icons-material/RouterOutlined'
 import LanIcon from '@mui/icons-material/LanOutlined'
 import InfoIcon from '@mui/icons-material/InfoOutlined'
 import PlaceIcon from '@mui/icons-material/PlaceOutlined'
@@ -53,13 +53,13 @@ export default function AllowedIpDetailDialog({ row, onEdit, onClose }) {
 
   return (
     <DetailDialog
-      icon={isNetwork ? <LanIcon /> : <PublicIcon />}
+      icon={isNetwork ? <LanIcon /> : <RouterIcon />}
       tone={row.is_active ? 'primary' : 'neutral'}
       title={<Typography component="span" variant="h6" sx={{ fontFamily: 'monospace' }}>{address}</Typography>}
       subtitle={row.name || 'Nomsiz yozuv'}
       chips={<>
         <ActiveChip active={row.is_active} on="Faol" off="O‘chiq" />
-        <Chip size="small" variant="outlined" label={isNetwork ? `Tarmoq /${cidr?.prefix ?? '?'}` : 'Tashqi IP'} />
+        <Chip size="small" variant="outlined" label={isNetwork ? `Tarmoq /${cidr?.prefix ?? '?'}` : 'IP manzil'} />
         {global
           ? <Chip size="small" color="warning" variant="outlined" label="Global — barcha binolar" />
           : <Chip size="small" variant="outlined" icon={<PlaceIcon />} label={row.zone_name} />}
@@ -73,8 +73,8 @@ export default function AllowedIpDetailDialog({ row, onEdit, onClose }) {
         <Field
           label="Turi"
           value={isNetwork
-            ? 'Tarmoq (CIDR) — server bino ichida yoki binolar VPN orqali ulangan'
-            : 'Tashqi (NAT) IP — bino server bilan internet orqali ulanadi'}
+            ? 'Tarmoq (CIDR) — server har kompyuterning o‘z manzilini ko‘radi (bino ichida yoki yopiq kanalda)'
+            : 'IP manzil — bino serverga bitta umumiy manzil bilan keladi (router/NAT ortidan)'}
         />
         <Field label={isNetwork ? 'Tarmoq' : 'IP manzil'} value={address} mono onCopy={copy} />
         {cidr && (
@@ -92,14 +92,14 @@ export default function AllowedIpDetailDialog({ row, onEdit, onClose }) {
           label="Qurilma ro‘yxatdan o‘tganda"
           value={global
             ? 'Bino aniqlanmaydi — kompyuter IP bo‘yicha qidirilmaydi'
-            // `resolve_zone_by_public_ip` nofaol/o'chirilgan binoni qaytarmaydi.
+            // `resolve_zone_by_ip` nofaol/o'chirilgan binoni qaytarmaydi.
             : `Bino avtomatik aniqlanadi: «${row.zone_name}» (bino faol bo‘lsa)`}
         />
       </Section>
 
       <InfoNote icon={<InfoIcon fontSize="small" />}>
-        Client imtihon markazidan ulanayotganini server shu ro‘yxat bo‘yicha tekshiradi — uydan
-        ulangan client JSHSHIR qidiruviga kira olmaydi. Aniq IP tarmoqdan ustun; tarmoqlar o‘zaro
+        Server so‘rov KELGAN manzilni shu ro‘yxat bo‘yicha tekshiradi (client aytgan manzil
+        hisobga olinmaydi) — uydan ulangan client JSHSHIR qidiruviga kira olmaydi. Aniq IP tarmoqdan ustun; tarmoqlar o‘zaro
         kesishmaydi, ya’ni manzil hech qachon ikki binoga tegishli bo‘lib qolmaydi.
       </InfoNote>
 

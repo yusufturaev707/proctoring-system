@@ -30,7 +30,10 @@ class CleanHotkeyTests(SimpleTestCase):
         self.assertEqual(hotkeys.clean_hotkey("win"), "win")
 
     def test_rejects_what_client_ignores(self):
-        for code in ("pageup", "leftalt+tab", "ctrl+foo", "ctrl+a+b", "alt+alt", "", "Ctrl+Q"):
+        for code in (
+            "pageup", "leftalt+tab", "ctrl+foo", "ctrl+a+b", "alt+alt", "", "Ctrl+Q",
+            "Alt+Shift", "shift + alt",
+        ):
             with self.subTest(code=code), self.assertRaises(ValueError):
                 hotkeys.clean_hotkey(code)
 
@@ -56,6 +59,9 @@ class ClientParityTests(SimpleTestCase):
 
     def test_modifiers(self):
         self.assertEqual(set(self.literals["_MODIFIER_VKS"]), set(hotkeys.MODIFIERS))
+
+    def test_never_blocked(self):
+        self.assertEqual(set(self.literals["_NEVER_BLOCKED"]), set(hotkeys.NEVER_BLOCKED))
 
     def test_named_keys(self):
         named = set(self.literals["_NAMED_VKS"])

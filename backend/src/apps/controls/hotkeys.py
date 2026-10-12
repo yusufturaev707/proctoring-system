@@ -44,8 +44,13 @@ KEY_ALIASES = {
     "minus": "-",
 }
 
-#: Chiqishning yagona yo'li — client uni ro'yxatda bo'lsa ham bloklamaydi.
-NEVER_BLOCKED = frozenset({"ctrl+q"})
+#: Client ro'yxatda bo'lsa ham bloklamaydigan kodlar -> rad etish sababi.
+#: Kalitlar client `_NEVER_BLOCKED` bilan bir xil (testda solishtiriladi).
+NEVER_BLOCKED = {
+    "ctrl+q": "Ctrl+Q bloklanmaydi — bu dasturdan chiqishning yagona yo'li",
+    "alt+shift": "Alt+Shift bloklanmaydi — bu klaviatura tilini almashtirishning yagona yo'li",
+    "shift+alt": "Alt+Shift bloklanmaydi — bu klaviatura tilini almashtirishning yagona yo'li",
+}
 
 MODIFIERS = frozenset({
     "alt", "left alt", "right alt", "alt gr",
@@ -104,5 +109,5 @@ def clean_hotkey(code: str) -> str:
             "Faqat bitta asosiy tugma bo'lishi mumkin (qolganlari Ctrl/Alt/Shift/Win)"
         )
     if canonical in NEVER_BLOCKED:
-        raise ValueError("Ctrl+Q bloklanmaydi — bu dasturdan chiqishning yagona yo'li")
+        raise ValueError(NEVER_BLOCKED[canonical])
     return canonical

@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { Box, Chip, Stack, Tooltip, Typography } from '@mui/material'
-import PublicIcon from '@mui/icons-material/PublicOutlined'
 import LanIcon from '@mui/icons-material/LanOutlined'
 import RouterIcon from '@mui/icons-material/RouterOutlined'
 import PlaceIcon from '@mui/icons-material/PlaceOutlined'
@@ -32,7 +31,8 @@ function exactlyOneAddress(_value, form) {
 }
 
 /**
- * Ruxsat etilgan manzillar: bitta tashqi (NAT) IP YOKI tarmoq (CIDR).
+ * Ruxsat etilgan manzillar: bitta IP YOKI tarmoq (CIDR) — server KO'RGAN
+ * manzil bo'yicha (client aytgan manzil hisobga olinmaydi).
  *
  * Tarmoq — server binoning ICHIDA turganda (u clientlarni LAN manzili
  * bilan ko'radi) yoki binolar bitta VPN tarmog'ida bo'lganda: har bino
@@ -68,7 +68,7 @@ export default function AllowedIpsPage() {
     <>
       <ResourcePage
         title="Ruxsat etilgan IP'lar"
-        subtitle="Imtihon markazlarining tashqi (NAT) manzillari va ichki/VPN tarmoqlari — qatorni bosing, to‘liq karta ochiladi"
+        subtitle="Imtihon markazlari serverga qaysi manzil yoki tarmoqdan keladi — qatorni bosing, to‘liq karta ochiladi"
         queryKey="allowed-ips"
         api={allowedIpsApi}
         permission="controls.ip_manage"
@@ -94,10 +94,10 @@ export default function AllowedIpsPage() {
             renderCell: (params) => {
               const isNetwork = !params.value
               const cidr = isNetwork ? cidrInfo(params.row.network) : null
-              const Icon = isNetwork ? LanIcon : PublicIcon
+              const Icon = isNetwork ? LanIcon : RouterIcon
               return (
                 <Stack direction="row" spacing={1} alignItems="center" sx={{ ...cell, minWidth: 0 }}>
-                  <Tooltip title={isNetwork ? 'Tarmoq (CIDR)' : 'Tashqi (NAT) IP'}>
+                  <Tooltip title={isNetwork ? 'Tarmoq (CIDR)' : 'Bitta IP manzil'}>
                     <Icon fontSize="small" sx={{ color: 'text.secondary' }} />
                   </Tooltip>
                   <Typography variant="body2" fontWeight={600} noWrap sx={{ fontFamily: 'monospace' }}>
@@ -153,9 +153,9 @@ export default function AllowedIpsPage() {
         ]}
         fields={[
           {
-            name: 'ip_address', label: 'Tashqi IP manzil', section: 'Manzil',
+            name: 'ip_address', label: 'IP manzil', section: 'Manzil',
             pattern: 'ipv4', colSpan: 6, validate: exactlyOneAddress,
-            helperText: 'Bino internet orqali ulansa: uning tashqi (NAT) manzili',
+            helperText: 'Bino bitta umumiy manzil bilan kelsa (router/NAT ortidan)',
           },
           {
             name: 'network', label: 'yoki tarmoq (CIDR)', section: 'Manzil',
@@ -164,7 +164,7 @@ export default function AllowedIpsPage() {
               const cidr = cidrInfo(String(form?.network || '').trim())
               return cidr
                 ? `${cidr.first} – ${cidr.last} · ${cidr.size.toLocaleString('ru-RU')} ta manzil`
-                : 'Server bino ichida yoki VPN bo‘lsa: bino tarmog‘i, masalan 192.168.0.0/24'
+                : 'Server har kompyuterni o‘z manzili bilan ko‘rsa: bino tarmog‘i, masalan 192.168.0.0/24'
             },
           },
           {

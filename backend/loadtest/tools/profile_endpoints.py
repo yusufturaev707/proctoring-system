@@ -206,14 +206,8 @@ def start_stub(port: int, latency_ms: float) -> None:
 
 
 def run_client_flow(rec: Recorder, ident: dict, manifest: dict, args) -> None:
-    ip = ident["public_ip"]
+    ip = ident["source_ip"]
     anon = Client(HTTP_X_REAL_IP=ip)
-    rec.call("preflight", anon, "post", f"{API}/client/preflight/", json_body={"public_ip": ip})
-    rec.call("access_attempt", anon, "post", f"{API}/client/access-attempt/", json_body={
-        "machine_uuid": ident["machine_uuid"], "mac_address": ident["mac"],
-        "ip_address": ident["lan_ip"], "public_ip": ip, "hostname": ident["inventory_code"],
-        "app_version": "1.0.0", "entered_login": True, "code": "",
-    })
     data = rec.call("login", anon, "post", f"{API}/auth/login/", json_body={
         "username": ident["username"], "password": manifest["password"],
     })

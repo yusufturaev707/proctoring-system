@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert, AlertTitle, Autocomplete, Box, Button, Checkbox, Chip, CircularProgress,
   Dialog, DialogActions, DialogContent, DialogTitle, Divider, FormControlLabel,
@@ -28,7 +28,7 @@ import {
  *     tahrirlashda boshqa adminning o'zgarishlari qaytarilmaydi;
  *   - Parol maydonlari hech qachon oldindan to'ldirilmaydi.
  */
-export default function ResourceForm({
+function ResourceForm({
   open,
   title,
   fields,
@@ -679,3 +679,8 @@ function groupBySection(fields) {
   })
   return Array.from(map, ([section, items]) => ({ section, items }))
 }
+
+// `memo`: forma `ResourcePage` ichida DOIM turadi (yopiq ham) va sahifa
+// har qidiruv harfida render bo'ladi — props o'zgarmasa forma qayta
+// hisoblanmaydi (`onClose`/`onSubmit` sahifada `useCallback`).
+export default memo(ResourceForm)

@@ -5,10 +5,10 @@ Sahifalar bir-birini BILMAYDI: har biri signal chiqaradi, MainWindow
 esa holatni yangilab keyingisini ochadi. Shu tufayli oqimni o'zgartirish
 (masalan yangi bosqich qo'shish) faqat shu faylga tegadi.
 
-Oqim tarmoq tekshiruvidan (preflight) BOSHLANADI: kompyuter ruxsat
-etilgan imtihon markazidan ulanmayotgan bo'lsa, login formasi umuman
-ko'rsatilmaydi. Bu qulaylik to'sig'i, himoya emas - haqiqiy tekshiruv
-har bir client so'rovida serverda ishlaydi.
+Oqim LOGIN formasidan boshlanadi. Alohida tarmoq tekshiruvi (preflight)
+yo'q: kompyuter ruxsat etilgan manzildan ulanmayotgan bo'lsa, server
+login'ni o'zi rad etadi (`ip_not_allowed`, server ko'rgan manzil bilan) -
+qoida keyingi har bir client so'rovidagi tekshiruv bilan bitta.
 
 Sahifalar `QStackedWidget` da, lekin login'dan keyingilari LAZY
 yuklanadi: birinchi ekran darhol ochilishi kerak, qolganlari esa
@@ -19,8 +19,8 @@ bir-birisiz ma'nosiz:
 
   * oyna ramkasiz, doim ustda va to'liq ekranda - "yonidan chiqib
     ketish" mumkin emas;
-  * tezkor tugmalar bloklanadi (`services/lockdown.py`) - siyosat
-    serverdan keladi va login'dan OLDIN qo'llanadi;
+  * tezkor tugmalar bloklanadi (`services/lockdown.py`) - login'gacha
+    `.env` standarti, keyin server siyosati;
   * `closeEvent` ruxsatsiz yopilishni RAD ETADI - Alt+F4 bloklangan
     bo'lsa ham, dasturni tashqaridan yopish signali kelishi mumkin.
 
@@ -71,18 +71,9 @@ from services.lockdown import kiosk_window_flags, lockdown, resolve_hotkeys
 from services.repositories import ProctoringRepository
 from services.workers import ApiWorker, WorkerHolder
 from ui.dialogs.exit_dialog import ExitDialog
-from ui.widgets.language_bar import LanguageBar
 from ui.pages.login_page import LoginPage
-from ui.pages.preflight_page import PreflightPage
 
 log = logging.getLogger(__name__)
-
-#: Suzuvchi elementlarning ekran chetidan masofasi (px).
-#:
-#: Imtihon oynasidagi panel bilan AYNAN bir xil
-#: (`exam_webview_page._BAR_MARGIN`): ikkala burchakdagi element
-#: bir chiziqda turgani ko'zga tartibli ko'rinadi.
-_FLOATING_MARGIN = 18
 
 #: Watchdog tirikligini tekshirish oralig'i va qayta ko'tarish chegarasi.
 #: UI watchdog'ni, watchdog UI ni kuzatadi: bittasini o'ldirish
@@ -92,7 +83,7 @@ _WATCHDOG_CHECK_MS = 30_000
 _WATCHDOG_MAX_RESPAWNS = 5
 
 #: Stack indeksi -> `state.json` dagi `stage` (PAGE_* tartibida).
-_STAGES = ("preflight", "login", "exam_select", "candidate", "faceid", "exam")
+_STAGES = ("login", "exam_select", "candidate", "faceid", "exam")
 
 
 class _SelfCheckBridge(QObject):
@@ -102,14 +93,13 @@ class _SelfCheckBridge(QObject):
 
 
 class MainWindow(QMainWindow):
-    """Oqim: preflight -> login -> imtihon -> talabgor -> FaceID -> WebView."""
+    """Oqim: login -> imtihon -> talabgor -> FaceID -> WebView."""
 
-    PAGE_PREFLIGHT = 0
-    PAGE_LOGIN = 1
-    PAGE_EXAM = 2
-    PAGE_CANDIDATE = 3
-    PAGE_FACEID = 4
-    PAGE_WEBVIEW = 5
+    PAGE_LOGIN = 0
+    PAGE_EXAM = 1
+    PAGE_CANDIDATE = 2
+    PAGE_FACEID = 3
+    PAGE_WEBVIEW = 4
 
     def __init__(self, *, state_store=None, previous_crash: Optional[dict] = None,
                  watchdog_pid: int = 0) -> None:
@@ -148,13 +138,6 @@ class MainWindow(QMainWindow):
         #: Chiqishga ruxsat berildimi (parol tekshiruvidan o'tdimi).
         self._exit_allowed = not KIOSK_MODE
         self._exit_dialog_open = False
-        #: Login sahifasiga yetib borildimi.
-        #:
-        #: Chiqish qoidasi shu chegarada o'zgaradi: preflight ekranida
-        #: parol so'ralmaydi (u yerda hali na sessiya, na talabgor bor -
-        #: mashinani yopish oddiy amal), login sahifasidan boshlab esa
-        #: parol MAJBURIY.
-        self._passed_preflight = not KIOSK_MODE
         #: Yopilish boshlandi - takroriy `closeEvent` ni to'sish uchun.
         self._closing = False
         # OS seansi yakunlanganda (Windows o'chirilishi, hisobdan
@@ -208,11 +191,6 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self._stack)
 
         # addWidget tartibi PAGE_* indekslariga MOS bo'lishi shart.
-        self._preflight_page = PreflightPage()
-        self._preflight_page.passed.connect(self._on_preflight_passed)
-        self._preflight_page.exit_requested.connect(self.request_exit)
-        self._stack.addWidget(self._preflight_page)
-
         self._login_page = LoginPage(self._auth)
         self._login_page.login_success.connect(self._on_login_success)
         self._stack.addWidget(self._login_page)
@@ -222,26 +200,6 @@ class MainWindow(QMainWindow):
         self._faceid_page = None
         self._webview_page = None
 
-        # KLAVIATURA TILI - BARCHA SAHIFALARDA.
-        #
-        # Vidjet sahifalarga emas, OYNAGA qo'yiladi va u
-        # `QStackedWidget` ustida suzadi. Har sahifaga alohida
-        # qo'shish oltita nusxa degani bo'lardi va ular albatta
-        # ajralib ketardi (biri boshqa joyda, biri boshqa
-        # o'lchamda); bu yerda esa tanlov oqimning qaysi
-        # bosqichida bo'lishidan qat'i nazar bir xil joyda turadi.
-        #
-        # Nima uchun umuman kerak: kiosk rejimida vazifalar paneli
-        # yashiringan va `alt+shift` server ro'yxati bo'yicha
-        # bloklangan bo'lishi mumkin - o'shanda tilni almashtirishning
-        # boshqa yo'li qolmaydi (`services/keyboard_layout.py`).
-        self._language_bar = LanguageBar(self)
-        self._language_bar.raise_()
-        # Sahifa almashganda panel YANGI sahifaning ustiga
-        # ko'tariladi: `QStackedWidget` joriy vidjetni ko'rsatganda
-        # u z-tartibida tepaga chiqadi va panel uning ostida qolib
-        # ketardi.
-        self._stack.currentChanged.connect(lambda _index: self._place_language_bar())
         # Bosqich `state.json` ga: kutilmagan yopilishdan keyin "qayerda
         # edik?" savoliga javob (faqat maxfiy bo'lmagan qiymatlar).
         self._stack.currentChanged.connect(self._persist_stage)
@@ -263,11 +221,6 @@ class MainWindow(QMainWindow):
 
         self._watchdog_timer = QTimer(self)
         self._watchdog_timer.timeout.connect(self._check_watchdog)
-
-        # Public IP fon rejimida oldindan olinadi. Bu YAGONA tashqi
-        # tarmoq so'rovi; login oqimida sinxron chaqirilsa, sekin
-        # internetda operator har kirishda bir necha soniya kutardi.
-        system_info.public_ip_resolver.prefetch()
 
         # Apparat ham SHU YERDA boshlanadi va shu sababdan: aniqlash
         # `nvidia-smi` ni chaqiradi (~200-800 ms) va natija ikki
@@ -337,24 +290,6 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Oqim
     # ------------------------------------------------------------------
-    def _on_preflight_passed(self, result) -> None:
-        """
-        Tarmoq tasdiqlandi - login formasi ochiladi.
-
-        Preflight sahifasiga QAYTISH yo'li yo'q: tekshiruv ishga
-        tushishda bir marta bo'ladi va uni takrorlash operatorga hech
-        narsa bermaydi (IP o'zgarsa, keyingi so'rov serverda baribir
-        rad etiladi).
-        """
-        # Qulflash login formasidan OLDIN qo'llanadi: aynan shu ekranda
-        # kompyuter eng ochiq holatda turadi - operator hali kirmagan,
-        # lekin mashina allaqachon talabgor oldida.
-        self._apply_lockdown((result or {}).get("hotkeys") or [])
-        self._passed_preflight = True
-        self._login_page.set_network_info(result or {})
-        self._stack.setCurrentIndex(self.PAGE_LOGIN)
-        self._login_page.username_input.setFocus()
-
     def _on_model_loaded(self, success: bool, message: str) -> None:
         self._login_page.set_model_status(message, ready=success, failed=not success)
         self._model_loader = None
@@ -655,9 +590,9 @@ class MainWindow(QMainWindow):
         Chiqishni so'raydi - yagona ruxsat etilgan yo'l.
 
         Parol HAR DOIM so'raladi. Xodim tizimga kirgan bo'lsa, u o'z
-        parolini kiritadi; kirmagan bo'lsa (preflight va login
-        ekranlari) - viloyatning chiqish paroli. Ikkalasini ham
-        server tekshiradi, client farqni bilmaydi.
+        parolini kiritadi; kirmagan bo'lsa (login ekrani) - viloyatning
+        chiqish paroli. Ikkalasini ham server tekshiradi, client
+        farqni bilmaydi.
 
         Ilgari login qilinmagan ekranlarda parol umuman so'ralmasdi va
         bu ochiq bo'shliq edi: talabgor login formasida qolgan
@@ -665,13 +600,7 @@ class MainWindow(QMainWindow):
         """
         if self._exit_dialog_open or self._closing:
             return
-        if not KIOSK_MODE or not self._passed_preflight:
-            # Login sahifasigacha - parolsiz. Bu bo'shliq emas: bu
-            # ekranlarda dastur hali hech narsa ochmagan va yopilishi
-            # bilan hech kim hech narsa yutmaydi. Parol so'rash esa
-            # aksincha zarar: tarmoq tekshiruvidan o'tolmagan mashinada
-            # operator kalitni ham bilmasligi mumkin va u yerda
-            # osilib qolardi.
+        if not KIOSK_MODE:
             self._exit_allowed = True
             self.close()
             return
@@ -698,8 +627,8 @@ class MainWindow(QMainWindow):
             self._exit_dialog_open = False
 
         if back is not None and result == ExitDialog.BACK:
-            # Dastur OCHIQ qoladi - kiosk buzilmaydi va parol
-            # so'ralmaydi. Bu shunchaki navigatsiya.
+            # Dastur OCHIQ qoladi; parol dialogda tekshirilgan
+            # (`purpose="back"`) — Ctrl+Q oynasidagi har amal parol bilan.
             back[1]()
             return
 
@@ -724,8 +653,7 @@ class MainWindow(QMainWindow):
         kira olmaydi. Sessiyani yakunlashning to'g'ri yo'li bitta:
         "Imtihonni yakunlash" tugmasi.
 
-        Preflight va login ekranlarida ham `None`: u yerda orqaga
-        qaytadigan joy yo'q.
+        Login ekranida ham `None`: u yerda orqaga qaytadigan joy yo'q.
         """
         index = self._stack.currentIndex()
 
@@ -898,7 +826,6 @@ class MainWindow(QMainWindow):
         self._model_loader = None
 
         for page in (
-            self._preflight_page,
             self._login_page,
             # Imtihon sahifasi ham ro'yxatda: unda endi kamera oqimi
             # va fon worker'lari bor. Ilgari u tozalanmasdi, chunki
@@ -936,32 +863,11 @@ class MainWindow(QMainWindow):
         log.info("Dastur yopildi")
 
     # ------------------------------------------------------------------
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        self._place_language_bar()
-
-    def _place_language_bar(self) -> None:
-        """
-        Til panelini pastki CHAP burchakka qo'yadi.
-
-        `getattr` MAJBURIY: `setMinimumSize` konstruktorning
-        BOSHIDA chaqiriladi va u `resizeEvent` ni qo'zg'atadi -
-        o'sha paytda panel hali yaratilmagan bo'ladi.
-        """
-        bar = getattr(self, "_language_bar", None)
-        if bar is None or not bar.isVisibleTo(self):
-            return
-        bar.adjustSize()
-        bar.move(_FLOATING_MARGIN, self.height() - bar.height() - _FLOATING_MARGIN)
-        bar.raise_()
-
     def show_start(self) -> None:
         # QULF OYNA KO'RINISHIDAN OLDIN va `.env` standarti bilan
-        # (`BLOCKED_HOTKEYS`). Ilgari birinchi qulf preflight javobidan
-        # keyin qo'yilardi: so'rov ketib-kelguncha (server javob
-        # bermasa - umuman) mashina talabgor oldida Alt+Tab va Win
-        # ochiq holda turardi. Server ro'yxati kelgach u buni
-        # almashtiradi (`_on_preflight_passed`).
+        # (`BLOCKED_HOTKEYS`) - login ekranida server ro'yxati hali yo'q
+        # (u handshake bilan keladi va buni almashtiradi,
+        # `_on_login_success`).
         self._apply_lockdown(None)
         if FULLSCREEN:
             self.showFullScreen()
@@ -975,15 +881,13 @@ class MainWindow(QMainWindow):
         self._exit_shortcut = QShortcut(QKeySequence("Ctrl+Q"), self)
         self._exit_shortcut.activated.connect(self.request_exit)
 
-        # Tekshiruv oyna KO'RINGANDAN keyin boshlanadi: aks holda
-        # birinchi kadrda bo'sh oyna turadi va operator "dastur
-        # ochilmadi" deb o'ylaydi.
-        self._preflight_page.start()
+        self._stack.setCurrentIndex(self.PAGE_LOGIN)
+        self._login_page.username_input.setFocus()
 
         self._start_watchdog()
         if SELF_CHECK_ENABLED:
-            # Kechiktirib: birinchi soniyalarda model yuklovchi va
-            # preflight bilan disk/tarmoq uchun raqobatlashmasin.
+            # Kechiktirib: birinchi soniyalarda model yuklovchi bilan
+            # disk/tarmoq uchun raqobatlashmasin.
             QTimer.singleShot(1500, self._start_self_check)
 
     # ------------------------------------------------------------------
@@ -1139,7 +1043,6 @@ class MainWindow(QMainWindow):
                 if screen is not None and handle is not None and handle.screen() is not screen:
                     handle.setScreen(screen)
                 self.showFullScreen()
-            self._place_language_bar()
         except Exception:
             log.exception("Ekran o'zgarishidan keyin oyna tiklanmadi")
 

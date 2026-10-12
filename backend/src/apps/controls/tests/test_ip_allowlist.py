@@ -122,9 +122,8 @@ class IsIpAllowedTests(AllowlistTestCase):
         """
         Server imtihon tarmog'ining ichida — LAN'ning O'ZI perimetr.
 
-        Aynan shu holat ilgari 403 berardi: preflight client aytgan
-        tashqi manzil bo'yicha o'tar, keyingi so'rov esa server ko'rgan
-        LAN manzili bo'yicha rad etilardi.
+        Server clientlarni LAN manzili bilan ko'radi va ommaviy IP
+        ro'yxati ularga hech qachon mos kelmaydi.
         """
         AllowedPublicIp.objects.create(ip_address="203.0.113.10")
         for private in ("127.0.0.1", "192.168.1.7", "10.0.0.3"):
@@ -210,77 +209,23 @@ class IsIpAllowedTests(AllowlistTestCase):
         self.assertTrue(services.is_ip_allowed("203.0.113.10"))
 
 
-class NetworkPreflightTests(AllowlistTestCase):
+class BuildingPublicIpTests(AllowlistTestCase):
     """
-    Preflight qarori FAQAT client aytgan `public_ip` bo'yicha chiqadi.
-
-    Server ko'rgan manzil (`observed_ip`) tekshiruvda QATNASHMAYDI:
-    server bino ichida turganda u faqat LAN manzilni ko'radi. Bu
-    qulaylik to'sig'i, himoya emas — haqiqiy tekshiruv har bir client
-    so'rovida `check_source_ip` da.
+    Binoning tashqi IP'si — server ko'rgan manzil AYNAN IP yozuviga mos
+    kelsa. Tarmoq yozuviga mos kelgan manzil alohida kompyuterning o'z
+    manzili, binoning tashqi manzili emas.
     """
 
-    def test_allows_listed_public_ip(self):
-        AllowedPublicIp.objects.create(ip_address="203.0.113.10", zone=self.zone)
-        result = services.network_preflight(
-            public_ip="203.0.113.10", observed_ip="192.168.1.5"
-        )
-        self.assertTrue(result["allowed"])
-        self.assertFalse(result["allowlist_empty"])
-        self.assertEqual(result["zone"], {"id": self.zone.pk, "name": "1-bino"})
-        self.assertEqual(result["region"]["name"], "Toshkent")
-        # Server ko'rgan manzil qarorga ta'sir qilmaydi, lekin javobda
-        # qoladi — administrator farqni ko'rishi uchun.
-        self.assertIs(result["matches_observed"], False)
+    def test_exact_ip_entry(self):
+        AllowedPublicIp.objects.create(ip_address="8.8.8.8", zone=self.zone)
+        self.assertEqual(services.building_public_ip("8.8.8.8"), "8.8.8.8")
 
-    def test_observed_ip_alone_is_not_enough(self):
-        """
-        HUJUM/XATO: server ko'rgan manzil ro'yxatda, client aytgani yo'q.
+    def test_network_entry_is_not_a_public_ip(self):
+        AllowedPublicIp.objects.create(network="10.20.0.0/24", zone=self.zone)
+        self.assertIsNone(services.building_public_ip("10.20.0.7"))
 
-        Qaror `public_ip` bo'yicha chiqadi, ya'ni bu RAD etiladi.
-        """
-        AllowedPublicIp.objects.create(ip_address="192.168.1.5")
-        result = services.network_preflight(
-            public_ip="203.0.113.99", observed_ip="192.168.1.5"
-        )
-        self.assertFalse(result["allowed"])
-
-    def test_missing_public_ip_is_denied(self):
-        AllowedPublicIp.objects.create(ip_address="203.0.113.10")
-        result = services.network_preflight(public_ip="", observed_ip="203.0.113.10")
-        self.assertFalse(result["allowed"])
-        self.assertIsNone(result["matches_observed"])
-
-    @with_proctoring(REQUIRE_ALLOWED_IP=True)
-    def test_empty_list_reports_reason_separately(self):
-        """
-        "Sizning manzilingiz ro'yxatda yo'q" va "ro'yxat umuman bo'sh"
-        BOSHQA-BOSHQA holatlar.
-
-        Ikkinchisi administrator xatosi; uni operatorga "IP'ingiz
-        noto'g'ri" deb ko'rsatish nosozlikni soatlab qidirishga olib
-        keladi.
-        """
-        result = services.network_preflight(public_ip="203.0.113.10")
-        self.assertFalse(result["allowed"])
-        self.assertTrue(result["allowlist_empty"])
-
-    def test_zone_is_not_reported_for_deleted_zone(self):
-        """
-        Yumshoq o'chirilgan bino ko'rsatilmaydi.
-
-        Operator "qaysi bino sifatida tanildim?" degan savolga
-        hisobdan chiqarilgan bino nomini olmasligi kerak.
-        """
-        AllowedPublicIp.objects.create(ip_address="203.0.113.10", zone=self.zone)
-        self.zone.delete()  # SoftDeleteModel — `deleted_at` qo'yiladi
-        result = services.network_preflight(public_ip="203.0.113.10")
-        self.assertTrue(result["allowed"])
-        self.assertIsNone(result["zone"])
-
-    def test_matches_observed_true(self):
-        AllowedPublicIp.objects.create(ip_address="203.0.113.10")
-        result = services.network_preflight(
-            public_ip="203.0.113.10", observed_ip="203.0.113.10"
-        )
-        self.assertIs(result["matches_observed"], True)
+    def test_unlisted_and_inactive(self):
+        AllowedPublicIp.objects.create(ip_address="8.8.4.4", is_active=False)
+        for ip in ("8.8.4.4", "1.1.1.1", "", None):
+            with self.subTest(ip=ip):
+                self.assertIsNone(services.building_public_ip(ip))

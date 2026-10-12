@@ -239,9 +239,17 @@ class SelfCheckTests(unittest.TestCase):
             frozen=False, env_file=None, api_base_url="http://127.0.0.1:8000"), [])
 
     def test_network_and_cameras(self):
+        # Faqat server so'raladi — internet (yopiq tarmoqda yo'q) emas.
+        probed = []
+        problems = self_check.check_network(
+            "https://api.example.uz/api/v1",
+            probe=lambda host, port: probed.append(host) or host == "api.example.uz",
+        )
+        self.assertEqual(problems, [])
+        self.assertEqual(probed, ["api.example.uz"])
         problems = self_check.check_network("https://api.example.uz/api/v1",
-                                            probe=lambda host, port: host == "api.example.uz")
-        self.assertEqual([p.code for p in problems], ["internet_unreachable"])
+                                            probe=lambda host, port: False)
+        self.assertEqual([p.code for p in problems], ["server_unreachable"])
         self.assertEqual([p.code for p in self_check.check_cameras(lambda: [])], ["camera_none"])
         self.assertEqual(self_check.check_cameras(lambda: ["cam"]), [])
         self.assertEqual(self_check.check_cameras(mock.Mock(side_effect=OSError)), [])

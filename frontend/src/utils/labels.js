@@ -98,6 +98,8 @@ export const AUDIT_ACTION_LABEL = {
   tp_resolve: 'Texnik muammo qarori',
   setting_change: 'Sozlama o‘zgarishi',
   device_revoke: 'Qurilma bloklandi',
+  client_exit: 'Client’dan chiqish',
+  client_back: 'Client’da orqaga qaytish',
   export: 'Eksport',
 }
 

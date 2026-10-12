@@ -15,9 +15,8 @@ qoldirish ikki narsani buzardi:
 Shuning uchun bu yerga XOM O'LCHOVLAR keladi va barcha chegaralar shu
 yerda qo'llanadi. Client faqat natijani ko'rsatadi.
 
-Bu naqsh loyihada allaqachon bor: `AccessAttemptView` ham client
-aytgan xulosani qabul qilmaydi, balki o'z xulosasini qaytadan
-hisoblaydi.
+Bu naqsh loyihada allaqachon bor: IP tekshiruvi ham client aytgan
+manzilga emas, server ko'rgan manzilga tayanadi.
 
 TEKSHIRUVLAR RO'YXATI (texnik topshiriqdagi 14 ta):
 

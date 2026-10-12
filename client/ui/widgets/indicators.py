@@ -297,7 +297,7 @@ class MessageBar(QLabel):
 
     BALANDLIGINI O'ZI HISOBLAYDI (`_fit`). O'raladigan `QLabel` layout'ga
     BIR QATORLIK balandlik aytadi: login kartasida uch qatorli xabar
-    ("Tashqi IP manzilga ruxsat yo'q...") 50 px ga siqilib, yarmi
+    ("IP manzilga ruxsat yo'q...") 50 px ga siqilib, yarmi
     ko'rinmay qolardi - operator nima qilishni o'qiy olmasdi. Endi
     minimal balandlik haqiqiy kenglikdagi `heightForWidth` ga teng va
     karta xabar sig'guncha o'sadi.

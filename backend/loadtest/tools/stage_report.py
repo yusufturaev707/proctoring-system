@@ -22,7 +22,7 @@ import sys
 from collections import defaultdict
 
 SLO_LOGIN = ("auth/login", "client/candidate/lookup")
-SLO_SMALL = ("client/heartbeat", "client/presence", "client/events", "client/preflight",
+SLO_SMALL = ("client/heartbeat", "client/presence", "client/events",
              "client/exam/access", "client/identity/confirm", "client/session/finish")
 
 

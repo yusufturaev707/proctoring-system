@@ -33,12 +33,11 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
-from apps.common.exceptions import IpNotAllowed, PublicIpUnknown, SessionNotFound
+from apps.common.exceptions import IpNotAllowed, SessionNotFound
 from apps.common.permissions import HasRolePermission
 from apps.common.utils.crypto import mask_pinfl
 from apps.common.storage import build_object_key, presign_put
 from apps.common.throttling import (
-    AccessAttemptThrottle,
     ClientIngestThrottle,
     ExitVerifyDeviceThrottle,
     ExitVerifyThrottle,
@@ -47,14 +46,12 @@ from apps.common.throttling import (
     PinflLookupDeviceThrottle,
     PinflLookupOperatorThrottle,
     PinflLookupThrottle,
-    PreflightThrottle,
     SessionStartThrottle,
     client_ip,
 )
 from apps.controls import services as controls_services
 from apps.devices import services as device_services
 from apps.proctoring.api.v1.client_serializers import (
-    AccessAttemptSerializer,
     CameraCheckSerializer,
     CameraStreamSerializer,
     CandidateLookupSerializer,
@@ -68,7 +65,6 @@ from apps.proctoring.api.v1.client_serializers import (
     HeartbeatSerializer,
     IdentityConfirmSerializer,
     PeriodicFaceSerializer,
-    PreflightSerializer,
     PresenceSerializer,
     PresignRequestSerializer,
     ProctoringStartSerializer,
@@ -96,13 +92,6 @@ from apps.proctoring.services.audit import record_audit
 
 logger = logging.getLogger(__name__)
 
-#: Kirish urinishlari uchun ALOHIDA jurnal (`client_access.log`).
-#:
-#: Alohida, chunki uni boshqa odam va boshqa savol bilan o'qiydi:
-#: "falon kompyuter nega kira olmayapti?". Umumiy log'da bu yozuvlar
-#: har bir so'rov qatori orasida ko'rinmay ketardi.
-access_logger = logging.getLogger("client_access")
-
 
 class ClientBaseView(APIView):
     """
@@ -129,17 +118,13 @@ class ClientBaseView(APIView):
 
     def check_source_ip(self, zone_id=None) -> str:
         """
-        Haqiqiy IP tekshiruvi — FAQAT server ko'rgan manzil bo'yicha.
+        Haqiqiy IP tekshiruvi — FAQAT server ko'rgan manzil bo'yicha
+        (TCP ulanishi kelgan manzil). Client login'i ham AYNAN shu qoida
+        (`devices.services.check_client_login`).
 
-        Preflight'dan farqi shu va u ataylab: preflight client aytgan
-        qiymatga qaraydi (uni o'zgartirish mumkin), bu esa TCP ulanishi
-        kelgan manzilga.
-
-        Xato XABARI muhim. Ilgari u faqat "Ruxsat etilmagan IP: X"
-        derdi va eng chalkash holatni — preflight o'tib, keyingi so'rov
-        rad etilishini — umuman tushuntirmasdi. Sabab esa deyarli har
-        doim bitta: server clientni NAT orqali ko'rmayapti, ya'ni u
-        binoning tashqi manzilini emas, LAN manzilini ko'ryapti.
+        Xato XABARI muhim: xususiy manzil rad etilsa sabab deyarli har
+        doim konfiguratsiyada — bino tarmog'i ro'yxatga kiritilmagan
+        yoki nginx ortida `TRUSTED_PROXY_COUNT` noto'g'ri.
         """
         from apps.common.utils.network import is_private_ip
 
@@ -151,10 +136,9 @@ class ClientBaseView(APIView):
             # Bu konfiguratsiya xatosi, hujum emas: xususiy manzilni
             # ommaviy IP ro'yxati bo'yicha baholab bo'lmaydi.
             logger.warning(
-                "Manba manzili XUSUSIY (%s, zone=%s) — `AllowedPublicIp` "
-                "ro'yxati unga javob bera olmaydi. Server imtihon "
-                "tarmog'ining ichida yoki client bilan bir mashinada "
-                "bo'lsa, `ALLOW_PRIVATE_SOURCE_IP=true` qo'ying; nginx "
+                "Manba manzili XUSUSIY (%s, zone=%s) va u `AllowedPublicIp` "
+                "da yo'q. Server bino ichida yoki yopiq kanalda bo'lsa, "
+                "binoning TARMOG'INI (CIDR) binoga bog'lab qo'shing; nginx "
                 "ortida bo'lsa `TRUSTED_PROXY_COUNT` ni to'g'ri sozlang.",
                 ip_address, zone_id,
             )
@@ -182,176 +166,6 @@ class SessionRequiredView(ClientBaseView):
         if exam_session is None:
             raise SessionNotFound("X-Proctoring-Session header'i yo'q yoki yaroqsiz")
         return exam_session
-
-
-# --------------------------------------------------------------------------
-# 0. Preflight — client login formasini ko'rsatishdan OLDIN
-# --------------------------------------------------------------------------
-class PreflightView(APIView):
-    """
-    "Bu kompyuter ruxsat etilgan binodanmi?" — oqimning eng birinchi savoli.
-
-    OCHIQ endpoint: u login'dan OLDIN chaqiriladi, ya'ni hali na JWT,
-    na `device_id` bor. Bu bo'shliq emas — javobda hech qanday sir yo'q:
-    client so'rov yuborgan manzilni allaqachon biladi, biz esa faqat
-    "shu manzil ro'yxatdami" degan javobni qaytaramiz. Ro'yxatning
-    o'zini sanab chiqishga `PreflightThrottle` yo'l qo'ymaydi.
-
-    Nega alohida endpoint kerak (handshake yetmaydi):
-      * handshake xodim JWT'sini talab qiladi, ya'ni operator avval
-        login/parol kiritishi kerak bo'lardi — noto'g'ri tarmoqda esa
-        bu urinishning ma'nosi yo'q;
-      * to'siq sababi (`ip_not_allowed`) oqimning o'rtasida emas,
-        boshida ko'rinishi kerak: operator nima qilishini darhol bilsin.
-
-    Qaror FAQAT client aytgan public IP bo'yicha chiqadi — sababi
-    `controls.services.network_preflight` da. Bu qulaylik to'sig'i;
-    haqiqiy himoya `ClientBaseView.check_source_ip` da qoladi.
-    """
-
-    permission_classes: list = []
-    authentication_classes: list = []
-    throttle_classes = [PreflightThrottle]
-
-    @extend_schema(request=PreflightSerializer, responses={200: None})
-    def post(self, request):
-        serializer = PreflightSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        observed_ip = client_ip(request)
-        public_ip = serializer.validated_data.get("public_ip", "")
-        result = controls_services.network_preflight(
-            public_ip=public_ip, observed_ip=observed_ip
-        )
-
-        if result["allowed"]:
-            # Qulflash siyosati SHU YERDA beriladi - login'dan oldin.
-            # Handshake'dagi `config.hotkeys` bilan bir xil manba;
-            # client uni kirish tugagach o'sha qiymat bilan qayta
-            # qo'llaydi (bino sozlamasi boshqacha bo'lishi mumkin).
-            result["hotkeys"] = controls_services.client_hotkeys()
-            return Response(result)
-
-        if result["allowlist_empty"]:
-            # Sabab operatorda emas, sozlamada: ruxsat etilgan IP'lar
-            # ro'yxatida bitta ham faol yozuv yo'q.
-            logger.error(
-                "Preflight rad etildi: ruxsat etilgan IP'lar ro'yxati BO'SH "
-                "(public_ip=%s). Administrator kamida bitta manzil qo'shishi kerak.",
-                public_ip or "-",
-            )
-        elif not public_ip:
-            raise PublicIpUnknown()
-
-        # Konvert ATAYLAB qo'lda: `IpNotAllowed` istisnosi `details` ni
-        # yo'qotadi (`api_exception_handler` `detail` lug'atida uni
-        # tashlab yuboradi), operatorga esa AYNAN qaysi manzil rad
-        # etilgani kerak — u shu raqamni administratorga aytadi.
-        return Response(
-            {
-                "success": False,
-                "data": None,
-                "error": {
-                    "code": IpNotAllowed.default_code,
-                    "message": (
-                        "Ruxsat etilgan IP'lar ro'yxati bo'sh — administrator "
-                        "hali birorta manzilni qo'shmagan."
-                        if result["allowlist_empty"]
-                        else "Tashqi IP manzilga ruxsat yo'q. Bu kompyuter "
-                        "ro'yxatga olinmagan tarmoqdan ulanmoqda."
-                    ),
-                    "details": {
-                        "public_ip": public_ip,
-                        "observed_ip": observed_ip,
-                        "allowlist_empty": result["allowlist_empty"],
-                    },
-                },
-            },
-            status=status.HTTP_403_FORBIDDEN,
-        )
-
-
-class AccessAttemptView(APIView):
-    """
-    Dasturga kirish urinishini JURNALGA yozadi.
-
-    Alohida endpoint, alohida jurnal (`client_access.log`) — ataylab:
-
-      * `AuditLog` XODIM harakatlari uchun (kim nimani o'zgartirdi) va
-        u huquqiy dalil; ro'yxatdan o'tmagan mashinaning muvaffaqiyatsiz
-        urinishi u yerda begona yozuv bo'lardi;
-      * bu jurnalning O'QUVCHISI boshqa — tizim administratori "falon
-        kompyuter nega kira olmayapti?" degan savolga javob qidiradi va
-        unga bitta faylda MAC, LAN IP, public IP va natija ketma-ket
-        turgani kerak;
-      * urinishlar soni ko'p va ular DB'ga yozilsa, imtihon kunining
-        boshida (bir vaqtda minglab client ishga tushadi) jadval
-        bekorga o'sardi.
-
-    Endpoint OCHIQ va hech narsani hal qilmaydi — u faqat yozadi.
-    Shuning uchun bu yerda hech qanday sir yo'q, lekin
-    `AccessAttemptThrottle` uni jurnalni to'ldirish yo'liga
-    aylantirishga yo'l qo'ymaydi.
-    """
-
-    permission_classes: list = []
-    authentication_classes: list = []
-    throttle_classes = [AccessAttemptThrottle]
-
-    @extend_schema(request=AccessAttemptSerializer, responses={202: None})
-    def post(self, request):
-        serializer = AccessAttemptSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        data = serializer.validated_data
-
-        observed_ip = client_ip(request)
-        public_ip = data.get("public_ip", "")
-        # Server o'z xulosasini QAYTADAN hisoblaydi: client aytgan
-        # natijaga ishonib jurnal yozilsa, u faqat client to'g'ri
-        # ishlaganini tasdiqlaydi va buzilgan/o'zgartirilgan client
-        # haqida hech narsa aytmaydi.
-        verdict = controls_services.network_preflight(
-            public_ip=public_ip, observed_ip=observed_ip
-        )
-        zone = verdict["zone"] or {}
-        region = verdict["region"] or {}
-
-        access_logger.info(
-            "KIRISH URINISHI | uuid=%s mac=%s lan_ip=%s public_ip=%s manba_ip=%s host=%s v%s "
-            "| ruxsat=%s bino=%s | login_sahifasi=%s | kod=%s",
-            data.get("machine_uuid") or "-",
-            data.get("mac_address") or "-",
-            data.get("ip_address") or "-",
-            public_ip or "-",
-            observed_ip,
-            data.get("hostname") or "-",
-            data.get("app_version") or "-",
-            "HA" if verdict["allowed"] else "YO'Q",
-            "{}{}".format(
-                zone.get("name") or "aniqlanmadi",
-                " ({})".format(region["name"]) if region.get("name") else "",
-            ),
-            "OCHILDI" if data.get("entered_login") else "OCHILMADI",
-            data.get("code") or "-",
-        )
-
-        # Client aytgani bilan server xulosasi zid bo'lsa — bu alohida
-        # signal: yo client eskirgan, yo o'zgartirilgan.
-        if bool(data.get("entered_login")) != bool(verdict["allowed"]):
-            access_logger.warning(
-                "ZIDLIK: client login_sahifasi=%s, server ruxsat=%s "
-                "(uuid=%s mac=%s public_ip=%s)",
-                "OCHILDI" if data.get("entered_login") else "OCHILMADI",
-                "HA" if verdict["allowed"] else "YO'Q",
-                data.get("machine_uuid") or "-",
-                data.get("mac_address") or "-",
-                public_ip or "-",
-            )
-
-        # 202: yozib olindi, lekin client uchun hech narsani o'zgartirmaydi.
-        # Client bu javobni kutmaydi ham — jurnalga yozish oqimni
-        # to'xtatmasligi kerak.
-        return Response(status=status.HTTP_202_ACCEPTED)
 
 
 # --------------------------------------------------------------------------
@@ -395,7 +209,6 @@ class HandshakeView(ClientBaseView):
                 app_version=data.get("app_version", ""),
                 app_hash=data.get("app_hash", ""),
                 hardware_fingerprint=data.get("hardware_fingerprint", ""),
-                reported_public_ip=data.get("public_ip", ""),
                 # Client aytgan LAN manzili: panelda sessiya kartochkasida
                 # aynan shu ko'rsatiladi (server ko'rgan manzil NAT
                 # ortida butun bino uchun bitta bo'lishi mumkin).
@@ -1741,7 +1554,7 @@ class ExitVerifyView(APIView):
        Bu YAGONA yo'l dastur login sahifasida turganda: o'sha paytda
        hech qanday xodim tizimda yo'q, mashinani esa qonuniy yopish
        kerak bo'lishi mumkin (jihoz ko'chirilyapti, kun tugadi,
-       preflight rad etgan ekranda qolib ketgan).
+       login IP sababli rad etilgan).
 
     Shuning uchun endpoint AUTENTIFIKATSIYANI TALAB QILMAYDI. Bu
     bo'shliq emas: u hech narsa ochmaydi va hech qanday ma'lumot
@@ -1776,44 +1589,44 @@ class ExitVerifyView(APIView):
         )
 
     @staticmethod
-    def _region_id(device, public_ip: str):
+    def _region_id(device, ip_address: str):
         """
-        Viloyat: avval qurilma zanjiri, keyin tashqi IP.
+        Viloyat: avval qurilma zanjiri, keyin server ko'rgan manzil.
 
         Qurilma ishonchliroq — u serverdagi yozuv bilan bog'langan.
-        Tashqi IP esa client aytgan qiymat, lekin u faqat QAYSI
-        parol solishtirilishini tanlaydi: noto'g'ri viloyat
-        ko'rsatilsa, solishtirish shunchaki mos kelmaydi.
+        Ro'yxatdan o'tmagan mashinada viloyat manba manzili qaysi
+        binoning IP/tarmog'iga tushishidan olinadi (client aytgan
+        qiymat emas — uni o'zgartirib boshqa viloyat parolini tanlash
+        mumkin edi).
         """
         zone = getattr(getattr(device, "computer", None), "zone", None)
         if zone is not None and zone.region_id:
             return zone.region_id
 
-        if public_ip:
-            zone = device_services.resolve_zone_by_public_ip(public_ip)
-            if zone is not None:
-                return zone.region_id
-        return None
+        zone = device_services.resolve_zone_by_ip(ip_address)
+        return zone.region_id if zone is not None else None
 
     @extend_schema(request=ExitVerifySerializer, responses={200: None})
     def post(self, request):
         serializer = ExitVerifySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         password = serializer.validated_data["password"]
+        purpose = serializer.validated_data["purpose"]
 
         device = self._device(request)
         user = request.user if request.user.is_authenticated else None
 
         # 1. Xodimning o'z paroli.
         if user is not None and user.check_password(password):
-            return self._allow(request, device, method="staff", user=user)
+            return self._allow(request, device, method="staff", user=user, purpose=purpose)
 
         # 2. Viloyatning chiqish paroli.
-        region_id = self._region_id(device, serializer.validated_data.get("public_ip", ""))
+        region_id = self._region_id(device, client_ip(request))
         row = controls_services.verify_exit_password(password, region_id=region_id)
         if row is not None:
             return self._allow(
-                request, device, method="region", user=user, region=row.region
+                request, device, method="region", user=user, region=row.region,
+                purpose=purpose,
             )
 
         # Parol umuman sozlanmaganmi? Bu "noto'g'ri parol" EMAS va
@@ -1861,11 +1674,17 @@ class ExitVerifyView(APIView):
         )
 
     @staticmethod
-    def _allow(request, device, *, method: str, user=None, region=None):
-        """Ruxsat berildi — audit iziga QAYSI kalit ishlatilgani yoziladi."""
+    def _allow(request, device, *, method: str, user=None, region=None, purpose="exit"):
+        """
+        Ruxsat berildi — audit iziga QAYSI kalit ishlatilgani yoziladi.
+
+        `purpose="back"` — Ctrl+Q oynasidan oldingi sahifaga qaytish:
+        parol bir xil talab qilinadi, lekin auditda alohida amal
+        (`client_back`) — dastur yopilmagan.
+        """
         record_audit(
             actor=user,
-            action="client_exit",
+            action="client_back" if purpose == "back" else "client_exit",
             object_type="DeviceToken",
             object_id=getattr(device, "pk", None),
             meta={
@@ -1880,7 +1699,8 @@ class ExitVerifyView(APIView):
             request=request,
         )
         logger.info(
-            "Chiqishga ruxsat berildi (%s): user=%s device=%s",
+            "%s ruxsat berildi (%s): user=%s device=%s",
+            "Orqaga qaytishga" if purpose == "back" else "Chiqishga",
             method,
             getattr(user, "username", "-"),
             getattr(device, "device_id", "-"),

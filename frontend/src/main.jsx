@@ -31,6 +31,14 @@ const queryClient = new QueryClient({
   },
 })
 
+// `v7_startTransition` — navigatsiya `startTransition` ichida: dangasa
+// sahifa kodi yuklanguncha ESKI sahifa ko'rinib turadi. Usiz `Suspense`
+// uni `display: none` bilan yashirardi va ichidagi DataGrid sekin
+// tarmoqda har o'tishda "parent DOM element has an empty height"
+// xatosini berardi (React Scan bilan sinovda topildi). Splat marshrutda
+// nisbiy havola yo'q (`*` -> `/`), `v7_relativeSplatPath` xavfsiz.
+const ROUTER_FUTURE = { v7_startTransition: true, v7_relativeSplatPath: true }
+
 function ThemedApp() {
   const { palette, resolvedMode, density } = useUi()
 
@@ -52,7 +60,7 @@ function ThemedApp() {
 createRoot(document.getElementById('root')).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
+      <BrowserRouter future={ROUTER_FUTURE}>
         <UiProvider>
           <ThemedApp />
         </UiProvider>

@@ -29,6 +29,15 @@ import { exportCsv } from '../../utils/exportCsv'
 import { useUi } from '../../context/UiContext'
 import { FILTER_FIELD_SX } from './responsive'
 
+// Standart qiymatlar MODUL darajasida: `= {}` / `= []` / inline funksiya
+// signaturada har renderda YANGI obyekt beradi va memo qilingan forma
+// hamda jadval ustunlari (`getRowLabel` ga bog'liq) har qidiruv harfida
+// qayta hisoblanardi.
+const NO_DEFAULTS = Object.freeze({})
+const NO_FILTERS = Object.freeze([])
+const NO_CONTEXT = Object.freeze({})
+const defaultRowLabel = (row) => row?.name || `#${row?.id}`
+
 /**
  * Model uchun to'liq CRUD sahifasi.
  *
@@ -45,7 +54,7 @@ export default function ResourcePage({
   columns,
   fields,
   permission,
-  defaults = {},
+  defaults = NO_DEFAULTS,
   /**
    * Model `SoftDeleteModel` bo'lsa `true`. Shunda:
    *   - "O'chirilganlar" filtri paydo bo'ladi (`?deleted=only|all`);
@@ -53,7 +62,7 @@ export default function ResourcePage({
    * Backendda `SoftDeleteRestoreMixin` ulangan bo'lishi shart.
    */
   restorable = false,
-  filters: filterDefs = [],
+  filters: filterDefs = NO_FILTERS,
   defaultFilters,
   searchPlaceholder = 'Qidirish…',
   searchable = true,
@@ -67,11 +76,11 @@ export default function ResourcePage({
   actionsWidth = 170,
   deleteConfirmPhrase,
   deleteDescription = 'Bu amalni qaytarib bo‘lmaydi.',
-  getRowLabel = (row) => row?.name || `#${row?.id}`,
+  getRowLabel = defaultRowLabel,
   emptyDescription,
   formMaxWidth = 'sm',
   formDescription,
-  formContext = {},
+  formContext = NO_CONTEXT,
   /** Forma sarlavhasi: matn yoki `(isEdit, row) => matn` (`ResourceForm.title`). */
   formTitle,
   /** MD3 forma: sarlavha belgisi va bo'lim kartalari (`ResourceForm.icon` / `sections`). */
@@ -138,6 +147,20 @@ export default function ResourcePage({
   })
   const showSkeleton = useDeferredLoading(resource.isLoading)
 
+  // BARQAROR `resource`. `useResource` har renderda YANGI obyekt
+  // qaytaradi (qidiruv qiymati, `isFetching`...). Ustunlar va callback'lar
+  // unga bog'lansa, qidiruvga har harf yozilganda jadval ustunlari qayta
+  // yaratilib, DataGrid barcha kataklarni qayta chizardi (React Scan:
+  // 10 harf = ~8 500 katak renderi). Fasad o'zgarmaydi, lekin har
+  // murojaatda ENG SO'NGGI qiymatni beradi — ustun ichidagi
+  // `resource.patch(...)` va `rowActions(row, resource)` to'g'ri ishlaydi.
+  const resourceRef = useRef(resource)
+  resourceRef.current = resource
+  const stableResource = useMemo(
+    () => new Proxy({}, { get: (_target, key) => resourceRef.current[key] }),
+    [],
+  )
+
   const queryClient = useQueryClient()
   const [editing, setEditing] = useState(null)
   const [deleting, setDeleting] = useState(null)
@@ -182,13 +205,13 @@ export default function ResourcePage({
    */
   const changeFilter = useCallback(
     (filter, value) => {
-      resource.setFilters((prev) => {
+      stableResource.setFilters((prev) => {
         const next = { ...prev, [filter.name]: value }
         for (const child of filter.resets || []) next[child] = ''
         return next
       })
     },
-    [resource],
+    [stableResource],
   )
   const [menuAnchor, setMenuAnchor] = useState(null)
   const searchRef = useRef(null)
@@ -251,14 +274,15 @@ export default function ResourcePage({
   )
 
   const openCreate = useCallback(() => {
-    resource.clearServerError()
+    stableResource.clearServerError()
     setEditing({})
-  }, [resource])
+  }, [stableResource])
 
   const openEdit = useCallback((row) => {
-    resource.clearServerError()
+    stableResource.clearServerError()
     setEditing(row)
-  }, [resource])
+  }, [stableResource])
+  const closeForm = useCallback(() => setEditing(null), [])
 
   // Filtrlar to'plami bo'sh bo'lmasa panelni ochiq holda ko'rsatamiz —
   // havola orqali kelgan odam qaysi filtr qo'llanganini darrov ko'rsin,
@@ -299,15 +323,15 @@ export default function ResourcePage({
   const handleSubmit = useCallback(
     (payload) => {
       const onDone = { onSuccess: () => setEditing(null) }
-      if (payload.id) resource.update(payload, onDone)
-      else resource.create(payload, onDone)
+      if (payload.id) stableResource.update(payload, onDone)
+      else stableResource.create(payload, onDone)
     },
-    [resource],
+    [stableResource],
   )
 
   const baseColumns = useMemo(
-    () => (typeof columns === 'function' ? columns({ resource, canManage }) : columns),
-    [columns, resource, canManage],
+    () => (typeof columns === 'function' ? columns({ resource: stableResource, canManage }) : columns),
+    [columns, stableResource, canManage],
   )
 
   const gridColumns = useMemo(() => {
@@ -332,7 +356,7 @@ export default function ResourcePage({
                 disabled={!canManage}
                 onClick={(event) => event.stopPropagation()}
                 onChange={(event) =>
-                  resource.patch({ id: params.row.id, [toggleField]: event.target.checked })
+                  stableResource.patch({ id: params.row.id, [toggleField]: event.target.checked })
                 }
                 inputProps={{ 'aria-label': `${toggleLabel}: ${getRowLabel(params.row)}` }}
               />
@@ -375,7 +399,7 @@ export default function ResourcePage({
           }
           return (
             <Stack direction="row" spacing={0.25} alignItems="center" sx={{ height: '100%' }} onClick={(event) => event.stopPropagation()}>
-              {rowActions?.(params.row, resource)}
+              {rowActions?.(params.row, stableResource)}
               {canEdit && (
                 <Tooltip title="Tahrirlash">
                   <IconButton size="small" onClick={() => openEdit(params.row)}>
@@ -396,9 +420,51 @@ export default function ResourcePage({
       },
     ]
   }, [
-    baseColumns, canManage, rowActions, actionsWidth, resource, openEdit, canDelete, canEdit,
+    baseColumns, canManage, rowActions, actionsWidth, stableResource, openEdit, canDelete, canEdit,
     toggleField, toggleLabel, getRowLabel, restorable,
   ])
+
+  // Jadvalga ketadigan qolgan props ham barqaror — `DataGrid` (memo)
+  // qidiruv yozilayotganda umuman render bo'lmasin.
+  const onRowClickRef = useRef(onRowClick)
+  onRowClickRef.current = onRowClick
+  const hasRowClick = Boolean(onRowClick)
+  const handleRowClick = useCallback(
+    (params, event) => onRowClickRef.current?.(params, { event, openEdit }),
+    [openEdit],
+  )
+  const selectionRef = useRef(selection)
+  selectionRef.current = selection
+  const handleSelectionChange = useCallback((model) => {
+    // Qo'lda katak olib tashlandi — endi "hammasi" emas.
+    if (model.length < selectionRef.current.length) setSelectAll(false)
+    setSelection(model)
+  }, [])
+  const filtered = Boolean(activeFilterCount || resource.search)
+  const emptyAction = useMemo(() => {
+    if (canManage && canCreate && !filtered) return { label: 'Birinchi yozuvni qo‘shish', onClick: openCreate }
+    if (filtered) return { label: 'Filtrni tozalash', onClick: () => stableResource.resetFilters() }
+    return undefined
+  }, [canManage, canCreate, filtered, openCreate, stableResource])
+  const cursorNav = useMemo(
+    () => (resource.isCursorMode
+      ? {
+          hasNext: resource.hasNext,
+          hasPrevious: resource.hasPrevious,
+          onNext: resource.goNextPage,
+          onPrevious: resource.goPreviousPage,
+          pageIndex: resource.cursorPageIndex,
+          pageSize: resource.paginationModel.pageSize,
+          onPageSizeChange: (size) =>
+            stableResource.setPaginationModel((prev) => ({ ...prev, pageSize: size })),
+        }
+      : undefined),
+    [
+      resource.isCursorMode, resource.hasNext, resource.hasPrevious, resource.goNextPage,
+      resource.goPreviousPage, resource.cursorPageIndex, resource.paginationModel.pageSize,
+      stableResource,
+    ],
+  )
 
   const handleExport = useCallback(() => {
     // Ataylab FAQAT joriy sahifa eksport qilinadi. "Hammasini yuklab
@@ -654,7 +720,7 @@ export default function ResourcePage({
           // Ikkinchi argument - sahifa amallari: tafsilot oynasidan
           // "Tahrirlash" shu sahifaning formasini ochadi (ikkinchi forma
           // yasamasdan).
-          onRowClick={onRowClick && ((params, event) => onRowClick(params, { event, openEdit }))}
+          onRowClick={hasRowClick ? handleRowClick : undefined}
           rowCount={resource.total}
           paginationModel={resource.paginationModel}
           onPaginationModelChange={resource.setPaginationModel}
@@ -668,41 +734,16 @@ export default function ResourcePage({
                 // Tanlov sahifadan sahifaga o'tganda SAQLANADI.
                 keepNonExistentRowsSelected: true,
                 rowSelectionModel: selection,
-                onRowSelectionModelChange: (model) => {
-                  // Qo'lda katak olib tashlandi — endi "hammasi" emas.
-                  if (selectAll && model.length < selection.length) setSelectAll(false)
-                  setSelection(model)
-                },
+                onRowSelectionModelChange: handleSelectionChange,
                 isRowSelectable,
               }
             : {})}
-          cursorNav={
-            resource.isCursorMode
-              ? {
-                  hasNext: resource.hasNext,
-                  hasPrevious: resource.hasPrevious,
-                  onNext: resource.goNextPage,
-                  onPrevious: resource.goPreviousPage,
-                  pageIndex: resource.cursorPageIndex,
-                  pageSize: resource.paginationModel.pageSize,
-                  onPageSizeChange: (size) =>
-                    resource.setPaginationModel((prev) => ({ ...prev, pageSize: size })),
-                }
-              : undefined
-          }
+          cursorNav={cursorNav}
           emptyDescription={
             emptyDescription ||
-            (activeFilterCount || resource.search
-              ? 'Filtr shartlariga mos yozuv yo‘q'
-              : 'Hozircha yozuvlar mavjud emas')
+            (filtered ? 'Filtr shartlariga mos yozuv yo‘q' : 'Hozircha yozuvlar mavjud emas')
           }
-          emptyAction={
-            canManage && canCreate && !activeFilterCount && !resource.search
-              ? { label: 'Birinchi yozuvni qo‘shish', onClick: openCreate }
-              : activeFilterCount || resource.search
-                ? { label: 'Filtrni tozalash', onClick: resource.resetFilters }
-                : undefined
-          }
+          emptyAction={emptyAction}
         />
       )}
 
@@ -714,7 +755,7 @@ export default function ResourcePage({
         submitting={resource.isSaving}
         serverError={resource.serverError}
         onSubmit={handleSubmit}
-        onClose={() => setEditing(null)}
+        onClose={closeForm}
         maxWidth={formMaxWidth}
         title={formTitle}
         description={formDescription}

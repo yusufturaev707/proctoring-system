@@ -176,7 +176,7 @@ export const NAVIGATION = [
       },
       {
         label: "Ruxsat etilgan IP'lar", path: '/allowed-ips', icon: LanIcon, permission: 'controls.ip_view',
-        description: 'Client faqat shu tashqi manzillardan kira oladi',
+        description: 'Client faqat shu manzil va tarmoqlardan kira oladi',
       },
       {
         label: 'Chiqish parollari', path: '/exit-passwords', icon: LockIcon, permission: 'controls.exit_password_view',

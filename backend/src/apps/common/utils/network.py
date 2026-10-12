@@ -1,11 +1,10 @@
 """
 Tarmoq manzillari bilan ishlash.
 
-Bitta joyda, chunki "bu manzil tashqi (NAT) manzilmi yoki bino ichidagi
-LAN manzilmi?" degan savol tizimda bir necha joyda beriladi: qurilma
-ro'yxatdan o'tishda, ishga tushishdagi preflight tekshiruvida va
-diagnostikada. Har birida alohida yozilsa, ular vaqt o'tib bir-biridan
-ajralib ketadi.
+Bitta joyda, chunki "bu manzil ommaviymi yoki bino ichidagi LAN
+manzilmi?" degan savol tizimda bir necha joyda beriladi
+(`ALLOW_PRIVATE_SOURCE_IP` qarori, IP tekshiruvi diagnostikasi). Har
+birida alohida yozilsa, ular vaqt o'tib bir-biridan ajralib ketadi.
 """
 
 from __future__ import annotations
@@ -33,7 +32,3 @@ def is_private_ip(ip_address: str) -> bool:
         or parsed.is_link_local
         or parsed.is_unspecified
     )
-
-
-def is_public_ip(ip_address: str) -> bool:
-    return not is_private_ip(ip_address)

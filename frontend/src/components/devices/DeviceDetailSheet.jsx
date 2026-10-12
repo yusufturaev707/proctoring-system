@@ -146,11 +146,10 @@ export default function DeviceDetailSheet({
               <Field label="Fingerprint" value={device.hardware_fingerprint} mono onCopy={copy} />
             </Section>
 
-            {/* UCHTA MANZIL, UCHTA MA'NO (`CLAUDE.md`). */}
+            {/* IKKI MANZIL, IKKI MA'NO (`CLAUDE.md`). */}
             <Section title="Tarmoq">
               <Field label="Mashina IP" value={device.reported_lan_ip} hint="Client aytgan LAN manzil" />
               <Field label="Manba IP" value={device.last_ip} hint="Server ko‘rgan manzil" />
-              <Field label="Tashqi IP" value={device.reported_public_ip} hint="Client aniqlagan, ma’lumot uchun" />
             </Section>
           </Box>
 

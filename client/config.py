@@ -449,16 +449,15 @@ KIOSK_MODE = _env_bool("KIOSK_MODE", FULLSCREEN)
 
 # Bloklanadigan tezkor tugmalarning STANDART ro'yxati (vergul bilan).
 #
-# Dastur ishga tushishi bilan (preflight'dan OLDIN) qo'llanadi: ilgari
-# ro'yxat faqat serverdan kelardi va preflight javobi kelguncha (server
-# javob bermasa - umuman) mashina qulfsiz turardi - aynan talabgor
-# oldida. Server ro'yxati kelsa (preflight, handshake, imtihon profili)
-# u bu ro'yxatni ALMASHTIRADI; server BO'SH ro'yxat bersa bu standart
-# QOLADI (`services/lockdown.py:resolve_hotkeys`).
+# Dastur ishga tushishi bilan qo'llanadi va login ekranida shu turadi:
+# server ro'yxati faqat login'dan keyin keladi, usiz mashina talabgor
+# oldida qulfsiz turardi. Server ro'yxati kelsa (handshake, imtihon
+# profili) u bu ro'yxatni ALMASHTIRADI; server BO'SH ro'yxat bersa bu
+# standart QOLADI (`services/lockdown.py:resolve_hotkeys`).
 #
 # Faqat `KIOSK_MODE` da ishlaydi. `ctrl+q` bu yerda yozilsa ham
-# bloklanmaydi - u chiqishning yagona yo'li. `alt+shift` (til
-# almashtirish) ataylab YO'Q. Nusxa/qo'yish (`ctrl+c`/`ctrl+v`) ham
+# bloklanmaydi - u chiqishning yagona yo'li; `alt+shift` ham (til
+# almashtirishning yagona yo'li, ekranda til tugmasi yo'q). Nusxa/qo'yish (`ctrl+c`/`ctrl+v`) ham
 # yo'q: ular imtihon qoidasi va panelda imtihon profiliga yoziladi.
 DEFAULT_BLOCKED_HOTKEYS = (
     "alt+tab,alt+shift+tab,alt+esc,win,ctrl+esc,alt+f4,alt+space,"

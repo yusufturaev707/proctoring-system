@@ -14,7 +14,7 @@ NIMA YARATILADI (har "foydalanuvchi" = bitta kompyuter = bitta talabgor):
 
     Region    "LT Yuklama viloyati" (dtm_id 990001)
     Zone      "LT bino 01".. (har binoda --per-building kompyuter)
-    AllowedPublicIp  100.64.<bino>.1 — binoning "NAT manzili"
+    AllowedPublicIp  100.64.<bino>.1 — binoning NAT manzili (server ko'radigan)
     Computer  LT-B01-0001, machine_uuid, MAC, LAN IP, raqam
     DeviceToken  lt-dev-01-0001 (ACTIVE, `muid:<UUID>` izi)
     User      lt_op_01_0001 (Operator) — kompyuter operatori
@@ -26,7 +26,7 @@ NIMA YARATILADI (har "foydalanuvchi" = bitta kompyuter = bitta talabgor):
 NIMA UCHUN 100.64.0.0/10: bu CGNAT diapazoni — internetda
 marshrutlanmaydi (haqiqiy tashkilotga tegishli emas), Python esa uni
 xususiy deb HISOBLAMAYDI (`is_private=False`), ya'ni server uni
-"binoning tashqi manzili" sifatida `AllowedPublicIp` bo'yicha
+"binoning NAT manzili" sifatida `AllowedPublicIp` bo'yicha
 baholaydi — production'dagi kabi. 203.0.113.x/198.18.x kabi
 hujjat/benchmark diapazonlari Python'da xususiy hisoblanadi va
 tekshiruvni boshqa yo'lga burardi.
@@ -64,7 +64,7 @@ PINFL_PREFIX = "99999"
 
 
 def building_ip(building: int) -> str:
-    """Binoning "tashqi (NAT) manzili" — 100.64.<b>.1 (b = 1..254)."""
+    """Binoning NAT manzili — 100.64.<b>.1 (b = 1..254); server shuni ko'radi."""
     return f"100.64.{building}.1"
 
 
@@ -88,7 +88,7 @@ def identity(index: int, per_building: int) -> dict:
         "lan_ip": f"10.{building}.{number // 250}.{number % 250 + 1}",
         "device_id": f"{DEVICE_PREFIX}{building:02d}-{number:04d}",
         "pinfl": f"{PINFL_PREFIX}{index:09d}",
-        "public_ip": building_ip(building),
+        "source_ip": building_ip(building),
     }
 
 

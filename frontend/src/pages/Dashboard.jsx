@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useIsFetching, useQuery, useQueryClient } from '@tanstack/react-query'
 import { alpha, useTheme } from '@mui/material/styles'
 import {
   Alert, Box, Card, CardHeader, Chip, Grid, IconButton, LinearProgress, Stack,
@@ -28,6 +28,16 @@ import { StaggerItem, useDeferredLoading } from '../components/motion/Transition
 import { dashboard } from '../api/endpoints'
 import { EVENT_LABEL } from '../utils/labels'
 
+// `checked_at` (platforma qachon tekshirilgani) har yangilanishda o'zgaradi
+// va panelda ishlatilmaydi. Olib tashlanmasa javob har 15 s da YANGI obyekt
+// bo'lib, o'zgarmagan binolar jadvali va grafiklar ham qayta chizilardi
+// (React Scan). Usiz react-query bir xil javobda eski obyektni qaytaradi.
+const selectSummary = (data) => {
+  if (!data?.external_platform) return data
+  const { checked_at: _ignored, ...platform } = data.external_platform
+  return { ...data, external_platform: platform }
+}
+
 const REFRESH_OPTIONS = [
   { value: 0, label: 'Off' },
   { value: 15000, label: '15s' },
@@ -42,6 +52,7 @@ export default function Dashboard() {
   const summaryQuery = useQuery({
     queryKey: ['dashboard-summary'],
     queryFn: () => dashboard.summary(),
+    select: selectSummary,
     refetchInterval: refreshMs || false,
   })
 
@@ -124,19 +135,7 @@ export default function Dashboard() {
               ))}
             </ToggleButtonGroup>
 
-            <Tooltip title="Yangilash">
-              <IconButton
-                onClick={() => { summaryQuery.refetch(); zonesQuery.refetch() }}
-                disabled={summaryQuery.isFetching}
-              >
-                <RefreshIcon
-                  sx={{
-                    animation: summaryQuery.isFetching ? 'spin 900ms linear infinite' : 'none',
-                    '@keyframes spin': { to: { transform: 'rotate(360deg)' } },
-                  }}
-                />
-              </IconButton>
-            </Tooltip>
+            <DashboardRefreshButton />
           </Stack>
         }
       />
@@ -230,6 +229,33 @@ export default function Dashboard() {
         </Grid>
       </Grid>
     </>
+  )
+}
+
+const DASHBOARD_KEYS = [['dashboard-summary'], ['dashboard-zones']]
+const SPIN_SX = { '@keyframes spin': { to: { transform: 'rotate(360deg)' } } }
+
+/**
+ * Yangilash tugmasi — so'rov holatini O'ZI kuzatadi (`useIsFetching`).
+ *
+ * `Dashboard` `isFetching` ni o'qisa, react-query uni har yangilanishda
+ * (boshlanish/tugash) ikki marta qayta chizadi — o'zgarmagan binolar
+ * jadvali va grafiklar bilan birga (React Scan). Endi faqat shu tugma.
+ */
+function DashboardRefreshButton() {
+  const queryClient = useQueryClient()
+  const fetching = useIsFetching({ queryKey: DASHBOARD_KEYS[0] }) > 0
+  return (
+    <Tooltip title="Yangilash">
+      <span>
+        <IconButton
+          onClick={() => DASHBOARD_KEYS.forEach((queryKey) => queryClient.refetchQueries({ queryKey }))}
+          disabled={fetching}
+        >
+          <RefreshIcon sx={{ ...SPIN_SX, animation: fetching ? 'spin 900ms linear infinite' : 'none' }} />
+        </IconButton>
+      </span>
+    </Tooltip>
   )
 }
 

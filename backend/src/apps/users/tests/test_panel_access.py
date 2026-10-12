@@ -68,7 +68,15 @@ class PanelLoginTests(_Base):
         self.assertEqual(self.error_code(response), "panel_access_denied")
 
     def test_operator_still_logs_into_client(self):
-        """Client `surface` yubormaydi — oqim o'zgarmagan."""
+        """Client `surface` yubormaydi — oqim o'zgarmagan (IP ro'yxatda)."""
+        from django.core.cache import cache
+
+        from apps.controls.models import AllowedPublicIp
+
+        cache.clear()
+        self.addCleanup(cache.clear)
+        # Client login'i IP ro'yxatidan o'tadi (`check_client_login`).
+        AllowedPublicIp.objects.create(ip_address="127.0.0.1")
         response = self.login(self.operator)
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.json()["data"]["user"]["has_panel_access"])

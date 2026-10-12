@@ -330,7 +330,7 @@ def _prewarm_api_client() -> None:
 
     Uning konstruktori (httpx + TLS sertifikatlar to'plamini o'qish)
     ~0.3 s oladi va ilgari asosiy oyna qurilayotganda UI thread'ida
-    bajarilardi (`PreflightPage` -> `AuthService`). Singleton qulf bilan
+    bajarilardi (`LoginPage` -> `AuthService`). Singleton qulf bilan
     himoyalangan (`core/singleton.py`): oyna undan oldin so'rasa, shu
     nusxa tayyor bo'lishini kutadi, ikkinchisi yaratilmaydi.
     """

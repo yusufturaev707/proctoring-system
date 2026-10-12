@@ -22,11 +22,8 @@ tanlash uch harakat degani.
 "avval turini tanlang" degan to'siqqa uchramaydi, aniqlashtirish esa
 ixtiyoriy qoladi (avvalgi xulq ham shunday edi).
 
-TIL ALMASHTIRGICH BU YERDA YO'Q. U asosiy oynada, `QStackedWidget`
-ustida suzib turadi (`ui/widgets/language_bar.py`) va modal ochilganda
-ham ekranda ko'rinadi — dialogga ikkinchi nusxasini qo'yish bir
-ekranda ikkita bir xil tugma degani bo'lardi va operator qaysi biri
-ishlayotganini o'ylab qolardi.
+TIL ALMASHTIRGICH YO'Q — klaviatura tili Alt+Shift bilan almashadi
+(u hech qachon bloklanmaydi, `lockdown._NEVER_BLOCKED`).
 """
 
 from __future__ import annotations

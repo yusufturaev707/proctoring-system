@@ -18,7 +18,6 @@ from apps.common.mixins import (
 )
 from apps.common.permissions import HasRolePermission
 from apps.common.throttling import DeviceRegisterThrottle, client_ip
-from apps.common.utils.network import is_private_ip
 from apps.common.utils.validators import normalize_mac, normalize_machine_uuid
 from apps.devices import selectors, services
 from apps.devices.api.v1.serializers import (
@@ -594,33 +593,13 @@ class DeviceRegisterView(APIView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        # Binoni so'rovning TASHQI (NAT) IP'si bo'yicha aniqlaymiz.
-        # Bu ikki narsa uchun kerak: LAN IP bo'yicha moslashtirishni
-        # to'g'ri binoga cheklash va avtomatik inventarizatsiya.
+        # Binoni so'rov KELGAN manzil bo'yicha aniqlaymiz (bino IP'si
+        # yoki bino tarmog'i). Bu ikki narsa uchun kerak: LAN IP bo'yicha
+        # moslashtirishni to'g'ri binoga cheklash va avtomatik
+        # inventarizatsiya. Client aytgan manzil ishlatilmaydi — uni
+        # o'zgartirib qurilmani boshqa binoga yozdirish mumkin edi.
         observed_ip = client_ip(request)
-        zone = services.resolve_zone_by_public_ip(observed_ip)
-
-        # Server bino ICHIDA tursa, u client'ning LAN manzilini ko'radi
-        # (marshrutda NAT yo'q) va binoni tashqi IP orqali aniqlay
-        # olmaydi. Shu holatda client o'zi aniqlagan tashqi manzil
-        # zaxira signal bo'lib ishlaydi.
-        #
-        # Bu qiymat ISHONCHSIZ (client uni yozib yuboradi), shuning uchun
-        # u FAQAT bino tanlashda va faqat server ko'rgan manzil xususiy
-        # bo'lganda ishlatiladi. Kirish ruxsatini u hech qachon hal
-        # qilmaydi - `check_source_ip` baribir server ko'rgan manzilga
-        # qaraydi.
-        reported_ip = data.get("public_ip", "")
-        if zone is None and reported_ip and is_private_ip(observed_ip):
-            zone = services.resolve_zone_by_public_ip(reported_ip)
-            if zone is not None:
-                logger.info(
-                    "Bino client aytgan tashqi IP orqali aniqlandi: %s -> %s "
-                    "(server ko'rgan manzil: %s)",
-                    reported_ip, zone, observed_ip,
-                )
-
-        public_ip = reported_ip or observed_ip
+        zone = services.resolve_zone_by_ip(observed_ip)
 
         computer = services.resolve_computer(
             machine_uuid=data.get("machine_uuid", ""),
@@ -646,7 +625,7 @@ class DeviceRegisterView(APIView):
                     object_id=computer.pk,
                     meta={
                         "auto": True,
-                        "public_ip": public_ip,
+                        "observed_ip": observed_ip,
                         "machine_uuid": computer.machine_uuid or "",
                         "mac_address": computer.mac_address,
                         "zone": str(zone),
@@ -656,11 +635,11 @@ class DeviceRegisterView(APIView):
 
         if computer is None:
             logger.info(
-                "Qurilma ro'yxatdan o'ta olmadi: uuid=%s mac=%s lan_ip=%s public_ip=%s bino=%s",
+                "Qurilma ro'yxatdan o'ta olmadi: uuid=%s mac=%s lan_ip=%s manba_ip=%s bino=%s",
                 data.get("machine_uuid") or "-",
                 data.get("mac_address") or "-",
                 data.get("ip_address") or "-",
-                public_ip,
+                observed_ip,
                 zone or "aniqlanmadi",
             )
             return Response(
@@ -678,9 +657,9 @@ class DeviceRegisterView(APIView):
                             "mac_address": data.get("mac_address", ""),
                             "observed_ip": observed_ip,
                             # Bino aniqlanmagani ko'pincha asosiy sabab:
-                            # binoning tashqi IP'si `AllowedPublicIp` da yo'q.
+                            # manba manzili `AllowedPublicIp` da binoga
+                            # bog'lanmagan.
                             "zone_resolved": zone is not None,
-                            "public_ip": public_ip,
                         },
                     },
                 },
@@ -742,7 +721,6 @@ class DeviceRegisterView(APIView):
             hardware_fingerprint=data.get("hardware_fingerprint", ""),
             app_version=data.get("app_version", ""),
             app_hash=data.get("app_hash", ""),
-            reported_public_ip=reported_ip or None,
         )
         return Response(
             {

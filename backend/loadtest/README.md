@@ -100,8 +100,8 @@ tuzatilguncha lokal bazaga ustunlarni qo'lda qo'shing.
    `config.settings.production`), ALOHIDA DB serveri (PostgreSQL + PgBouncer, production spetsifikatsiyasi),
    ≥3 yuklama generatori (har biri 8 yadro; ilova serverida HECH QACHON), stub platforma — generatorlardan birida.
    Production'ga va haqiqiy platforma/ntest'ga so'rov YO'Q: `Exam.site_url` va `BASE_API_URL` stub'ga.
-2. **IP va throttling**: production throttle kaliti — manba IP (preflight 30/min, access-attempt 30/min,
-   login IP+login 10/min). Haqiqatda bino = bitta NAT IP. Staging nginx'da FAQAT generator manzillaridan
+2. **IP va throttling**: production throttle kaliti — manba IP (login IP+login 10/min; IP ro'yxati
+   ham login'da tekshiriladi). Haqiqatda bino = bitta NAT IP. Staging nginx'da FAQAT generator manzillaridan
    `set_real_ip_from <gen_ip>; real_ip_header X-Real-IP;` (generator `--lt-real-ip 1` bilan bino IP'sini yuboradi),
    `TRUSTED_PROXY_COUNT=1`. Natija: throttle va `AllowedPublicIp` production'dagi kabi bino bo'yicha ishlaydi.
    Bu sozlama production'ga KO'CHIRILMAYDI (aks holda IP'ni istalgan client soxtalaydi).

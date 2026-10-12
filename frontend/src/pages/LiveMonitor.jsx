@@ -32,6 +32,21 @@ import { filterFieldSx } from '../components/data/responsive'
 import { listAll } from '../components/data/useResource'
 
 /** Bugungi sana `YYYY-MM-DD` ko'rinishida (mahalliy vaqt bo'yicha). */
+// Modul darajasida: jadval props barqaror bo'lsa `DataGrid` (memo) 10 s lik
+// yangilanishda o'zgarmagan qatorlarni qayta chizmaydi.
+const INTEGRITY_ROW_SX = {
+  '& .row--integrity': {
+    bgcolor: (theme) =>
+      alpha(theme.palette.error.main, theme.palette.mode === 'light' ? 0.07 : 0.16),
+  },
+  // Hover ustunligini qaytaramiz: aks holda belgilangan
+  // qatorda sichqoncha qayerda turgani ko'rinmay qoladi.
+  '& .row--integrity:hover': {
+    bgcolor: (theme) =>
+      alpha(theme.palette.error.main, theme.palette.mode === 'light' ? 0.13 : 0.24),
+  },
+}
+
 const today = () => {
   const now = new Date()
   const offset = now.getTimezoneOffset() * 60000
@@ -232,6 +247,10 @@ export default function LiveMonitor() {
   const flaggedSessions = useMemo(
     () => new Set(integrityItems.map((item) => item.session_id)),
     [integrityItems],
+  )
+  const rowClassName = useCallback(
+    (params) => (flaggedSessions.has(params.id) ? 'row--integrity' : ''),
+    [flaggedSessions],
   )
 
   const acknowledge = useCallback((item) => {
@@ -457,27 +476,8 @@ export default function LiveMonitor() {
             loading={isLoading}
             onRowClick={(params) => openSession(params.id)}
             height={660}
-            getRowClassName={(params) =>
-              flaggedSessions.has(params.id) ? 'row--integrity' : ''
-            }
-            gridSx={{
-              '& .row--integrity': {
-                bgcolor: (theme) =>
-                  alpha(
-                    theme.palette.error.main,
-                    theme.palette.mode === 'light' ? 0.07 : 0.16,
-                  ),
-              },
-              // Hover ustunligini qaytaramiz: aks holda belgilangan
-              // qatorda sichqoncha qayerda turgani ko'rinmay qoladi.
-              '& .row--integrity:hover': {
-                bgcolor: (theme) =>
-                  alpha(
-                    theme.palette.error.main,
-                    theme.palette.mode === 'light' ? 0.13 : 0.24,
-                  ),
-              },
-            }}
+            getRowClassName={rowClassName}
+            gridSx={INTEGRITY_ROW_SX}
           />
         </Grid>
 
