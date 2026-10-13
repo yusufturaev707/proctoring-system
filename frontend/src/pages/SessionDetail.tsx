@@ -641,29 +641,9 @@ function FaceImageCell({ id, hasImage, hasReference }: { id: Id; hasImage: boole
       // "47 ball" degan yozuv o'zicha na tasdiq, na rad — qaror
       // hujjatdagi va kameradagi odamni solishtirgandan keyin
       // qabul qilinadi.
-      <Stack direction="row" spacing={1}>
-        {reference && (
-          <Box>
-            <Typography variant="caption" color="text.secondary">Hujjat</Typography>
-            <Box
-              component="img"
-              src={reference}
-              alt="Hujjat rasmi"
-              sx={{ width: 84, borderRadius: 1, display: 'block' }}
-            />
-          </Box>
-        )}
-        {live && (
-          <Box>
-            <Typography variant="caption" color="text.secondary">Kamera</Typography>
-            <Box
-              component="img"
-              src={live}
-              alt="Jonli kadr"
-              sx={{ width: 84, borderRadius: 1, display: 'block' }}
-            />
-          </Box>
-        )}
+      <Stack direction="row" spacing={1} alignItems="center">
+        {reference && <FaceThumb src={reference} label="Hujjat" alt="Hujjat rasmi" />}
+        {live && <FaceThumb src={live} label="Kamera" alt="Jonli kadr" />}
       </Stack>
     )
   }
@@ -691,6 +671,75 @@ function FaceImageCell({ id, hasImage, hasReference }: { id: Id; hasImage: boole
     <Button size="small" onClick={load} disabled={loading} startIcon={<ImageIcon />}>
       {loading ? '...' : error || 'Ko‘rish'}
     </Button>
+  )
+}
+
+const FACE_THUMB_HEIGHT = 96
+
+/**
+ * Yuz tekshiruvi rasmining kichik nusxasi.
+ *
+ * Ikkala rasm BIR XIL BALANDLIKDA, eni — rasmning o'z nisbatidan:
+ * hujjat rasmi tik (~3:4), jonli kadr esa yotiq (4:3 / 16:9). Bir
+ * xil EN berilganda hujjat kameradan ikki baravar baland chiqardi va
+ * yuzlarni yonma-yon solishtirish qiyinlashardi.
+ *
+ * KESILMAYDI (`contain`, `cover` emas): jonli kadr ataylab TO'LIQ
+ * yuboriladi (`faceid_page._frame_jpeg`) — kadr chetidagi ikkinchi
+ * odam ham dalil. Juda keng kadr `maxWidth` da to'xtaydi va fon
+ * bilan to'ldiriladi.
+ *
+ * Yorliq rasm USTIDA (pastki chap): alohida satr qatorni ~20 px
+ * balandlashtirardi. Qoraytirilgan fon — har qanday rasm va har ikki
+ * rejimda o'qilishi uchun.
+ */
+function FaceThumb({ src, label, alt }: { src: string; label: string; alt: string }) {
+  return (
+    <Box
+      component="figure"
+      sx={{
+        m: 0,
+        position: 'relative',
+        flexShrink: 0,
+        height: FACE_THUMB_HEIGHT,
+        borderRadius: '12px',
+        overflow: 'hidden',
+        border: 1,
+        borderColor: 'm3.outlineVariant',
+        bgcolor: 'm3.surfaceContainerHigh',
+      }}
+    >
+      <Box
+        component="img"
+        src={src}
+        alt={alt}
+        sx={{
+          display: 'block',
+          height: '100%',
+          width: 'auto',
+          maxWidth: FACE_THUMB_HEIGHT * 2,
+          objectFit: 'contain',
+        }}
+      />
+      <Box
+        component="figcaption"
+        sx={{
+          position: 'absolute',
+          left: 6,
+          bottom: 6,
+          px: 0.75,
+          borderRadius: 999,
+          bgcolor: 'rgba(0, 0, 0, 0.6)',
+          color: '#fff',
+          fontSize: 11,
+          fontWeight: 600,
+          lineHeight: '18px',
+          letterSpacing: 0.2,
+        }}
+      >
+        {label}
+      </Box>
+    </Box>
   )
 }
 
