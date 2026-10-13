@@ -2,15 +2,17 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  Alert, Avatar, Box, Button, Card, CardContent, CardHeader, Chip, CircularProgress,
-  Divider, Grid, Stack, Tab, Table,
-  TableBody, TableCell, TableHead, TableRow, Tabs, Tooltip, Typography,
+  Alert, Avatar, Box, Button, ButtonBase, Card, CardContent, CardHeader, Chip, CircularProgress,
+  Dialog, Divider, Grid, IconButton, Stack, Tab, Table,
+  TableBody, TableCell, TableHead, TableRow, Tabs, Tooltip, Typography, useMediaQuery,
 } from '@mui/material'
+import { alpha, useTheme } from '@mui/material/styles'
 import ArrowBackIcon from '@mui/icons-material/ArrowBackOutlined'
 import CampaignIcon from '@mui/icons-material/CampaignOutlined'
 import BlockIcon from '@mui/icons-material/BlockOutlined'
 import PersonIcon from '@mui/icons-material/PersonOutline'
 import ImageIcon from '@mui/icons-material/ImageOutlined'
+import CloseIcon from '@mui/icons-material/Close'
 
 import PageHeader from '../components/PageHeader'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -439,11 +441,7 @@ export default function SessionDetail() {
                       />
                     </TableCell>
                     <TableCell>
-                      <FaceImageCell
-                        id={log.id}
-                        hasImage={Boolean(log.image_url)}
-                        hasReference={Boolean(log.reference_image_url)}
-                      />
+                      <FaceImageCell log={log} />
                     </TableCell>
                   </TableRow>
                 ))}
@@ -614,11 +612,15 @@ function RiskBreakdownCard({
  * Blob komponent yopilganda DARHOL bo'shatiladi — `URL.createObjectURL`
  * ni brauzer o'zi tozalamaydi.
  */
-function FaceImageCell({ id, hasImage, hasReference }: { id: Id; hasImage: boolean; hasReference: boolean }) {
+function FaceImageCell({ log }: { log: ApiRecord }) {
+  const id: Id = log.id
+  const hasImage = Boolean(log.image_url)
+  const hasReference = Boolean(log.reference_image_url)
   const [live, setLive] = useState('')
   const [reference, setReference] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [open, setOpen] = useState(false)
 
   useEffect(() => () => {
     if (live) URL.revokeObjectURL(live)
@@ -637,14 +639,37 @@ function FaceImageCell({ id, hasImage, hasReference }: { id: Id; hasImage: boole
 
   if (live || reference) {
     return (
-      // IKKI RASM YONMA-YON. Aynan shu juftlik ballni TUSHUNTIRADI:
-      // "47 ball" degan yozuv o'zicha na tasdiq, na rad — qaror
-      // hujjatdagi va kameradagi odamni solishtirgandan keyin
-      // qabul qilinadi.
-      <Stack direction="row" spacing={1} alignItems="center">
-        {reference && <FaceThumb src={reference} label="Hujjat" alt="Hujjat rasmi" />}
-        {live && <FaceThumb src={live} label="Kamera" alt="Jonli kadr" />}
-      </Stack>
+      <>
+        {/* IKKI RASM YONMA-YON. Aynan shu juftlik ballni TUSHUNTIRADI:
+            "47 ball" degan yozuv o'zicha na tasdiq, na rad — qaror
+            hujjatdagi va kameradagi odamni solishtirgandan keyin
+            qabul qilinadi. Juftlik BITTA tugma: qaysi rasm bosilsa
+            ham ikkalasi birga kattalashadi — alohida ochilgan rasmni
+            ikkinchisi bilan solishtirib bo'lmasdi. */}
+        <Tooltip title="Kattalashtirish">
+          <ButtonBase
+            onClick={() => setOpen(true)}
+            aria-label="Rasmlarni kattalashtirish"
+            sx={{
+              gap: 0.75,
+              borderRadius: '10px',
+              cursor: 'zoom-in',
+              '& .face-thumb': { transition: 'border-color 150ms' },
+              '&:hover .face-thumb, &.Mui-focusVisible .face-thumb': { borderColor: 'primary.main' },
+            }}
+          >
+            {reference && <FaceThumb src={reference} label="Hujjat" alt="Hujjat rasmi" />}
+            {live && <FaceThumb src={live} label="Kamera" alt="Jonli kadr" />}
+          </ButtonBase>
+        </Tooltip>
+        <FaceCompareDialog
+          open={open}
+          onClose={() => setOpen(false)}
+          log={log}
+          reference={reference}
+          live={live}
+        />
+      </>
     )
   }
 
@@ -674,10 +699,10 @@ function FaceImageCell({ id, hasImage, hasReference }: { id: Id; hasImage: boole
   )
 }
 
-const FACE_THUMB_HEIGHT = 96
+const FACE_THUMB_HEIGHT = 56
 
 /**
- * Yuz tekshiruvi rasmining kichik nusxasi.
+ * Yuz tekshiruvi rasmining jadvaldagi kichik nusxasi.
  *
  * Ikkala rasm BIR XIL BALANDLIKDA, eni — rasmning o'z nisbatidan:
  * hujjat rasmi tik (~3:4), jonli kadr esa yotiq (4:3 / 16:9). Bir
@@ -689,20 +714,20 @@ const FACE_THUMB_HEIGHT = 96
  * odam ham dalil. Juda keng kadr `maxWidth` da to'xtaydi va fon
  * bilan to'ldiriladi.
  *
- * Yorliq rasm USTIDA (pastki chap): alohida satr qatorni ~20 px
- * balandlashtirardi. Qoraytirilgan fon — har qanday rasm va har ikki
- * rejimda o'qilishi uchun.
+ * Elementlar `span`: kichik nusxa tugma ICHIDA, `<button>` ga esa
+ * `figure`/`div` qo'yib bo'lmaydi (HTML qoidasi).
  */
 function FaceThumb({ src, label, alt }: { src: string; label: string; alt: string }) {
   return (
     <Box
-      component="figure"
+      component="span"
+      className="face-thumb"
       sx={{
-        m: 0,
+        display: 'block',
         position: 'relative',
         flexShrink: 0,
         height: FACE_THUMB_HEIGHT,
-        borderRadius: '12px',
+        borderRadius: '10px',
         overflow: 'hidden',
         border: 1,
         borderColor: 'm3.outlineVariant',
@@ -721,24 +746,185 @@ function FaceThumb({ src, label, alt }: { src: string; label: string; alt: strin
           objectFit: 'contain',
         }}
       />
-      <Box
-        component="figcaption"
-        sx={{
-          position: 'absolute',
-          left: 6,
-          bottom: 6,
-          px: 0.75,
-          borderRadius: 999,
-          bgcolor: 'rgba(0, 0, 0, 0.6)',
-          color: '#fff',
-          fontSize: 11,
-          fontWeight: 600,
-          lineHeight: '18px',
-          letterSpacing: 0.2,
-        }}
-      >
-        {label}
+      <FaceLabel size="small">{label}</FaceLabel>
+    </Box>
+  )
+}
+
+/**
+ * Rasm ustidagi yorliq (pastki chap). Alohida satr qatorni
+ * balandlashtirardi; qoraytirilgan fon — har qanday rasm va har ikki
+ * rejimda o'qilishi uchun.
+ */
+function FaceLabel({ size, children }: { size: 'small' | 'large'; children: ReactNode }) {
+  const small = size === 'small'
+  return (
+    <Box
+      component="span"
+      sx={{
+        position: 'absolute',
+        left: small ? 4 : 12,
+        bottom: small ? 4 : 12,
+        px: small ? 0.5 : 1.25,
+        borderRadius: 999,
+        bgcolor: alpha('#000000', 0.6),
+        color: '#fff',
+        fontSize: small ? 10 : 13,
+        fontWeight: 600,
+        lineHeight: small ? '15px' : '24px',
+        letterSpacing: 0.2,
+        pointerEvents: 'none',
+      }}
+    >
+      {children}
+    </Box>
+  )
+}
+
+/**
+ * Hujjat va kamera rasmini YONMA-YON, katta va BIR XIL BALANDLIKDA
+ * ko'rsatadi — yuzni solishtirish aynan shunda mumkin.
+ *
+ * Yuza doim qorong'i (skrinshot ko'rish oynasi bilan bir xil,
+ * `ScreenshotGallery`): yorug' fonda rasm xira ko'rinadi. Telefonda
+ * (< sm) to'liq ekran va rasmlar ustma-ust — yonma-yon har biri
+ * 150 px ga tushib, solishtirib bo'lmasdi.
+ *
+ * Bloblar `FaceImageCell` niki: oyna yopilganda bo'shatilmaydi,
+ * qayta ochish yangi so'rov (va yangi audit yozuvi) talab qilmaydi.
+ */
+function FaceCompareDialog({
+  open, onClose, log, reference, live,
+}: { open: boolean; onClose: () => void; log: ApiRecord; reference: string; live: string }) {
+  const theme = useTheme()
+  const fullScreen = useMediaQuery(theme.breakpoints.down('sm'))
+  const onSurface = alpha('#ffffff', 0.92)
+  // Rasm yuklanguncha taxminiy nisbat: hujjat tik (3:4), kadr yotiq (4:3).
+  const [ratios, setRatios] = useState<Record<string, number>>({})
+  const items = [
+    reference && { key: 'reference', src: reference, label: 'Hujjat', alt: 'Hujjat rasmi', fallback: 3 / 4 },
+    live && { key: 'live', src: live, label: 'Kamera', alt: 'Jonli kadr', fallback: 4 / 3 },
+  ].filter((item): item is Exclude<typeof item, '' | false> => Boolean(item))
+  const ratioSum = items.reduce((sum, item) => sum + (ratios[item.key] || item.fallback), 0)
+  const gaps = FACE_LARGE_GAP * Math.max(0, items.length - 1)
+
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      fullScreen={fullScreen}
+      maxWidth={false}
+      aria-label="Yuz tekshiruvi rasmlari"
+      PaperProps={{
+        sx: {
+          bgcolor: '#121316',
+          color: onSurface,
+          backgroundImage: 'none',
+          // MD3 "extra-large" shakl — modal yuza uchun.
+          borderRadius: fullScreen ? 0 : '28px',
+          maxWidth: fullScreen ? '100%' : FACE_DIALOG_MAX_WIDTH,
+          overflow: 'hidden',
+        },
+      }}
+      slotProps={{ backdrop: { sx: { bgcolor: alpha('#000000', 0.72) } } }}
+    >
+      <Stack direction="row" alignItems="center" spacing={1.5} sx={{ pl: 3, pr: 1.5, py: 1.5 }}>
+        <Box sx={{ minWidth: 0, flexGrow: 1 }}>
+          <Typography variant="subtitle1" fontWeight={600} noWrap>
+            {log.stage_display} · {formatDateTime(log.occurred_at)}
+          </Typography>
+          <Typography variant="caption" sx={{ color: alpha('#ffffff', 0.64) }}>
+            Ball {log.score ?? '—'} · chegara {log.threshold ?? '—'}
+          </Typography>
+        </Box>
+        <Chip
+          size="small"
+          color={log.passed ? 'success' : 'error'}
+          label={log.passed ? 'O‘tdi' : 'O‘tmadi'}
+        />
+        <Tooltip title="Yopish (Esc)">
+          <IconButton
+            onClick={onClose}
+            aria-label="Yopish"
+            sx={{ color: onSurface, '&:hover': { bgcolor: alpha('#ffffff', 0.08) } }}
+          >
+            <CloseIcon />
+          </IconButton>
+        </Tooltip>
+      </Stack>
+      <Box sx={{ px: { xs: 1.5, sm: 3 }, pb: 3, overflow: 'auto' }}>
+        <Box
+          sx={{
+            display: 'flex',
+            flexDirection: { xs: 'column', sm: 'row' },
+            gap: `${FACE_LARGE_GAP}px`,
+            mx: 'auto',
+            // Ikkala rasm balandligi H bo'lsa, umumiy en = H × (nisbatlar
+            // yig'indisi) + oraliq. Shu enni berib, rasmlarga nisbatiga
+            // teng `flex-grow` beramiz — balandliklar AYNAN teng va ramka
+            // rasmga yopishadi (bo'sh chiziqsiz). Ekran tor bo'lsa en
+            // cheklanadi va H o'zi kichrayadi. Chegara `100%` emas, viewport
+            // bo'yicha: oyna eni mazmundan olinadi va foiz aylanma
+            // bog'liqlikka tushib, rasmlarni keraksiz kichraytirardi.
+            width: {
+              xs: '100%',
+              sm: `min(calc(${FACE_DIALOG_MAX_WIDTH} - 48px), calc(min(64vh, 560px) * ${ratioSum} + ${gaps}px))`,
+            },
+          }}
+        >
+          {items.map((item) => (
+            <FaceLarge
+              key={item.key}
+              src={item.src}
+              label={item.label}
+              alt={item.alt}
+              ratio={ratios[item.key] || item.fallback}
+              onRatio={(value) => setRatios((prev) => ({ ...prev, [item.key]: value }))}
+            />
+          ))}
+        </Box>
       </Box>
+    </Dialog>
+  )
+}
+
+const FACE_LARGE_GAP = 12
+// Oyna chetidan 32 px (MUI Dialog `margin`) qoladi.
+const FACE_DIALOG_MAX_WIDTH = 'calc(100vw - 64px)'
+
+/**
+ * Katta rasm: ramka rasm nisbatida (`aspect-ratio`), `sm` dan kengda
+ * eni nisbatiga mutanosib (`flex-grow`) — shuning uchun yonma-yon
+ * rasmlar balandligi teng. Telefonda ustma-ust, to'liq enda.
+ */
+function FaceLarge({
+  src, label, alt, ratio, onRatio,
+}: { src: string; label: string; alt: string; ratio: number; onRatio: (value: number) => void }) {
+  return (
+    <Box
+      component="figure"
+      sx={{
+        m: 0,
+        position: 'relative',
+        flex: { xs: 'none', sm: `${ratio} 1 0` },
+        minWidth: 0,
+        aspectRatio: String(ratio),
+        borderRadius: '16px',
+        overflow: 'hidden',
+        bgcolor: alpha('#ffffff', 0.06),
+      }}
+    >
+      <Box
+        component="img"
+        src={src}
+        alt={alt}
+        onLoad={(event) => {
+          const { naturalWidth, naturalHeight } = event.currentTarget
+          if (naturalWidth && naturalHeight) onRatio(naturalWidth / naturalHeight)
+        }}
+        sx={{ display: 'block', width: '100%', height: '100%', objectFit: 'contain' }}
+      />
+      <FaceLabel size="large">{label}</FaceLabel>
     </Box>
   )
 }
