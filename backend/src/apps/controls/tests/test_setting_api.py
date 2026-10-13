@@ -1,7 +1,7 @@
 """
 Sozlama profili API'si: RDP dasturlari va tezkor tugmalarni TANLASH.
 
-Bu ikkala ro'yxat panelda tanlanadi (`Settings.jsx`), lekin ular
+Bu ikkala ro'yxat panelda tanlanadi (`Settings.tsx`), lekin ular
 oddiy maydon emas — M2M. Shuning uchun ikkita narsa himoyalanadi:
 
   1. PATCH ro'yxatni ALMASHTIRADI (qo'shmaydi va yo'qotmaydi);

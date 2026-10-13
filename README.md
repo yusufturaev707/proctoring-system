@@ -5,7 +5,7 @@ React (MUI) boshqaruv paneli va PyQt6 desktop client uchun API.
 
 ```
 backend/    Django 6 + DRF + Channels + Celery
-frontend/   React 18 + Vite + MUI v6
+frontend/   React 18 + TypeScript (strict) + Vite + MUI v6
 ```
 
 ## Tez boshlash
@@ -167,7 +167,7 @@ Yashil urg'uli, uzoq ishlash uchun mo'ljallangan tema tizimi:
 * **2 ta zichlik** — keng / ixcham
 * Sozlamalar `localStorage` da, darhol qo'llanadi
 
-Ko'z charchog'ini kamaytirish qarorlari (`src/theme/palettes.js`):
+Ko'z charchog'ini kamaytirish qarorlari (`src/theme/palettes.ts`):
 sof oq/qora ishlatilmaydi, katta yuzalar past to'yinganlikda, to'yingan
 rang faqat kichik urg'ularda, barcha matn/fon juftliklari WCAG AA.
 
@@ -186,7 +186,7 @@ rang faqat kichik urg'ularda, barcha matn/fon juftliklari WCAG AA.
 ### CRUD dvigateli
 
 Barcha modellar bitta dvigateldan foydalanadi
-(`components/data/ResourcePage.jsx` + `useResource.js` + `ResourceForm.jsx`).
+(`components/data/ResourcePage.tsx` + `useResource.ts` + `ResourceForm.tsx`).
 Sahifa faqat ustunlar va maydonlarni e'lon qiladi, qolgani umumiy:
 
 **Ma'lumot bilan ishlash**

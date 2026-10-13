@@ -127,7 +127,7 @@ Ikki alohida, lekin bog'liq fakt:
 
 ### AUDIT-04 va AUDIT-05 — Frontend: `localStorage` tokenlar + CSP yo'qligi
 
-**Component:** `frontend/src/api/client.js:5-19`, `frontend/index.html`, `backend/deploy/nginx.conf.example:38-40`
+**Component:** `frontend/src/api/client.ts:5-19`, `frontend/index.html`, `backend/deploy/nginx.conf.example:38-40`
 
 JWT access (`proctoring.access`) va refresh (`proctoring.refresh`) tokenlar `localStorage`da saqlanadi — `httpOnly` cookie emas. Buning yonida CSP header mutlaqo yo'q (na `<meta>` tegi, na nginx `add_header`). Ikkalasi birga o'qilganda: kelajakda paydo bo'lishi mumkin bo'lgan har qanday XSS (dependency zaifligi, kod xatosi) to'g'ridan-to'g'ri va to'liq sessiya o'g'irlanishiga olib keladi, va bunga qarshi hech qanday brauzer-darajasidagi himoya yo'q.
 

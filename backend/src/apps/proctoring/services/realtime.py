@@ -50,7 +50,7 @@ def broadcast_session_update(session, **fields) -> None:
     """
     Sessiya holati o'zgarganda dashboard'ni yangilaydi.
 
-    Frontend (`useLiveMonitor.js`) `session_update` xabarini kutadi —
+    Frontend (`useLiveMonitor.ts`) `session_update` xabarini kutadi —
     busiz jonli kuzatuv jadvalidagi status faqat sahifa yangilanganda
     o'zgaradi.
     """

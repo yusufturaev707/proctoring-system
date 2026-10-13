@@ -1,7 +1,7 @@
 """
 Repository qatlami - backend endpointlari shu yerda va FAQAT shu yerda.
 
-UI hech qachon URL yozmaydi (admin panelidagi `api/endpoints.js` bilan bir
+UI hech qachon URL yozmaydi (admin panelidagi `api/endpoints.ts` bilan bir
 xil qoida). Endpoint yo'li o'zgarsa, o'zgarish bitta faylda qoladi.
 
 Metodlar sinxron: ular QThread ichidan (`services/workers.py`) chaqiriladi,

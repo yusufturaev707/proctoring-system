@@ -11,7 +11,7 @@ shaklda yozadi.
 Lug'at client'dagi `_KEY_ALIASES`, `_MODIFIER_VKS`, `_NAMED_VKS` va
 `_NEVER_BLOCKED` ning nusxasi (VK qiymatlarisiz — server ularni
 ishlatmaydi). Client'da yangi tugma nomi qo'shilsa, shu yerga HAM va
-`frontend/src/utils/hotkeys.js` ga qo'shing.
+`frontend/src/utils/hotkeys.ts` ga qo'shing.
 """
 
 from __future__ import annotations

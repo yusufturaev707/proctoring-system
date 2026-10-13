@@ -1,0 +1,231 @@
+import api from './client'
+import type { ApiRecord, CrudApi, Id, ListApi, QueryParams } from '../types/api'
+
+/** Ommaviy amal: tanlangan `ids` yoki filtrga mos `all` (`BulkSelectionMixin`). */
+export interface BulkSelection {
+  ids?: readonly Id[]
+  all?: boolean
+  params?: QueryParams
+}
+
+type Data = Promise<ApiRecord>
+
+/** Barcha backend chaqiruvlari shu yerda — komponentlarda URL yozilmaydi. */
+
+const list = (url: string) => (params?: QueryParams): Data =>
+  api.get<ApiRecord>(url, { params }).then((r) => r.data)
+const detail = (url: string) => (id: Id): Data => api.get<ApiRecord>(`${url}${id}/`).then((r) => r.data)
+const create = (url: string) => (payload: ApiRecord): Data =>
+  api.post<ApiRecord>(url, payload).then((r) => r.data)
+const update = (url: string) => ({ id, ...payload }: ApiRecord): Data =>
+  api.patch<ApiRecord>(`${url}${id}/`, payload).then((r) => r.data)
+const remove = (url: string) => (id: Id): Promise<unknown> => api.delete(`${url}${id}/`).then((r) => r.data)
+// Yumshoq o'chirilgan yozuvni qaytaradi. Faqat `SoftDeleteRestoreMixin`
+// ulangan endpointlarda mavjud — boshqasida server 404 beradi, shuning
+// uchun `ResourcePage` uni faqat `restorable` bo'lganda ko'rsatadi.
+const restore = (url: string) => (id: Id): Data =>
+  api.post<ApiRecord>(`${url}${id}/restore/`).then((r) => r.data)
+
+const crud = (url: string): Required<CrudApi> => ({
+  list: list(url),
+  detail: detail(url),
+  create: create(url),
+  update: update(url),
+  remove: remove(url),
+  restore: restore(url),
+})
+
+export const auth = {
+  login: (payload: ApiRecord): Data => api.post('/auth/login/', payload).then((r) => r.data),
+  logout: (refresh: string | null): Data => api.post('/auth/logout/', { refresh }).then((r) => r.data),
+  me: (): Data => api.get('/auth/me/').then((r) => r.data),
+}
+
+export const dashboard = {
+  summary: (params?: QueryParams): Data => api.get('/dashboard/summary/', { params }).then((r) => r.data),
+  zones: (params?: QueryParams): Data => api.get('/dashboard/zones/', { params }).then((r) => r.data),
+  devices: (): Data => api.get('/dashboard/devices/').then((r) => r.data),
+}
+
+export const sessions = {
+  ...crud('/sessions/'),
+  live: (params?: QueryParams): Data => api.get('/sessions/live/', { params }).then((r) => r.data),
+  events: (id: Id, params?: QueryParams): Data => api.get(`/sessions/${id}/events/`, { params }).then((r) => r.data),
+  faceLogs: (id: Id, params?: QueryParams): Data => api.get(`/sessions/${id}/face-logs/`, { params }).then((r) => r.data),
+  screenshots: (id: Id, params?: QueryParams): Data => api.get(`/sessions/${id}/screenshots/`, { params }).then((r) => r.data),
+  storedScreenshots: (id: Id, params?: QueryParams): Data =>
+    api.get(`/sessions/${id}/stored-screenshots/`, { params }).then((r) => r.data),
+  evidence: (id: Id, params?: QueryParams): Data => api.get(`/sessions/${id}/evidence/`, { params }).then((r) => r.data),
+  warn: (id: Id, payload?: ApiRecord): Data => api.post(`/sessions/${id}/warn/`, payload).then((r) => r.data),
+  terminate: (id: Id, payload?: ApiRecord): Data => api.post(`/sessions/${id}/terminate/`, payload).then((r) => r.data),
+}
+
+/**
+ * Skrinshot faylini blob sifatida oladi.
+ *
+ * `<img src={url}>` ishlamaydi: brauzer rasm so'roviga `Authorization`
+ * sarlavhasini qo'shmaydi, ya'ni endpoint 401 beradi. Tokenni URL'ga
+ * qo'yish esa uni brauzer tarixiga, `Referer` ga va nginx access log'iga
+ * chiqaradi — bu sessiya tokeni uchun qabul qilib bo'lmaydi.
+ *
+ * Shuning uchun rasm axios orqali olinadi va `URL.createObjectURL` bilan
+ * `<img>` ga beriladi. Baytlarni baribir nginx uzatadi (Django faqat
+ * `X-Accel-Redirect` qaytaradi) — bu yerda o'zgaradigan narsa faqat
+ * autentifikatsiya.
+ *
+ * MUHIM: chaqiruvchi ishi tugagach `URL.revokeObjectURL(url)` qilishi
+ * SHART, aks holda galereyani varaqlash brauzer xotirasini to'ldiradi.
+ */
+export const screenshotFile = {
+  objectUrl: async (id: Id): Promise<string> => {
+    const response = await api.get(`/screenshots/${id}/file/`, { responseType: 'blob' })
+    return URL.createObjectURL(response.data)
+  },
+}
+
+/**
+ * Dalil fayli (kadr yoki klip) — blob sifatida.
+ *
+ * `screenshotFile` bilan bir xil sabab: brauzer `<img>`/`<video>`
+ * so'roviga `Authorization` sarlavhasini qo'shmaydi, tokenni URL'ga
+ * qo'yish esa uni brauzer tarixiga va nginx access log'iga chiqaradi.
+ *
+ * Baytlarni baribir nginx uzatadi (Django faqat `X-Accel-Redirect`
+ * qaytaradi) — bu yerda o'zgaradigan narsa faqat autentifikatsiya.
+ *
+ * MUHIM: chaqiruvchi `URL.revokeObjectURL(url)` qilishi SHART. Klip
+ * ~2 MB va bir necha o'nlab dalilni ko'rgan proktorning brauzeri
+ * usiz yuzlab megabaytni ushlab qolardi.
+ */
+export const evidenceFile = {
+  objectUrl: async (id: Id): Promise<string> => {
+    const response = await api.get(`/evidence/${id}/file/`, { responseType: 'blob' })
+    return URL.createObjectURL(response.data)
+  },
+}
+
+/**
+ * FaceID kadri (kirishdagi yoki test davomidagi) — blob sifatida.
+ *
+ * `evidenceFile` bilan bir xil sabab: `<img>` so'roviga brauzer
+ * `Authorization` sarlavhasini qo'shmaydi.
+ *
+ * TALAB BO'YICHA yuklanadi, ro'yxat bilan birga EMAS: har ochish
+ * serverda audit yozuvi qoldiradi (`evidence_view`) va 100 ta
+ * kichkina rasmni avtomatik yuklash jurnalni foydasiz qilardi.
+ *
+ * MUHIM: chaqiruvchi `URL.revokeObjectURL(url)` qilishi SHART.
+ */
+export const faceLogFile = {
+  /**
+   * `kind`: 'live' — kameradagi kadr, 'reference' — hujjat rasmi.
+   *
+   * Ikkinchisi FAQAT kirish tekshiruvida bo'ladi: test davomida
+   * etalon pasport rasmi emas, kirishda tasdiqlangan kadr.
+   */
+  objectUrl: async (id: Id, kind: 'live' | 'reference' = 'live'): Promise<string> => {
+    const response = await api.get(`/face-logs/${id}/file/`, {
+      params: kind === 'reference' ? { kind } : undefined,
+      responseType: 'blob',
+    })
+    return URL.createObjectURL(response.data)
+  },
+}
+
+export const technicalProblems = {
+  ...crud('/technical-problems/'),
+  resolve: (id: Id, payload?: ApiRecord): Data => api.post(`/technical-problems/${id}/resolve/`, payload).then((r) => r.data),
+}
+
+export const users = {
+  ...crud('/users/'),
+  setPassword: (id: Id, password: string): Data => api.post(`/users/${id}/set-password/`, { password }).then((r) => r.data),
+}
+
+export const roles = crud('/roles/')
+export const permissions: ListApi = { list: list('/permissions/') }
+export const regions = crud('/regions/')
+export const zones = crud('/zones/')
+export const computers = {
+  ...crud('/computers/'),
+  /** Excel shablon (blob). */
+  importTemplate: (): Promise<Blob> =>
+    api.get<Blob>('/computers/import-template/', { responseType: 'blob' }).then((r) => r.data),
+  /**
+   * Excel'dan ommaviy qo'shish. `dryRun` — faqat tekshiruv. Xato qatorlar
+   * 200 javobning `errors` ida keladi (fayl o'qilmasa — 400).
+   */
+  importExcel: (file: File, dryRun: boolean): Data => {
+    const form = new FormData()
+    form.append('file', file)
+    form.append('dry_run', dryRun ? 'true' : 'false')
+    // Sarlavha OCHIQ: `api` da standart `application/json` va axios 1.x
+    // u bilan FormData'ni JSON'ga aylantiradi - fayl serverga umuman
+    // yetmay, 400 "Excel fayl yuklanmagan" qaytardi. `multipart/form-data`
+    // da axios boundary'ni brauzerga qoldiradi.
+    return api
+      .post('/computers/import/', form, { headers: { 'Content-Type': 'multipart/form-data' } })
+      .then((r) => r.data)
+  },
+  /** Ommaviy o'chirish: `ids` yoki `all` + ro'yxat filtrlari (`params`). */
+  bulkDelete: ({ ids, all, params }: BulkSelection): Data =>
+    api.post('/computers/bulk-delete/', all ? { all: true } : { ids }, { params: all ? params : undefined })
+      .then((r) => r.data),
+}
+export const cameras = {
+  ...crud('/cameras/'),
+  /** Kamerani HOZIR tekshiradi (RTSP) va yangi holatni qaytaradi. */
+  check: (id: Id): Data => api.post(`/cameras/${id}/check/`).then((r) => r.data),
+}
+export const examTypes = crud('/exam-types/')
+export const exams = crud('/exams/')
+export const examSchedules = crud('/exam-schedules/')
+
+/**
+ * Kompyuter bronlari — test sessiyasida kim qaysi kompyuterda o'tiradi.
+ *
+ * Biriktirish PATCH EMAS, alohida amal (`assign`): server band joy,
+ * buzilgan kompyuter va sessiya doirasini tekshiradi va auditga
+ * yozadi. `assign` talabgorning eski joyini o'zi bo'shatadi (ko'chirish).
+ */
+export const computerBookings = {
+  ...crud('/computer-bookings/'),
+  stats: (params?: QueryParams): Data => api.get('/computer-bookings/stats/', { params }).then((r) => r.data),
+  generate: (payload: ApiRecord): Data => api.post('/computer-bookings/generate/', payload).then((r) => r.data),
+  assign: (payload: ApiRecord): Data => api.post('/computer-bookings/assign/', payload).then((r) => r.data),
+  release: (id: Id): Data => api.post(`/computer-bookings/${id}/release/`).then((r) => r.data),
+  // Joylar xaritasi: binolar ("vagonlar") va bitta binoning o'rindiqlari.
+  zones: (params?: QueryParams): Data => api.get('/computer-bookings/zones/', { params }).then((r) => r.data),
+  seats: (params?: QueryParams): Data => api.get('/computer-bookings/seats/', { params }).then((r) => r.data),
+}
+export const auditLogs: ListApi = { list: list('/audit-logs/') }
+
+export const deviceTokens = {
+  ...crud('/device-tokens/'),
+  approve: (id: Id): Data => api.post(`/device-tokens/${id}/approve/`).then((r) => r.data),
+  revoke: (id: Id, reason: string): Data => api.post(`/device-tokens/${id}/revoke/`, { reason }).then((r) => r.data),
+  stats: (): Data => api.get('/device-tokens/stats/').then((r) => r.data),
+  /** Faqat KUTAYOTGANLARNI tasdiqlaydi; qolganlari `skipped` da. */
+  bulkApprove: ({ ids, all, params }: BulkSelection): Data =>
+    api.post('/device-tokens/bulk-approve/', all ? { all: true } : { ids }, { params: all ? params : undefined })
+      .then((r) => r.data),
+}
+
+export const settings = {
+  ...crud('/settings/'),
+  // `examId` berilsa — o'sha imtihonning profili, aks holda global standart.
+  clientConfig: (examId?: Id | null): Data =>
+    api.get('/settings/client-config/', { params: examId ? { exam: examId } : undefined })
+      .then((r) => r.data),
+  activate: (id: Id): Data => api.post(`/settings/${id}/activate/`).then((r) => r.data),
+}
+
+export const allowedIps = crud('/allowed-ips/')
+export const proctoringPolicies = crud('/proctoring-policies/')
+export const riskWeights = crud('/risk-weights/')
+export const exitPasswords = crud('/exit-passwords/')
+export const cocoGroups = crud('/coco-groups/')
+export const cocoObjects = crud('/coco-objects/')
+export const rdpObjects = crud('/rdp-objects/')
+export const hotkeys = crud('/hotkeys/')
+export const modelVersions = crud('/model-versions/')

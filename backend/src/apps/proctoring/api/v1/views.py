@@ -625,7 +625,7 @@ class ScreenshotFileView(APIView):
 
     `<img src>` bu endpointga `Authorization` sarlavhasini yubora
     olmaydi, shuning uchun frontend rasmni `fetch`/axios bilan blob
-    sifatida oladi (`api/endpoints.js`). Ya'ni token URL'ga chiqmaydi:
+    sifatida oladi (`api/endpoints.ts`). Ya'ni token URL'ga chiqmaydi:
     URL brauzer tarixida, `Referer` da va nginx access log'ida qoladi.
     """
 

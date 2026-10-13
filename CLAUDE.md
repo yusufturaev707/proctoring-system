@@ -32,7 +32,8 @@ celery -A config beat                                 # AYNAN BITTA instansiya
 
 # Frontend
 cd frontend && npm install && npm run dev             # :5173, /api va /ws proxy qilinadi
-npm run build
+npm run typecheck                                     # tsc --noEmit (strict)
+npm run build                                         # avval tsc, keyin vite — tur xatosida build YIQILADI
 npm run dev:scan                                      # React Scan (faqat dev): ortiqcha renderlar
 ```
 
@@ -152,7 +153,7 @@ Ikkalasi parallel yashaydi, o'rnatish profiliga qarab bittasi yoqiladi
   o'tmaydi). Dev'da `SCREENSHOT_SERVE_DIRECTLY=true` (production'da taqiq).
   nginx `internal` location'siz himoya yo'q — `deploy/nginx.conf.example`.
 
-Panel IKKALA ro'yxatni so'raydi (`SessionDetail.jsx`: `screenshots/` +
+Panel IKKALA ro'yxatni so'raydi (`SessionDetail.tsx`: `screenshots/` +
 `stored-screenshots/`, `captured_at` bo'yicha birlashtiriladi). Fayl
 tizimidagi rasm blob sifatida olinadi (`screenshotFile`) — `<img>`
 `Authorization` qo'shmaydi.
@@ -216,7 +217,7 @@ Arxiv konteksti BUYRUQ paytida olinadi (`local_archive.context()`).
 **Skrinshot standarti 1920 px / 80 sifat** (`Setting.screenshot_max_width`
 / `screenshot_quality`) — 960/65 da test matni o'qilmasdi. Client
 `QImageWriter` bilan optimallashtirilgan progressiv JPEG yozadi. Paneldagi
-trafik bahosi `Settings.jsx:shotKb` shu o'lchovga moslangan.
+trafik bahosi `Settings.tsx:shotKb` shu o'lchovga moslangan.
 
 ### FaceID: solishtirish CLIENTDA, qaror SERVERDA
 
@@ -397,7 +398,7 @@ qiymat: `modules.objects` = ikkalasining VA'si
 `enable_objects`.** Siyosat profil bilan avtomatik yaratilmaydi (siyosatsiz
 profil `_default_proctoring()` — `enabled=False`). Panel buni profil
 sahifasida ko'rsatadi: `SettingSerializer.ai_proctoring` +
-`Settings.jsx:AiProctoringNotice` («AI kuzatuvni yoqish»,
+`Settings.tsx:AiProctoringNotice` («AI kuzatuvni yoqish»,
 `controls.proctoring_manage`).
 
 **YOLO modeli fayli alohida**: `client/models/yolo/yolov8{n,s,m}.onnx`
@@ -503,7 +504,7 @@ Kompyuter jadvalidagi unikallik (hammasi shartli — tirik yozuvlar orasida):
 * `unique_computer_zone_number` shartli (`deleted_at IS NULL AND number IS
   NOT NULL`) — hisobdan chiqarilgan mashina raqamni band qilmaydi.
 * **Ekrandagi nom bitta joyda** — `Computer.label` ("№12 · INV-001"):
-  server serializer'da beradi, frontend `utils/labels.js:computerLabel`
+  server serializer'da beradi, frontend `utils/labels.ts:computerLabel`
   (ro'yxatda raqam alohida ustun), client handshake'dagi tayyor qiymat.
   `verify_machine` xabarlari ham shu nomni ishlatadi.
 * **Client uni sarlavhada yirik nishonda ko'rsatadi**
@@ -610,8 +611,8 @@ challenge sarflanmaydi (avval `peek`, keyin `consume`). Muvaffaqiyatda
 **Xato tafsiloti tuzilgan** — `DomainError(extra=...)` → `error.details`.
 Client: `ApiWorker.failed_details` → `ui/widgets/seat_notice.py:SeatNotice`.
 
-**Panel** — `/computer-bookings` (`pages/ComputerBookings.jsx`); standart
-ko'rinish — joylar xaritasi (`components/bookings/SeatMap.jsx`,
+**Panel** — `/computer-bookings` (`pages/ComputerBookings.tsx`); standart
+ko'rinish — joylar xaritasi (`components/bookings/SeatMap.tsx`,
 `?view=list` — jadval). Chapda viloyatlar (`groupRegions`, brauzerda
 yig'iladi) → binolar (`?region=&zone=`), bino avtomatik tanlanmaydi.
 Ustunlar soni kartaning haqiqiy kengligidan (`ResizeObserver`).
@@ -982,7 +983,7 @@ Server bino tarmog'idan tashqarida bo'lsa `CAMERA_PROBE_ENABLED=false`.
 
 **Jonli ko'rish — MJPEG oqimi** (`devices/camera_live.py`,
 `cameras/{id}/live/`, `multipart/x-mixed-replace`, ~10 kadr/s, 1280 px).
-Panel `fetch` bilan o'qiydi (`components/cameras/mjpegStream.js` —
+Panel `fetch` bilan o'qiydi (`components/cameras/mjpegStream.ts` —
 `Authorization` saqlanadi) va faqat eng yangi kadrni `createImageBitmap` +
 canvas bilan chizadi. O'quvchi qoidalari (kechikish o'smasligi uchun, o'lchangan):
 
@@ -1103,7 +1104,7 @@ nol deb olinadi; tarqoqlik > 12° bo'lsa kalibrlash BEKOR qilinadi.
 
 **Kadr toza, belgi ustida**: JPEG'ga hech narsa chizilmaydi,
 `EvidenceArtifact.boxes` ni panel chizadi
-(`components/session/EvidenceCard.jsx`). **Koordinata 0..1**:
+(`components/session/EvidenceCard.tsx`). **Koordinata 0..1**:
 
     {"label": "Telefon", "kind": "object", "box": [x1, y1, x2, y2], "conf": 0.93}
 
@@ -1301,7 +1302,7 @@ Ekrandagi til tugmasi (pastki chap) olib tashlangan: tilni Windows'ning
 o'zi `alt+shift` bilan almashtiradi. Shuning uchun `alt+shift` (va
 `shift+alt`) HECH QACHON bloklanmaydi — `ctrl+q` kabi, uch joyda
 (`lockdown._NEVER_BLOCKED`, server `controls/hotkeys.py:NEVER_BLOCKED` —
-panelda saqlab bo'lmaydi, panel `utils/hotkeys.js`). Tugmani qaytarmang:
+panelda saqlab bo'lmaydi, panel `utils/hotkeys.ts`). Tugmani qaytarmang:
 qaytarilsa ham `alt+shift` ochiq qolishi shart.
 
 ### Client kamera qatlami (`client/proctoring/camera/`)
@@ -1640,10 +1641,29 @@ Yangi domen xatosi — `DomainError` merosxo'ri; `code` React'da tarjima kaliti.
 
 ### Frontend (`frontend/src/`)
 
-* URL'lar faqat `api/endpoints.js` da.
-* **CRUD sahifalari bitta dvigateldan**: `components/data/ResourcePage.jsx` +
-  `useResource.js` + `ResourceForm.jsx` + `DataTable.jsx`; yangi sahifa =
-  `columns` va `fields` (`pages/crud/*.jsx`). Dvigateldan chetga chiqmang.
+**TypeScript, `strict`** (`tsconfig.json`). Yangi kod faqat `.ts`/`.tsx`;
+`npm run build` avval `tsc --noEmit` ni bajaradi, ya'ni tur xatosi
+deploy'ni (`deploy.sh`) yangi `dist` almashtirilishidan OLDIN to'xtatadi.
+
+* **API yozuvi — `ApiRecord`** (`types/api.ts`, `Record<string, any>`):
+  maydonlar backend serializer'ida, frontendda ikkinchi nusxa yozilmaydi.
+  Aniq tur faqat markaziy shakllarga: `CurrentUser`, `Page`, `ApiError`
+  (axios xatosi + `userMessage`/`fieldErrors`; React Query'ning standart
+  xato turi sifatida `types/libs.d.ts` da ro'yxatdan o'tgan).
+* **CRUD shartnomasi** — `components/data/types.ts`: `FieldDef`
+  (forma maydoni), `FilterDef`, `AppColumn` (`GridColDef` + `exportValue`),
+  `BulkAction`, `CellParams`, `RowDetail`. Ustun/maydon ro'yxati alohida
+  o'zgaruvchida bo'lsa — `useMemo((): AppColumn[] => [...])`, aks holda
+  literal turlar (`type: 'select'`) kengayib, xato beradi.
+* **Tema kengaytmasi** — `theme/mui.d.ts` (`palette.m3`, `surface`,
+  `theme.chart/density/motion/sidebar`); token turlari `theme/tokens.ts`
+  (kengaytma yangi nom e'lon qila olmaydi).
+* `useState(null)` → `useState<Tur | null>(null)`; `catch (err)` →
+  `const error = err as ApiError`. `any` faqat izohi bilan (`eslint-disable`).
+* URL'lar faqat `api/endpoints.ts` da.
+* **CRUD sahifalari bitta dvigateldan**: `components/data/ResourcePage.tsx` +
+  `useResource.ts` + `ResourceForm.tsx` + `DataTable.tsx`; yangi sahifa =
+  `columns` va `fields` (`pages/crud/*.tsx`). Dvigateldan chetga chiqmang.
 * **Jadval props BARQAROR** (`DataGrid` o'zi `React.memo`): `ResourcePage`
   `resource` ni ustun/callback'larga fasad orqali beradi (`stableResource`,
   `useResource` har renderda yangi obyekt), `DataTable` `getRowId`,
@@ -1652,12 +1672,12 @@ Yangi domen xatosi — `DomainError` merosxo'ri; `code` React'da tarjima kaliti.
   qidiruvga har harf butun jadvalni (yuzlab katak + tooltip) qayta chizadi.
   Sahifa `isFetching` ni o'qisa har fon so'rovida qayta chiziladi — holatni
   kichik komponentda kuzating (`Dashboard:DashboardRefreshButton`). Tekshiruv —
-  `npm run dev:scan` (`src/devtools/reactScan.js`, `__renderStats.top()`).
-* Marshrutlar `App.jsx` da, lazy chunk'lar `layout/navigation.js:ROUTE_LOADERS`
+  `npm run dev:scan` (`src/devtools/reactScan.ts`, `__renderStats.top()`).
+* Marshrutlar `App.tsx` da, lazy chunk'lar `layout/navigation.ts:ROUTE_LOADERS`
   (menyu prefetch bilan bir xil loader). `Guard` — faqat UI qulayligi.
-* **Hodisa turkumlari faqat frontendda** (`utils/events.js`: `integrity` /
+* **Hodisa turkumlari faqat frontendda** (`utils/events.ts`: `integrity` /
   `identity` / `behaviour` / `system`). Yangi hodisa turi —
-  `utils/labels.js:EVENT_LABEL` VA `utils/events.js:EVENT_CATEGORY`
+  `utils/labels.ts:EVENT_LABEL` VA `utils/events.ts:EVENT_CATEGORY`
   (`ProctoringEvent.Type` bilan to'liq mos, hozir 41 tur).
   **Yangi turni client'da serverdan OLDIN yubormang**: `EventItemSerializer`
   (`ChoiceField`) bitta noma'lum tur uchun BUTUN batch'ni 400 bilan rad
@@ -1665,29 +1685,29 @@ Yangi domen xatosi — `DomainError` merosxo'ri; `code` React'da tarjima kaliti.
   tur client'da server sozlamadagi kalit bilan yoqiladi (namuna:
   `device.detect_peripherals`, client standarti `False`).
 * **WebSocket `detail` — oq ro'yxat** (`ingest._BROADCAST_DETAIL_KEYS` va
-  `utils/events.js:eventDetail` — ikkala tomonda qo'shing).
-* Sessiya tafsiloti: `components/session/ScreenshotGallery.jsx` (blob
+  `utils/events.ts:eventDetail` — ikkala tomonda qo'shing).
+* Sessiya tafsiloti: `components/session/ScreenshotGallery.tsx` (blob
   URL'lar bitta joyda — `useShotUrls`; ko'rish oynasi doim qorong'i;
-  kartalar `contain`), `LocalRecordings.jsx` (asosiy ma'lumot — mashinadagi
+  kartalar `contain`), `LocalRecordings.tsx` (asosiy ma'lumot — mashinadagi
   to'liq yo'l).
-* Tema: `theme/palettes.js` (5 sxema × 3 rejim × 2 zichlik),
-  `context/UiContext.jsx`, `localStorage`.
-* **AppBar yo'q** (`layout/AppLayout.jsx`): profil, viloyat, tungi rejim,
+* Tema: `theme/palettes.ts` (5 sxema × 3 rejim × 2 zichlik),
+  `context/UiContext.tsx`, `localStorage`.
+* **AppBar yo'q** (`layout/AppLayout.tsx`): profil, viloyat, tungi rejim,
   chiqish — yon panel pastida. `>= lg` to'liq/rail
   (`UiContext.sidebarCollapsed`), `md..lg` rail, `< md` yashirin + 56 px
-  mobil satr. Ctrl+K — `layout/CommandPalette.jsx`.
-* **Har menyu bandida `description`** (`layout/navigation.js`); bo'lim nomi
+  mobil satr. Ctrl+K — `layout/CommandPalette.tsx`.
+* **Har menyu bandida `description`** (`layout/navigation.ts`); bo'lim nomi
   `findNavEntry` dan.
 * **Material 3 rollari `theme.palette.m3` da** — palitradan hisoblanadi
-  (`theme/index.js:mix`); `sx`: `bgcolor: 'm3.surfaceContainerLow'`.
+  (`theme/index.ts:mix`); `sx`: `bgcolor: 'm3.surfaceContainerLow'`.
 * **(tuzoq) `sx` dagi son `borderRadius` 12 ga ko'paytiriladi** — aniq qiymat
   uchun satr (`'12px'`), kapsula — `999`.
 * Shrift — `@fontsource-variable/inter`, paket ichida (CDN emas).
 * **Tafsilot kartasi** (qator bosilganda): `ResourcePage onRowClick` +
-  `components/data/DetailDialog.jsx` (qobiq, `StatTiles`, `InfoNote`) va
+  `components/data/DetailDialog.tsx` (qobiq, `StatTiles`, `InfoNote`) va
   `DetailFields` (`Section`/`Field`). Muammo (nima uchun ishlamaydi)
   karta TEPASIDA `problems` bilan. Ro'yxat qiymatlari — JSON matn emas,
-  `components/controls/ChipListInput.jsx`.
+  `components/controls/ChipListInput.tsx`.
 * **Ommaviy amal — `ResourcePage bulkActions`** (+ `isRowSelectable`).
   Backend `common.mixins.BulkSelectionMixin`: `{"ids": [...]}` yoki
   `{"all": true}` + ro'yxat query parametrlari (`useResource.scopeParams`),
@@ -1695,15 +1715,15 @@ Yangi domen xatosi — `DomainError` merosxo'ri; `code` React'da tarjima kaliti.
   `computers/bulk-delete/` (imtihondagi mashina o'tkaziladi),
   `device-tokens/bulk-approve/` (faqat kutayotganlar). Audit bitta yozuv.
 * **`/device-tokens` jadvali qisqa** — tafsilot va amallar yon varaqda
-  (`components/devices/DeviceDetailSheet.jsx`). 1440 px da gorizontal
+  (`components/devices/DeviceDetailSheet.tsx`). 1440 px da gorizontal
   skroll chiqmasin.
-* **Viloyat → bino filtri** — `pages/crud/shared.jsx:regionZoneFilters`.
+* **Viloyat → bino filtri** — `pages/crud/shared.tsx:regionZoneFilters`.
   Faqat «Bino» filtrini qo'ymang.
 * **Sahifalash**: `DataTable` (server, «Sahifada» `localStorage` da);
   DataGrid'siz ro'yxatlar `DataTable.TablePager`; sessiya tab'lari
   `hooks/useCursorPages` (kursor, 50). **`list({ page_size: N })` bilan
   "hammasini" olmang** — `useOptions` / `listAll`.
-* **Telefon (< md)**: filtr maydonlariga `components/data/responsive.js:
+* **Telefon (< md)**: filtr maydonlariga `components/data/responsive.ts:
   filterFieldSx(min, max, { half })`; `DataTable` `autoHeight`; oddiy
   `<Table>` — `minWidth` + `overflowX: 'auto'`; `ResourceForm` to'liq
   ekran (tema qoidasi `:not(.MuiDialog-paperFullScreen)`); `ToggleButtonGroup`
@@ -1795,15 +1815,16 @@ Yangi domen xatosi — `DomainError` merosxo'ri; `code` React'da tarjima kaliti.
 * **(client) Imtihon sahifasida `MessageBar` emas, `Snackbar`.**
 * **Tezkor tugma lug'ati UCH joyda**: client `services/lockdown.py`
   (manba), server `controls/hotkeys.py` (saqlashda tekshiradi, kanonik
-  shakl; testda client bilan solishtiriladi), panel `utils/hotkeys.js`.
+  shakl; testda client bilan solishtiriladi), panel `utils/hotkeys.ts`.
   Client tanimagan kodni BLOKLAMAYDI — yangi tugma nomi uchalasiga.
   RDP qoidasi kamida bitta belgisiz saqlanmaydi (belgisiz qoida hech
   narsani tutmaydi). Dastur/tugma faqat profilga (`Setting.rdp_objects`
   / `hotkeys`) kirsa client'ga yetadi — API `profiles` maydoni.
-* **(frontend) Import qilinmagan komponent build'dan o'tadi**, faqat
-  brauzerda `ReferenceError` beradi (ESLint yo'q, Vite `no-undef` ni
-  tekshirmaydi). Yangi JSX'da aniqlanmagan identifikatorlarni tekshiring
-  (`@babel/parser` + `@babel/traverse` `node_modules` da bor).
+* **(frontend) Vite turlarni TEKSHIRMAYDI** (faqat olib tashlaydi): dev
+  server tur xatosi bor faylni ham ochadi. Tekshiruv — `npm run typecheck`
+  yoki `npm run build`; import qilinmagan komponent ham shu yerda ushlanadi.
+* **(frontend) DataGrid `valueGetter` ning birinchi argumenti `never`**
+  (MUI X v7) — qiymatga tur bering: `valueGetter: (value: string | null) => …`.
 
 ## Muhit o'zgaruvchilari
 

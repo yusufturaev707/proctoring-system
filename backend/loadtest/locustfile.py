@@ -564,17 +564,17 @@ class PanelUser(BaseHttpUser):
     def loop(self):
         now = time.time()
         sched = _MANIFEST["schedule_id"]
-        if now >= self.due["dash"]:  # Dashboard.jsx — 15 s
+        if now >= self.due["dash"]:  # Dashboard.tsx — 15 s
             self.due["dash"] = now + 15
             self._get("panel dashboard/summary", f"{API}/dashboard/summary/")
             self._get("panel dashboard/zones", f"{API}/dashboard/zones/")
-        if now >= self.due["live"]:  # LiveMonitor.jsx — 10 s
+        if now >= self.due["live"]:  # LiveMonitor.tsx — 10 s
             self.due["live"] = now + 10
             data = self._get("panel sessions/live", f"{API}/sessions/live/?limit=200&zone={self.zone}")
             rows = data if isinstance(data, list) else (data or {}).get("results") or []
             if rows and (self.session_id is None or random.random() < 0.1):
                 self.session_id = random.choice(rows).get("id")
-        if now >= self.due["detail"] and self.session_id:  # SessionDetail.jsx — 10 s
+        if now >= self.due["detail"] and self.session_id:  # SessionDetail.tsx — 10 s
             self.due["detail"] = now + 10
             sid = self.session_id
             self._get("panel sessions/{id}", f"{API}/sessions/{sid}/")

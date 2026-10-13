@@ -18,7 +18,7 @@ class SettingAdmin(admin.ModelAdmin):
     list_display = ("name", "is_active", "faceid_interval", "is_screenshot_upload")
     list_filter = ("is_active",)
     filter_horizontal = ("detect_classes", "rdp_objects", "hotkeys")
-    # Panel sahifasi (`Settings.jsx`) bilan BIR XIL guruhlash: bitta
+    # Panel sahifasi (`Settings.tsx`) bilan BIR XIL guruhlash: bitta
     # maydonni ikki joyda ikki xil bo'limda qidirish administratorni
     # adashtirardi. Mashinaga xos qiymatlar (server manzili, kamera
     # indeksi, GPU) bu yerda YO'Q - ular client `.env` ida

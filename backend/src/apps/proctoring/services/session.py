@@ -1214,7 +1214,7 @@ def _notify_face_limit(
     `high_suspicion_identity` turi ATAYLAB tanlangan (yangi tur
     kiritilmadi): u allaqachon "shaxs almashtirilgan" degan xulosani
     bildiradi va frontendda ham tarjimasi, ham turkumi bor
-    (`utils/labels.js`, `utils/events.js`). Ketma-ket N marta yuz mos
+    (`utils/labels.ts`, `utils/events.ts`). Ketma-ket N marta yuz mos
     kelmasligi aynan shu xulosaga olib keladi — faqat manba boshqa
     (fusion emas, davriy tekshiruv), va u `payload.source` da yozilgan.
 

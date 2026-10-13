@@ -6,9 +6,10 @@
   "scripts": {
     "dev": "vite",
     "dev:scan": "vite --mode scan",
-    "build": "vite build",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
     "preview": "vite preview",
-    "lint": "eslint src --ext js,jsx"
+    "lint": "eslint src --ext ts,tsx"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",
@@ -31,6 +32,7 @@
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
     "react-scan": "^0.5.7",
+    "typescript": "~5.9.3",
     "vite": "^6.0.7"
   }
 }

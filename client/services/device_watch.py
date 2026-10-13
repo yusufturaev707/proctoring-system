@@ -653,7 +653,7 @@ class DeviceWatcher(QObject):
         VirtualBox ham topilishi mumkin va ularni bitta hodisaga
         qo'shish panelda ikkita butunlay boshqa muammoni bitta
         qatorga siqib qo'yardi: `rdp_detected` va `vm_detected`
-        frontendda ham har xil turkumga tushadi (`utils/events.js`).
+        frontendda ham har xil turkumga tushadi (`utils/events.ts`).
 
         JIDDIYLIK YO'Q QILINGANIGA QARAB O'ZGARADI. Yopib bo'lgan
         dastur - YUQORI (3): u imtihonga ta'sir qilmadi, lekin

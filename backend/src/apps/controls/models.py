@@ -268,7 +268,7 @@ class RdpObject(TimeStampedModel):
     code = models.CharField(max_length=100, unique=True)
     #: Toifa hodisa TURINI belgilaydi: `rdp_detected` / `vm_detected` /
     #: `process_blacklisted`. Frontendda ular har xil turkumga tushadi
-    #: (`utils/events.js`), ya'ni jonli kuzatuvda ajralib turadi.
+    #: (`utils/events.ts`), ya'ni jonli kuzatuvda ajralib turadi.
     category = models.CharField(
         _("Toifa"), max_length=16, choices=Category.choices, default=Category.REMOTE
     )
