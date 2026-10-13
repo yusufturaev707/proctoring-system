@@ -947,13 +947,17 @@ function ScheduleBar({ options, loading, value, onChange }: ScheduleBarProps) {
  * va zal (proktor stoli) ekranning pastiga tushib, har safar aylantirish
  * kerak edi. Endi ko'rsatkich "yorliq — qiymat" juftligi, bandlik esa
  * shu qatorning oxirida: ~56 px. Telefonda 2x2 + bandlik pastda.
+ *
+ * `scope` — ro'yxat ko'rinishining holat filtri, kataklar OSTIDA. Qayta
+ * dizaynda u tushib qolgan edi: «Ko'rsatish» (buzilgan joylar) filtrni
+ * yoqardi-yu, «Barchasi» ga qaytadigan tugma ko'rinmasdi.
  */
 interface StatsStripProps {
   stats: ApiRecord | undefined
   scope?: ReactNode
 }
 
-function StatsStrip({ stats }: StatsStripProps) {
+function StatsStrip({ stats, scope }: StatsStripProps) {
   const total = stats?.total ?? 0
   const booked = stats?.booked ?? 0
   const usable = total - (stats?.broken ?? 0)
@@ -1023,6 +1027,7 @@ function StatsStrip({ stats }: StatsStripProps) {
           />
         </Box>
       </Box>
+      {scope && <Box sx={{ mt: 1, px: { md: 0.5 } }}>{scope}</Box>}
     </Paper>
   )
 }
