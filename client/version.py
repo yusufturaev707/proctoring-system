@@ -23,9 +23,9 @@ Qt, onnxruntime - yuklamasdan).
 #: Semantik versiya. Windows resursi uchun faqat boshidagi raqamlar
 #: olinadi ("1.2.0-rc1" -> 1.2.0.0), shuning uchun qo'shimcha
 #: (`-rc1`) ixtiyoriy va faqat ko'rsatish uchun.
-__version__ = "1.0.3"
+__version__ = "1.0.4"
 
-APP_NAME = "Proctoring Client"
+APP_NAME = "BBA Proctor"
 
 #: Katalog, `.exe` va ProgramData/AppData papkalari nomi. O'ZGARTIRMANG:
 #: `core/bundle_paths.APP_DIR_NAME` bilan bir xil bo'lishi shart - aks
@@ -33,6 +33,6 @@ APP_NAME = "Proctoring Client"
 #: bir mashina serverda qaytadan ro'yxatdan o'tadi.
 EXE_NAME = "ProctoringClient"
 
-COMPANY_NAME = "Proctoring System"
+COMPANY_NAME = "Bilim va malakalarni baholash agentligi"
 FILE_DESCRIPTION = "Imtihon kuzatuv tizimi - operator ish o'rni"
-COPYRIGHT = "(c) Proctoring System"
+COPYRIGHT = "(c) BBA-AKT"

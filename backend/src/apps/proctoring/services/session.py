@@ -116,9 +116,18 @@ def lookup_candidate(
     # qaysi kompyuterga borish kerakligi TUZILGAN holda keladi
     # (`WrongComputer.extra`), client uni matndan ajratmaydi.
     #
+    # Rejim imtihon profilidan (`Setting.is_booking`). `.get` va `True`
+    # zaxirasi: yangilanishdan oldingi keshdagi konfiguratsiyada kalit
+    # yo'q va u avvalgi (bron) xulqni berishi kerak.
+    from apps.controls import services as controls_services
+
+    booking_required = bool(
+        (controls_services.get_client_config(exam).get("booking") or {}).get("required", True)
+    )
     seat = bookings.resolve_candidate_seat(
         schedule=schedule, pinfl=pinfl, device=device,
         machine_uuid=machine_uuid, mac_address=mac_address,
+        booking_required=booking_required,
     )
     # MASHINA TEKSHIRUVI — bron xatolaridan KEYIN (ular aniqroq: talabgor
     # qaysi stolga borishi kerak), platformadan OLDIN (mos kelmagan
@@ -235,8 +244,10 @@ def lookup_candidate(
         # bo'yicha tasdiq butunlay operator zimmasida qoladi.
         "has_reference_face": bool(reference_photo or data.get("photo_url")),
         "challenge_expires_in": settings.PROCTORING["PENDING_SESSION_TTL"],
-        # Bron bo'yicha joy (`None` — bu sessiyada bron yuritilmaydi).
-        # Client uni natija kartasida "joy tasdiqlandi" deb ko'rsatadi.
+        # Bron bo'yicha joy (`None` — bu sessiyada joy yuritilmaydi).
+        # Client uni natija kartasida "joy tasdiqlandi" deb ko'rsatadi;
+        # `auto_assign: true` — erkin joylashuv, joy test boshlanganda
+        # shu kompyuterga yoziladi (`bookings.claim_for_session`).
         "seat": seat,
         # Platformaning O'Z javobi. `message` — AYNAN u aytgan matn
         # ("Testga ruxsat!") va client uni o'zgartirmasdan ko'rsatadi:

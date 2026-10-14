@@ -10,6 +10,7 @@ umuman paydo bo'lmaydi.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -324,6 +325,46 @@ class AppState:
         # HAR DOIM `None` bo'lib qolardi - ya'ni client tomondagi
         # `face_mismatch` hodisasi hech qachon tug'ilmasdi.
         self.face_reference: Any = None
+        #: Serverdagi kamera tekshiruvi qachongacha amal qiladi
+        #: (`time.monotonic()` bo'yicha; `None` - noma'lum).
+        #
+        # Natija serverda QURILMAGA bog'langan va OXIRGI tekshiruvdan
+        # 4 soat yashaydi (`CAMERA_CHECK.SNAPSHOT_TTL`), ya'ni bir
+        # nechta talabgorga xizmat qiladi. "Yakunlash" dan keyin oqim
+        # JSHSHIR sahifasiga qaytadi va kamera sahifasini chetlab
+        # o'tadi - muddatni bilmasak, eskirgan natija faqat
+        # `proctoring/start/` da, talabgor yuzdan o'tib bo'lgach
+        # chiqardi. `reset_flow` TOZALAMAYDI: bu talabgorga emas,
+        # mashinaga tegishli.
+        self.camera_check_until: Optional[float] = None
+
+    # ------------------------------------------------------------------
+    def note_camera_check(self, result: dict) -> None:
+        """
+        `camera/check/` javobidagi muddatni yozib qo'yadi.
+
+        Muddat SONIYADA keladi va monoton soatga qo'shiladi:
+        mashina soati server soatiga mos kelmasligi mumkin, operator
+        esa uni imtihon kuni o'zgartirib qo'yishi ham mumkin. Eski
+        server `expires_in` bermaydi - o'shanda muddat noma'lum va
+        hech narsa to'silmaydi (avvalgi xulq).
+        """
+        expires_in = (result or {}).get("expires_in")
+        if expires_in is None:
+            self.camera_check_until = None
+            return
+        try:
+            seconds = max(0.0, float(expires_in))
+        except (TypeError, ValueError):
+            self.camera_check_until = None
+            return
+        self.camera_check_until = time.monotonic() + seconds
+
+    def camera_check_left(self) -> Optional[float]:
+        """Tekshiruv muddatidan qolgan soniya (manfiy - o'tgan; `None` - noma'lum)."""
+        if self.camera_check_until is None:
+            return None
+        return self.camera_check_until - time.monotonic()
 
     # ------------------------------------------------------------------
     def exam_types(self) -> list[tuple[Optional[int], str]]:

@@ -164,6 +164,7 @@ ErrDiskSpace=%3 diskida joy yetarli emas: kerak %1 MB, bo'sh %2 MB. O'rnatish BO
 ErrRollbackPrepare=Eski versiya zaxiraga olinmadi (%1). O'rnatish BOSHLANMADI, eski versiya o'z holicha qoldi. Fayl band bo'lishi mumkin - kompyuterni qayta yuklab, qaytadan urinib ko'ring.
 WarnVcRedistFailed=Microsoft Visual C++ runtime o'rnatilmadi (kod %1). Dastur o'z runtime nusxasi bilan ishlaydi; muammo bo'lsa qo'lda o'rnating: https://aka.ms/vs/17/release/vc_redist.x64.exe
 WarnVcRuntimeOld=Tizimdagi Microsoft Visual C++ runtime eski (14.40 dan past). Yuz tekshiruvi (ONNX Runtime) unda qulashi mumkin. O'rnatish davom etadi; iloji boricha yangilang: https://aka.ms/vs/17/release/vc_redist.x64.exe
+WarnCodeSignTrust=Kod imzosi sertifikati kompyuterning ishonchli omboriga qo'shilmadi (%1). Dastur ishlaydi, lekin imzosi "noma'lum nashriyot" bo'lib ko'rinadi. Qo'lda (administrator): certutil -addstore -f Root bba-codesign.cer va certutil -addstore -f TrustedPublisher bba-codesign.cer
 ErrUninstallRunning=Proctoring Client jarayonlarini to'xtatib bo'lmadi (%1). O'chirish BEKOR qilindi. Kompyuterni qayta yuklab, qaytadan urinib ko'ring.
 
 [Tasks]
@@ -199,6 +200,12 @@ Source: "autostart.ps1"; DestDir: "{app}\tools"; Flags: ignoreversion
 ; Files'da ikkinchi nusxa qolsa, administrator uni tahrirlab "nega
 ; o'zgarmadi?" deb qolardi: client faqat ProgramData'dagini o'qiydi.
 Source: "{#EnvSource}"; DestName: "client.env"; Flags: dontcopy
+#ifdef CodeSignCert
+; Imzolovchi self-signed sertifikatning OCHIQ qismi (maxfiy kalitsiz) -
+; build.ps1 imzolash omboridan eksport qiladi. {app} ga emas, {tmp} ga
+; ochiladi va kompyuter omborlariga qo'shiladi (TrustCodeSignCert).
+Source: "{#CodeSignCert}"; DestName: "bba-codesign.cer"; Flags: dontcopy
+#endif
 #ifdef VcRedist
 ; `dontcopy`: PrepareToInstall o'zi ochadi va FAYLLARDAN OLDIN o'rnatadi -
 ; [Run] da (uninstaller yakunlangandan keyin) xatosi rollback qilinmasdi
@@ -721,6 +728,51 @@ begin
 end;
 
 { ---------------------------------------------------------------------- }
+{ Kod imzosi sertifikatiga ishonch                                        }
+{ ---------------------------------------------------------------------- }
+{ Client agentlikning SELF-SIGNED sertifikati bilan imzolangan va u
+  mashina omborida bo'lmasa Windows imzoni "UnknownError" (ishonchsiz
+  ildiz) deydi. Domen/GPO har joyda yo'q, o'rnatuvchi esa baribir har
+  mashinada administrator huquqida ishlaydi - sertifikat shu yerda
+  qo'shiladi. Ikki ombor: Root (zanjir ishonchli) va TrustedPublisher
+  (nashriyot ishonchli). KOMPYUTER ombori (`certutil -addstore`, `-user`
+  siz): imtihon mashinasida bir nechta hisob ishlaydi.
+
+  Xato o'rnatishni TO'SMAYDI - dastur imzosiz holatdagidek ishlaydi.
+  Uninstall sertifikatni OLIB TASHLAMAYDI: o'chirish-qayta o'rnatish
+  oralig'ida yoki shu sertifikat bilan imzolangan boshqa nusxa turgan
+  mashinada ishonch yo'qolardi. Qo'lda: certutil -delstore Root <iz>. }
+#ifdef CodeSignCert
+function AddCertToStore(const Store, CerPath: String): Integer;
+begin
+  if not Exec(ExpandConstant('{sys}\certutil.exe'), '-addstore -f ' + Store + ' "' + CerPath + '"', '',
+              SW_HIDE, ewWaitUntilTerminated, Result) then
+    Result := -1;
+  Log('certutil -addstore ' + Store + ' kodi: ' + IntToStr(Result));
+end;
+#endif
+
+procedure TrustCodeSignCert;
+#ifdef CodeSignCert
+var
+  CerPath, Detail: String;
+  RootCode, PublisherCode: Integer;
+#endif
+begin
+#ifdef CodeSignCert
+  ExtractTemporaryFile('bba-codesign.cer');
+  CerPath := ExpandConstant('{tmp}\bba-codesign.cer');
+  RootCode := AddCertToStore('Root', CerPath);
+  PublisherCode := AddCertToStore('TrustedPublisher', CerPath);
+  { Qator `[` bilan boshlanmasin: ISCC uni bo'lim sarlavhasi deb o'qiydi. }
+  Detail := 'Root ' + IntToStr(RootCode) + ', TrustedPublisher ' + IntToStr(PublisherCode);
+  if (RootCode <> 0) or (PublisherCode <> 0) then
+    SuppressibleMsgBox(FmtMessage(CustomMessage('WarnCodeSignTrust'), [Detail]),
+                       mbInformation, MB_OK, IDOK);
+#endif
+end;
+
+{ ---------------------------------------------------------------------- }
 { Setup hodisalari                                                        }
 { ---------------------------------------------------------------------- }
 function InitializeSetup: Boolean;
@@ -818,6 +870,7 @@ begin
       if not DelTree(RollbackDir, True, True, True) then
         Log('Zaxira to''liq o''chirilmadi (uninstall o''chiradi): ' + RollbackDir);
     WriteEnv;
+    TrustCodeSignCert;
     ConfigureAutostart;
   end;
 end;

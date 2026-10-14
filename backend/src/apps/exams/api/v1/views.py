@@ -19,6 +19,7 @@ from apps.exams.api.v1.serializers import (
     ExamScheduleSerializer,
     ExamSerializer,
     ExamTypeSerializer,
+    SessionComputersSerializer,
 )
 from apps.exams.models import ComputerBooking, Exam, ExamSchedule, ExamType
 from apps.proctoring.services.audit import record_audit
@@ -429,6 +430,48 @@ class ComputerBookingViewSet(PermissionRequiredMixin, AuditLogMixin, viewsets.Mo
                 for row in rows
             ]
         })
+
+    @action(detail=False, methods=["get", "post"], url_path="zone-computers")
+    def zone_computers(self, request):
+        """
+        Bino kompyuterlari va sessiyadagi holati (GET) / qo'lda tuzish (POST).
+
+        «Kompyuterlarni biriktirish» oynasi: chapda binoning sessiyaga
+        hali kiritilmagan ishchi kompyuterlari, o'ngda kiritilganlari.
+        POST — `{"schedule", "zone", "add": [...], "remove": [...]}`;
+        bajarilmaganlari sababi bilan `skipped` da (band, ishlatilgan,
+        imtihonda — `bookings._seat_lock`). Audit bitta yozuv.
+        """
+        if request.method == "GET":
+            schedule = self._schedule_param(request)
+            zone = request.query_params.get("zone")
+            if not zone or not str(zone).isdigit():
+                raise ValidationError({"zone": "Bino tanlanmagan"})
+            return Response(
+                bookings.zone_computers(schedule, int(zone), region_id=self._region_id())
+            )
+
+        serializer = SessionComputersSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        schedule = data["schedule"]
+        self._check_schedule(schedule)
+        result = bookings.update_session_computers(
+            schedule, data["zone"], add=data["add"], remove=data["remove"],
+            region_id=self._region_id(),
+        )
+        if result["added"] or result["removed"]:
+            record_audit(
+                actor=request.user, action="update", object_type="ExamSchedule",
+                object_id=schedule.pk,
+                meta={
+                    "action": "session_computers", "zone": data["zone"],
+                    "added": result["added"], "removed": result["removed"],
+                    "skipped": len(result["skipped"]),
+                },
+                request=request,
+            )
+        return Response(result)
 
     #: Bitta binoda bundan ko'p joy — o'rnatish xatosi (bino emas, butun
     #: viloyat bitta zonaga yozilgan). Xarita baribir chiziladi, lekin

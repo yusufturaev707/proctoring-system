@@ -5,7 +5,7 @@ Imtihon sozlamasiga moslik dialogi.
 olinadi va ish o'rni holati bilan solishtiriladi
 (`proctoring/policy.py`). Natija shu dialogda ko'rsatiladi.
 
-NIMA UCHUN MODAL, XABAR QATORI EMAS. Xabar qatori (`MessageBar`) bitta
+NIMA UCHUN MODAL, XABAR QATORI EMAS. Xabar bloki (`Notice`) bitta
 qatorlik matn uchun va uni o'qimasdan o'tib ketish mumkin. Bu yerda
 esa bir nechta sabab bo'lishi mumkin va ularning har biri operatorning
 HARAKATINI talab qiladi (kamerani ulash, virtual qurilmani o'chirish).

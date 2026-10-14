@@ -37,9 +37,25 @@ from services.auth_service import AuthService
 from services.workers import ApiWorker, WorkerHolder
 from ui.styles import COLORS, primary_button_style
 from ui.widgets.backdrop import BrandBackdrop
-from ui.widgets.indicators import MessageBar, StatusPill
+from ui.widgets.indicators import StatusPill
+from ui.widgets.notice import Notice
 
 log = logging.getLogger(__name__)
+
+#: Xato kodi -> xabar sarlavhasi ("nima bo'ldi"); matn — server yoki
+#: `core/errors.py`. Sarlavhasiz kod (noto'g'ri parol va h.k.) faqat
+#: matn bilan chiqadi: bitta jumla uchun sarlavha takror bo'lardi.
+_LOGIN_TITLES = {
+    "ip_not_allowed": "Bu tarmoqdan kirishga ruxsat yo‘q",
+    "network": "Server bilan aloqa yo‘q",
+    "server_unavailable": "Server vaqtincha javob bermayapti",
+    "throttled": "Juda ko‘p urinish",
+    "device_not_approved": "Qurilma tasdiqlanmagan",
+    "device_revoked": "Qurilma bloklangan",
+    "device_already_registered": "Qurilma boshqa kompyuterga biriktirilgan",
+    "device_computer_inactive": "Kompyuter hisobdan chiqarilgan",
+    "panel_access_denied": "Bu hisob client uchun emas",
+}
 
 
 class LoginPage(BrandBackdrop):
@@ -169,7 +185,7 @@ class LoginPage(BrandBackdrop):
         layout.addWidget(self.login_btn)
         layout.addSpacing(14)
 
-        self.message = MessageBar()
+        self.message = Notice()
         layout.addWidget(self.message)
 
         outer.addWidget(card, alignment=Qt.AlignmentFlag.AlignCenter)
@@ -268,7 +284,7 @@ class LoginPage(BrandBackdrop):
         username = self.username_input.text().strip()
         password = self.password_input.text()
         if not username or not password:
-            self.message.show_message("Login va parolni kiriting")
+            self.message.show_message("Login va parolni kiriting", "warning")
             return
 
         self._set_busy(True, "Tekshirilmoqda...")
@@ -298,9 +314,9 @@ class LoginPage(BrandBackdrop):
             # Qurilma PENDING/REVOKED - backend baribir hech narsaga
             # ruxsat bermaydi, shuning uchun oqimni shu yerda to'xtatamiz.
             self.message.show_message(
-                "Qurilma tasdiqlanmagan (holat: {}). Administrator "
-                "tasdiqlashini kuting.".format(device.status),
+                "Holat: {}. Administrator tasdiqlashini kuting.".format(device.status),
                 "warning",
+                title="Qurilma tasdiqlanmagan",
             )
             return
         self.password_input.clear()
@@ -321,7 +337,7 @@ class LoginPage(BrandBackdrop):
             elif details.get("observed_ip"):
                 message = "{}\nIP manzil: {}".format(message, details["observed_ip"])
         kind = "warning" if code in ("device_not_registered", "throttled") else "error"
-        self.message.show_message(message, kind)
+        self.message.show_message(message, kind, title=_LOGIN_TITLES.get(code, ""))
         log.info("Login muvaffaqiyatsiz (%s): %s", code or "-", message)
 
     def _set_busy(self, busy: bool, text: str = "") -> None:

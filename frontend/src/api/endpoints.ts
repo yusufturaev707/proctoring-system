@@ -197,6 +197,12 @@ export const computerBookings = {
   // Joylar xaritasi: binolar ("vagonlar") va bitta binoning o'rindiqlari.
   zones: (params?: QueryParams): Data => api.get('/computer-bookings/zones/', { params }).then((r) => r.data),
   seats: (params?: QueryParams): Data => api.get('/computer-bookings/seats/', { params }).then((r) => r.data),
+  // Sessiyani qo'lda tuzish: binoning kompyuterlari (GET) va ularni
+  // sessiyaga kiritish/chiqarish (POST `{schedule, zone, add, remove}`).
+  zoneComputers: (params?: QueryParams): Data =>
+    api.get('/computer-bookings/zone-computers/', { params }).then((r) => r.data),
+  updateZoneComputers: (payload: ApiRecord): Data =>
+    api.post('/computer-bookings/zone-computers/', payload).then((r) => r.data),
 }
 export const auditLogs: ListApi = { list: list('/audit-logs/') }
 

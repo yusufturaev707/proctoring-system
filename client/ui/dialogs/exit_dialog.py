@@ -41,7 +41,8 @@ from services.repositories import ProctoringRepository
 from services.workers import ApiWorker, WorkerHolder
 from ui.dialogs.base import CardDialog, apply_font as _apply_font
 from ui.styles import COLORS, outlined_button_style, tonal_button_style
-from ui.widgets.indicators import MessageBar, StateBadge
+from ui.widgets.indicators import StateBadge
+from ui.widgets.notice import Notice
 
 log = logging.getLogger(__name__)
 
@@ -173,7 +174,7 @@ class ExitDialog(CardDialog):
         self.password_input.returnPressed.connect(self._on_enter)
         layout.addWidget(self.password_input)
 
-        self.message = MessageBar()
+        self.message = Notice()
         layout.addSpacing(12)
         layout.addWidget(self.message)
 

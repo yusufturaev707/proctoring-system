@@ -488,7 +488,7 @@ def snapshot_key(device_id: str) -> str:
     return "cam:check:{}".format(device_id)
 
 
-def store(device_id: str, snapshot: dict) -> None:
+def store(device_id: str, snapshot: dict) -> bool:
     """
     Tekshiruv natijasini saqlaydi.
 
@@ -501,18 +501,29 @@ def store(device_id: str, snapshot: dict) -> None:
     Suratcha `proctoring/start/` da o'qiladi va o'sha yerda
     `ExamSession.camera_check` ga KO'CHIRILADI — dalil sifatida
     doimiy qoladigan nusxa aynan o'sha.
+
+    `False` — saqlanmadi: client'ga muddat 0 deb aytiladi
+    (`snapshot_ttl`), aks holda u yo'q natijani "yana 4 soat amal
+    qiladi" deb hisoblardi.
     """
     try:
         get_redis().set(
             snapshot_key(device_id),
             json.dumps(snapshot),
-            ex=int(_limits()["SNAPSHOT_TTL"]),
+            ex=snapshot_ttl(),
         )
     except Exception:
         # Redis yo'q bo'lsa tekshiruv NATIJASI yo'qoladi va
         # `proctoring/start/` uni "eskirgan" deb hisoblaydi. Bu
         # to'g'ri xulq: tekshirilmagan mashinada imtihon boshlanmasin.
         logger.warning("Kamera tekshiruvini saqlab bo'lmadi", exc_info=True)
+        return False
+    return True
+
+
+def snapshot_ttl() -> int:
+    """Suratcha necha soniya amal qiladi — OXIRGI tekshiruvdan boshlab."""
+    return int(_limits()["SNAPSHOT_TTL"])
 
 
 def load(device_id: str) -> dict | None:

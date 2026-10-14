@@ -241,7 +241,7 @@ class CardDialog(QDialog):
             policy.setHeightForWidth(True)
             label.setSizePolicy(policy)
             width = label.width() or self.content_width
-            # Bo'sh yorliqda (masalan yashirin `MessageBar`) `heightForWidth`
+            # Bo'sh yorliqda (masalan yashirin `Notice` yorlig'i) `heightForWidth`
             # -1 qaytaradi va Qt "Negative sizes (0,-1)" ogohlantirishini
             # beradi - manfiy qiymat 0 ga tushiriladi.
             label.setMinimumHeight(max(0, label.heightForWidth(max(1, width))))

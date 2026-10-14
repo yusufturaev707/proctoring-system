@@ -201,6 +201,9 @@ def _serialize(setting) -> dict:
         # (`client/services/lockdown.py:resolve_hotkeys`).
         "hotkeys": [obj.code for obj in setting.hotkeys.all() if obj.is_active],
         "technical_problem": {"enabled": setting.is_enable_check_tp},
+        # Server o'zi o'qiydi (`session.lookup_candidate`); client'ga
+        # ham ketadi - qaror baribir serverda, client faqat ko'rsatadi.
+        "booking": {"required": setting.is_booking},
         "network": {
             "heartbeat_interval": setting.heartbeat_interval,
             "event_batch_interval": setting.event_batch_interval,
@@ -488,6 +491,8 @@ def _default_config() -> dict:
         # Bo'sh = client `.env` standartini qoldiradi (yuqoriga qarang).
         "hotkeys": [],
         "technical_problem": {"enabled": True},
+        # Model standarti: sozlamasiz tizim avvalgi bron xulqida qoladi.
+        "booking": {"required": True},
         "network": {
             "heartbeat_interval": 30,
             "event_batch_interval": 5,

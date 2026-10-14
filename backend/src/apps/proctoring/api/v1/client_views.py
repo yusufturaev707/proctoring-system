@@ -22,6 +22,7 @@ tanlanadi:
 import logging
 
 from django.conf import settings
+from django.db import transaction
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema
 from redis.exceptions import RedisError
@@ -51,6 +52,7 @@ from apps.common.throttling import (
 )
 from apps.controls import services as controls_services
 from apps.devices import services as device_services
+from apps.exams import bookings
 from apps.proctoring.api.v1.client_serializers import (
     CameraCheckSerializer,
     CameraStreamSerializer,
@@ -735,8 +737,7 @@ class CameraCheckView(ClientBaseView):
         result["exam_id"] = exam.pk if exam is not None else None
         result["checked_at"] = timezone.now().isoformat()
 
-        if device is not None:
-            camera_check_service.store(device.device_id, result)
+        stored = device is not None and camera_check_service.store(device.device_id, result)
 
         logger.info(
             "Kamera tekshiruvi: qurilma=%s holat=%s boshlash=%s to'siqlar=%s",
@@ -745,7 +746,16 @@ class CameraCheckView(ClientBaseView):
             result["can_start"],
             ",".join(result["blockers"]) or "-",
         )
-        return Response(result)
+        # MUDDAT JAVOBDA, SURATCHADA EMAS: muddat suratcha yozilgan
+        # paytdan sanaladi va uni dalilga (`ExamSession.camera_check`)
+        # ko'chirish ma'nosiz. Client undan foydalanib operatorni
+        # JSHSHIR sahifasida ogohlantiradi — aks holda eskirgan natija
+        # faqat `proctoring/start/` da, talabgor yuzdan o'tib bo'lgach
+        # `camera_check_required` bo'lib chiqardi. Soniya, vaqt belgisi
+        # emas: client soati server soatiga mos kelmasligi mumkin.
+        return Response(
+            {**result, "expires_in": camera_check_service.snapshot_ttl() if stored else 0}
+        )
 
 
 class ProctoringStartView(SessionRequiredView):
@@ -778,9 +788,45 @@ class ProctoringStartView(SessionRequiredView):
             camera_check_service.load(device.device_id) if device is not None else None
         )
 
-        result = proctoring_service.start(
-            session, snapshot=snapshot, policy=config.get("proctoring") or {}
-        )
+        # ERKIN JOYLASHUV: joy shu yerda — kamera darvozasidan o'tgach —
+        # talabgor o'tirgan kompyuterga yoziladi (`bookings.claim_for_session`).
+        # Bitta tranzaksiya: joy olinmasa kuzatuv holati ham qaytadi va
+        # sessiya kamera rad javobidagidek tirik qoladi.
+        with transaction.atomic():
+            result = proctoring_service.start(
+                session, snapshot=snapshot, policy=config.get("proctoring") or {}
+            )
+            claimed = bookings.claim_for_session(session)
+        if claimed is not None and not (session.meta or {}).get("seat_assigned"):
+            # Birinchi start — iz sessiyada va auditda (takroriy start
+            # yozmaydi). Panel bronni `booked_by` siz ko'radi; kim va
+            # qachon degan savolga javob shu yerda.
+            session.meta = {
+                **(session.meta or {}),
+                "seat_assigned": {
+                    "by": "session_start",
+                    "at": timezone.now().isoformat(),
+                    "booking_id": claimed.pk,
+                },
+            }
+            session.save(update_fields=["meta", "updated_at"])
+            record_audit(
+                actor=request.user,
+                action="update",
+                object_type="ComputerBooking",
+                object_id=claimed.pk,
+                meta={
+                    "action": "assign",
+                    "by": "session_start",
+                    "pinfl": mask_pinfl(session.pinfl),
+                    "session": str(session.public_id),
+                    "schedule": session.schedule_id,
+                    "computer": claimed.computer_id,
+                },
+                request=request,
+            )
+        if claimed is not None:
+            result["seat"] = bookings.computer_payload(claimed.computer)
 
         profile = serializer.validated_data.get("ai_profile", "")
         if profile and profile != session.ai_profile:

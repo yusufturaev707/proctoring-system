@@ -53,7 +53,7 @@ import base64
 import binascii
 import logging
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -64,6 +64,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from proctoring.policy import camera_check_required
 from services.app_state import AppState, Candidate
 from services.network_status import network_status
 from services.repositories import ProctoringRepository
@@ -77,7 +78,8 @@ from ui.styles import (
 )
 from ui.widgets.camera_view import PhotoView
 from ui.widgets.header import PageHeader, ip_chip_hints
-from ui.widgets.indicators import BusyOverlay, Card, MessageBar
+from ui.widgets.indicators import BusyOverlay, Card
+from ui.widgets.notice import Notice
 from ui.widgets.seat_notice import SEAT_CODES, SeatNotice
 
 log = logging.getLogger(__name__)
@@ -100,6 +102,33 @@ _COLUMN_WIDTH = 620
 _PHOTO_WIDTH = 120
 _PHOTO_HEIGHT = 160
 
+#: Kamera tekshiruvi muddatidan shuncha soniya QOLGANDA ham to'xtatamiz.
+#:
+#: JSHSHIR qidiruvidan `proctoring/start/` gacha yuz tekshiruvi va
+#: operatorning hujjat tasdig'i bor - odatda 1-3 daqiqa, sekin
+#: operatorda ko'proq. Muddat shu oraliqda tugasa talabgor yana yuzdan
+#: o'tib bo'lgach rad etilardi - aynan shu holatni yo'qotish uchun
+#: tekshiruv bu yerda turibdi.
+_CHECK_MARGIN_S = 10 * 60
+
+#: Kutish paytida muddat qanchalik tez-tez tekshiriladi (ms).
+#:
+#: Operator keyingi talabgorni soatlab kutishi mumkin va muddat aynan
+#: o'sha paytda tugaydi - ogohlantirish talabgor kelishidan OLDIN
+#: ekranda turishi kerak, "TEKSHIRISH" bosilgandagina emas.
+_CHECK_POLL_MS = 30_000
+
+#: Xato kodi -> xabar sarlavhasi ("nima bo'ldi"). Matn serverniki.
+_ERROR_TITLES = {
+    "network": "Server bilan aloqa yo‘q",
+    "server_unavailable": "Server vaqtincha javob bermayapti",
+    "throttled": "Juda ko‘p so‘rov",
+    "exam_schedule_missing": "Test sessiyasi topilmadi",
+    "exam_not_open": "Kirish oynasi yopiq",
+    "session_already_active": "Talabgor boshqa kompyuterda imtihonda",
+    "machine_not_verified": "Kompyuter tasdiqlanmadi",
+}
+
 
 class CandidatePage(QWidget):
     """Talabgorni JSHSHIR bo'yicha topish."""
@@ -119,8 +148,16 @@ class CandidatePage(QWidget):
         #: Oxirgi xato tarmoq sababli bo'ldimi — aloqa tiklanganda
         #: operatorga "endi qaytadan tekshirish mumkin" deyish uchun.
         self._network_failed = False
+        #: Kamera tekshiruvi haqidagi ogohlantirish ekranda turibdimi -
+        #: taymer uni har 30 s da qayta chizmasligi va boshqa xabarni
+        #: (masalan bron xatosini) bosib ketmasligi uchun.
+        self._check_warned = False
         self._setup_ui()
         network_status().changed.connect(self._on_network_changed)
+        self._check_timer = QTimer(self)
+        self._check_timer.setInterval(_CHECK_POLL_MS)
+        self._check_timer.timeout.connect(self._on_check_tick)
+        self._check_timer.start()
 
     # ------------------------------------------------------------------
     # Ko'rinish
@@ -160,10 +197,6 @@ class CandidatePage(QWidget):
         self._column.setContentsMargins(0, 0, 0, 0)
         self._column.setSpacing(16)
         self._column.addWidget(self._build_search_card())
-        # Bron bo'yicha rad javobi — natija kartasining O'RNIDA, ular
-        # hech qachon birga ko'rinmaydi.
-        self.seat_notice = SeatNotice()
-        self._column.addWidget(self.seat_notice)
         self._column.addWidget(self._build_result_card())
 
         center.addWidget(column)
@@ -222,8 +255,16 @@ class CandidatePage(QWidget):
         self.lookup_btn.clicked.connect(self._on_lookup)
         card.body.addWidget(self.lookup_btn)
 
-        self.message = MessageBar()
+        # BARCHA javob bitta joyda — tugmaning OSTIDA va bitta MD3
+        # komponentida (`notice.Notice`): oddiy xabar ham, bron bo'yicha
+        # rad javobi ham. Ilgari bron javobi alohida oq kartada, qolganlari
+        # karta ichidagi markazlashgan qatorda chiqardi - operator bir xil
+        # savolga ("nega o'tmadi?") ikki xil joyga qarardi. Ikkalasi hech
+        # qachon birga ko'rinmaydi.
+        self.message = Notice()
         card.body.addWidget(self.message)
+        self.seat_notice = SeatNotice()
+        card.body.addWidget(self.seat_notice)
 
         self._update_pinfl_state("")
         return card
@@ -360,6 +401,7 @@ class CandidatePage(QWidget):
         box.setSpacing(12)
 
         caption = QLabel("JOY TASDIQLANDI")
+        self.seat_caption = caption
         caption.setStyleSheet(
             "font-size: 11px; font-weight: 700; letter-spacing: 0.6px; "
             "background: transparent; color: {};".format(COLORS["primary_dark"])
@@ -382,10 +424,17 @@ class CandidatePage(QWidget):
         seat = candidate.seat or {}
         number = seat.get("number")
         self.seat_value.setText("№{}".format(number) if number else seat.get("inventory_code", ""))
+        # Erkin joylashuv: stol yaroqli, lekin hali BAND EMAS - server uni
+        # test boshlanganda yozadi. "Tasdiqlandi" deyish operatorni joy
+        # allaqachon olingan deb o'ylatardi.
+        auto = bool(seat.get("auto_assign"))
+        self.seat_caption.setText("TEST BOSHLANGANDA BIRIKTIRILADI" if auto else "JOY TASDIQLANDI")
+        where = " · ".join(part for part in (
+            seat.get("label"), seat.get("zone_name"), seat.get("region_name")
+        ) if part)
         self.seat_panel.setToolTip(
-            " · ".join(part for part in (
-                seat.get("label"), seat.get("zone_name"), seat.get("region_name")
-            ) if part)
+            "{}\nErkin joylashuv: talabgor test boshlanganda shu kompyuterga "
+            "biriktiriladi".format(where) if auto else where
         )
         self.seat_panel.setVisible(bool(candidate.seat))
 
@@ -459,9 +508,11 @@ class CandidatePage(QWidget):
 
         self.pinfl_input.clear()
         self.message.clear_message()
+        self._check_warned = False
         self.result_card.setVisible(False)
         self.seat_notice.hide()
         self.pinfl_input.setFocus()
+        self._warn_camera_check()
 
     def show_finish_notice(self, result: dict) -> None:
         """
@@ -476,20 +527,92 @@ class CandidatePage(QWidget):
                                 `wrong_computer` oladi;
             bron yo'q edi    -> xabar kerak emas (bron yuritilmaydi).
         """
+        # Kamera ogohlantirishi BIRGA ko'rsatiladi, bosib ketilmaydi:
+        # ikkalasi ham "keyingi talabgordan oldin nima qilish kerak"
+        # degan savolga javob va operator ikkalasini ham o'qishi kerak.
+        problem = self._camera_check_problem()
         if result.get("error"):
-            self.message.show_message(
-                "Imtihon yakuni serverga yetmadi — kompyuter band bo‘lib qolgan bo‘lishi "
-                "mumkin. Keyingi talabgor kira olmasa, administratorga murojaat qiling.",
+            self._show_with_check(
+                "Yakun serverga yetmadi",
+                "Kompyuter band bo‘lib qolgan bo‘lishi mumkin. Keyingi talabgor kira "
+                "olmasa, administratorga murojaat qiling.",
                 "warning",
+                problem,
             )
             return
         if result.get("seat_released"):
             label = (result.get("seat") or {}).get("label") or "Kompyuter"
-            self.message.show_message(
-                "Imtihon yakunlandi. «{}» bo‘shatildi — keyingi talabgorni "
-                "kiritishingiz mumkin.".format(label),
-                "success",
-            )
+            text = "«{}» bo‘shatildi".format(label)
+            if problem:
+                self._show_with_check("Imtihon yakunlandi", text + ".", "warning", problem)
+            else:
+                self.message.show_message(
+                    text + " — keyingi talabgorni kiritishingiz mumkin.",
+                    "success",
+                    title="Imtihon yakunlandi",
+                )
+
+    def _show_with_check(self, title: str, text: str, kind: str, problem: str) -> None:
+        self.message.show_message(
+            "{}\n\n{}".format(text, problem) if problem else text,
+            "warning" if problem else kind,
+            title=title,
+        )
+        self._check_warned = bool(problem)
+
+    # ------------------------------------------------------------------
+    # Kamera tekshiruvi muddati
+    # ------------------------------------------------------------------
+    def _camera_check_problem(self) -> str:
+        """
+        Kamera tekshiruvi muddati tugagan/tugayapti - operatorga matn.
+
+        Server natijani OXIRGI tekshiruvdan 4 soat saqlaydi va uni
+        faqat `proctoring/start/` da talab qiladi - FaceID va shaxs
+        tasdig'idan KEYIN. Bu sahifa oqimdagi eng arzon to'xtash
+        nuqtasi: talabgor hali hech narsadan o'tmagan va platformaga
+        so'rov ketmagan.
+
+        Bo'sh satr - muammo yo'q YOKI noma'lum (eski server muddat
+        bermaydi, siyosat tekshiruvni talab qilmaydi). Noma'lumni
+        to'smaymiz: yakuniy qaror baribir serverniki.
+        """
+        if not camera_check_required(self._state.config):
+            return ""
+        left = self._state.camera_check_left()
+        if left is None or left > _CHECK_MARGIN_S:
+            return ""
+        # Yo'l parol bilan (Ctrl+Q): sahifada "Orqaga" tugmasi ataylab
+        # yo'q (modul docstring'i), ekran oldida talabgor turadi.
+        how = ("Ctrl+Q → «Imtihon tanlashga qaytish» orqali kamerani "
+               "qayta tekshiring.")
+        if left <= 0:
+            return ("Kamera tekshiruvi muddati tugagan — talabgor yuzdan o'tgach "
+                    "imtihon ochilmaydi. " + how)
+        return ("Kamera tekshiruvi muddati {} daqiqadan keyin tugaydi — talabgor "
+                "yuzdan o'tguncha eskirishi mumkin. ".format(max(1, round(left / 60))) + how)
+
+    def _warn_camera_check(self) -> bool:
+        """Ogohlantirishni ko'rsatadi. `True` - muammo bor."""
+        problem = self._camera_check_problem()
+        if problem:
+            self.message.show_message(problem, "warning", title="Kamerani qayta tekshiring")
+        self._check_warned = bool(problem)
+        return bool(problem)
+
+    def _on_check_tick(self) -> None:
+        # Faqat kutish holatida: natija kartasi ochiq bo'lsa operator
+        # allaqachon talabgor bilan ishlayapti, so'rov ketayotganda esa
+        # xabar qatori so'rov natijasiga tegishli.
+        if (
+            self._check_warned
+            or not self.isVisible()
+            or self.result_card.isVisible()
+            or self.seat_notice.isVisible()
+            or self.overlay.isVisible()
+        ):
+            return
+        self._warn_camera_check()
 
     # ------------------------------------------------------------------
     def _on_pinfl_changed(self, text: str) -> None:
@@ -531,16 +654,22 @@ class CandidatePage(QWidget):
         pinfl = self.pinfl_input.text().strip()
         exam = self._state.selected_exam
         if len(pinfl) != PINFL_LENGTH:
-            self.message.show_message("JSHSHIR 14 xonali bo'lishi kerak")
+            self.message.show_message("JSHSHIR 14 xonali bo'lishi kerak", "warning")
             return
         if exam is None:
-            self.message.show_message("Avval imtihonni tanlang")
+            self.message.show_message("Avval imtihonni tanlang", "warning")
+            return
+        if self._warn_camera_check():
+            # Qidiruv YUBORILMAYDI: u platformaga boradi va JSHSHIR
+            # throttle byudjetini sarflaydi, imtihon esa baribir
+            # ochilmasdi.
             return
 
         self._state.reset_flow()
         self.result_card.setVisible(False)
         self.seat_notice.hide()
         self.message.clear_message()
+        self._check_warned = False
         self.overlay.start("Test platformasidan so'ralmoqda...")
         self.lookup_btn.setEnabled(False)
 
@@ -659,13 +788,20 @@ class CandidatePage(QWidget):
         #                    ko'rsatiladi - bizning umumiy matnimiz
         #                    operatorga nima qilishni aytmasdi.
         #   qolgani        - haqiqiy xato (tarmoq, server, sozlama).
-        if code in ("candidate_not_found", "candidate_not_eligible"):
-            self.message.show_message(message, "warning")
+        #
+        # Sarlavha — "nima bo'ldi" (bizniki, qisqa), matn — server yoki
+        # platformaning O'Z so'zi (o'zgartirilmaydi). Sarlavhasi yo'q kod
+        # (kutilmagan xato) faqat matn bilan chiqadi.
+        if code == "candidate_not_found":
+            self.message.show_message(message, "warning", title="Talabgor topilmadi")
+            return
+        if code == "candidate_not_eligible":
+            self.message.show_message(message, "warning", title="Platforma ruxsat bermadi")
             return
         # Tarmoq/server vaqtincha — JSHSHIR to'g'ri, faqat qayta urinish
         # kerak. Aloqa tiklanganda `_on_network_changed` aytadi.
         self._network_failed = code in ("network", "server_unavailable")
-        self.message.show_message(message, "error")
+        self.message.show_message(message, "error", title=_ERROR_TITLES.get(code, ""))
 
     def _on_network_changed(self, online: bool) -> None:
         """Aloqa tiklandi — oldingi tarmoq xatosi o'rniga ko'rsatma."""
@@ -673,7 +809,7 @@ class CandidatePage(QWidget):
             return
         self._network_failed = False
         self.message.show_message(
-            "Server bilan aloqa tiklandi — «TEKSHIRISH» ni qayta bosing.", "info"
+            "«TEKSHIRISH» ni qayta bosing.", "info", title="Server bilan aloqa tiklandi"
         )
 
     def _on_next(self) -> None:

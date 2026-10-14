@@ -88,7 +88,8 @@ from services.workers import ApiWorker, WorkerHolder
 from ui.styles import COLORS, badge_style, primary_button_style
 from ui.widgets.camera_view import CameraView, PhotoView
 from ui.widgets.header import PageHeader, ip_chip_hints
-from ui.widgets.indicators import BusyOverlay, Card, MessageBar
+from ui.widgets.indicators import BusyOverlay, Card
+from ui.widgets.notice import Notice
 
 log = logging.getLogger(__name__)
 
@@ -443,7 +444,7 @@ class FaceIDPage(QWidget):
         self.identity_card.installEventFilter(self)
         side.addWidget(self.identity_card)
 
-        self.message = MessageBar()
+        self.message = Notice()
         side.addWidget(self.message)
 
         self.retry_btn = QPushButton("Qaytadan urinish")
@@ -863,6 +864,7 @@ class FaceIDPage(QWidget):
             self.message.show_message(
                 problem.detail if problem is not None else "Yuz aniqlash modeli yuklanmadi.",
                 "error",
+                title=problem.title if problem is not None else "",
             )
             self.model_retry_btn.setVisible(True)
             self.state_badge.setText(
@@ -1335,9 +1337,11 @@ class FaceIDPage(QWidget):
             )
 
         self.message.show_message(
-            "Yuz mos kelmadi: eng yuqori o'xshashlik {}%, talab {}%. "
-            "{}-urinish. {}".format(score, threshold, attempts, hint),
+            "Eng yuqori o'xshashlik {}%, talab {}%. {}-urinish. {}".format(
+                score, threshold, attempts, hint
+            ),
             "error",
+            title="Yuz mos kelmadi",
         )
         self.retry_btn.setVisible(True)
 
@@ -1391,7 +1395,7 @@ class FaceIDPage(QWidget):
             # qayta urinishning ma'nosi yo'q, yangisini faqat JSHSHIR
             # tekshiruvi beradi.
             self.message.show_message(
-                "Tekshiruv muddati tugagan. JSHSHIR ni qaytadan kiriting.", "error"
+                "JSHSHIR ni qaytadan kiriting.", "error", title="Tekshiruv muddati tugagan"
             )
             self.retry_btn.setText("Yangi talabgor")
         else:
@@ -1429,9 +1433,10 @@ class FaceIDPage(QWidget):
             # savolga javob beradigan yagona joy shu qator - shuning
             # uchun u tugma nomini AYNAN ataydi.
             self.message.show_message(
-                "Yuz tasdiqlandi. Hujjatdagi rasmni jonli kadr bilan "
-                "solishtiring va «Davom etish» ni bosing.",
+                "Hujjatdagi rasmni jonli kadr bilan solishtiring va "
+                "«Davom etish» ni bosing.",
                 "info",
+                title="Yuz tasdiqlandi",
             )
             return
         self.message.show_message(message, "error")
@@ -1511,10 +1516,11 @@ class FaceIDPage(QWidget):
         self.state_badge.setText("Tasdiqlangan")
         self.state_badge.setStyleSheet(badge_style("success"))
         self.message.show_message(
-            "Yuz tasdiqlangan, sessiya ochiq — qayta tekshirish kerak emas. "
-            "Kamera tekshiruvi talab qilinsa «Kamerani tekshirish» ni, "
-            "nosozlik tuzatilgan bo'lsa «Imtihonni boshlash» ni bosing.",
+            "Qayta tekshirish kerak emas. Kamera tekshiruvi talab qilinsa "
+            "«Kamerani tekshirish» ni, nosozlik tuzatilgan bo'lsa "
+            "«Imtihonni boshlash» ni bosing.",
             "info",
+            title="Yuz tasdiqlangan, sessiya ochiq",
         )
         self._guide_timer.stop()
         self._guide_state = "done"

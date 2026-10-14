@@ -45,7 +45,8 @@ from ui.styles import (
     outlined_button_style,
     primary_button_style,
 )
-from ui.widgets.indicators import MessageBar, StateBadge
+from ui.widgets.indicators import StateBadge
+from ui.widgets.notice import Notice
 
 #: Server qabul qiladigan turlar (`TechnicalProblemReportSerializer`).
 #: Tartib ehtimollik bo'yicha: elektr va tarmoq eng ko'p uchraydi.
@@ -171,7 +172,7 @@ class TechnicalProblemDialog(CardDialog):
         )
         layout.addWidget(self.text_input)
 
-        self.message = MessageBar()
+        self.message = Notice()
         layout.addSpacing(10)
         layout.addWidget(self.message)
 

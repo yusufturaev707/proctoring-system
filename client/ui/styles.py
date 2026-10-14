@@ -814,21 +814,3 @@ def badge_style(kind: str = "success") -> str:
     """.format(bg=background, fg=color)
 
 
-def message_style(kind: str = "error") -> str:
-    """Forma ostidagi xabar qatori."""
-    mapping = {
-        "error": (COLORS["error_container"], COLORS["on_error_container"]),
-        "success": (COLORS["primary_container"], COLORS["on_primary_container"]),
-        "warning": (COLORS["warning_container"], COLORS["on_warning_container"]),
-        "info": (COLORS["tertiary_container"], COLORS["on_tertiary_container"]),
-    }
-    background, color = mapping.get(kind, mapping["error"])
-    return """
-        background-color: {bg};
-        color: {fg};
-        border: none;
-        border-radius: 12px;
-        padding: 12px 16px;
-        font-size: 14px;
-        font-weight: 600;
-    """.format(bg=background, fg=color)

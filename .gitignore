@@ -7,6 +7,15 @@ Thumbs.db
 Desktop.ini
 .DS_Store
 
+# Kod imzolash sertifikatlari (`client/tools/create_codesign_cert.ps1`).
+# .pfx - MAXFIY kalit: hech qachon repoga tushmasligi kerak (skript uni
+# repo ichiga yozishni o'zi ham rad etadi). .cer ochiq kalit, lekin u
+# tarqatish artefakti - har sertifikat yangilanganda o'zgaradi va GPO /
+# fayl serveri orqali beriladi (`client/docs/CODESIGN.md`).
+*.pfx
+*.p12
+*.cer
+
 # IDE
 .idea/
 .vscode/

@@ -90,6 +90,8 @@ manzili — BUILD paytida»); faqat `.exe` yig'ishga u kerak emas.
 | `-NoCheckExe` | `ProctoringClientCheck.exe` siz |
 | `-EnvFile <yo'l>` | o'rnatuvchiga joylanadigan `.env` (standart `installer\client.env`) |
 | `-SignAllUnsigned` | imzolashda `_internal` dagi imzosiz `.dll/.pyd/.exe` ni ham imzolash (faqat `SIGN_CERT_THUMBPRINT` bilan) |
+| `-RequireSign` | reliz build: `SIGN_CERT_THUMBPRINT` bo'lmasa build boshlanmaydi (`docs\CODESIGN.md`) |
+| `-NoCertTrust` | o'rnatuvchi self-signed sertifikatni mashina omborlariga (Root, TrustedPublisher) qo'shmasin — ishonch GPO orqali tarqatilsa |
 
 ### Server manzili — BUILD paytida
 
@@ -369,21 +371,28 @@ haqida ogohlantiradi.
 ## Kod imzosi va antivirus
 
 Imzo ixtiyoriy va muhit o'zgaruvchisi bilan yoqiladi (sertifikat/parol
-skriptda va git'da yo'q):
+skriptda va git'da yo'q). Self-signed sertifikatni yaratish, mijozlarga
+tarqatish (qo'lda / GPO) va yangilash — `docs\CODESIGN.md`.
 
 ```powershell
+# bir marta: tools\create_codesign_cert.ps1 -TrustOnThisMachine   (izni chiqaradi)
 $env:SIGN_CERT_THUMBPRINT = "<sertifikat izi>"          # CurrentUser\My (EV token ham)
 # $env:SIGN_MACHINE_STORE = "1"                          # LocalMachine\My
 # $env:SIGN_TIMESTAMP_URL = "http://timestamp.digicert.com"
-# $env:SIGNTOOL_PATH = "C:\...\signtool.exe"           # standart: Windows Kits\10\bin\*\x64
-powershell -ExecutionPolicy Bypass -File installer\build.ps1 -Gpu [-SignAllUnsigned]
+# $env:SIGNTOOL_PATH = "C:\...\signtool.exe"           # standart: eng yangi Windows Kits\10\bin\<ver>\x64
+powershell -ExecutionPolicy Bypass -File installer\build.ps1 -Gpu -RequireSign [-SignAllUnsigned]
 ```
 
 Imzolanadi: `ProctoringClient.exe`, `ProctoringClientCheck.exe`
 (tutun tekshiruvidan OLDIN), `-SignAllUnsigned` bilan `_internal` dagi
 imzosiz modullar, `setup.exe` va uninstaller (ISCC `SignTool=`,
 `SignedUninstaller=yes`). Har fayl `signtool verify /pa` dan o'tadi.
-Iz berilmasa — hech narsa qilinmaydi (sariq ogohlantirish).
+Iz berilmasa — hech narsa qilinmaydi (sariq ogohlantirish);
+`-RequireSign` bilan esa build umuman boshlanmaydi.
+
+Imzolash BITTA skriptda — `tools\sign.ps1`: build ham, Inno Setup'ning
+`SignTool=` ham uni chaqiradi. U iz bo'lmasa TO'XTAYDI (jimgina o'tkazmaydi),
+signtool'ni o'zi topadi, vaqt tamg'asi serveriga 3 marta urinadi.
 
 Tavsiyalar (false-positive'ni kamaytiradi):
 

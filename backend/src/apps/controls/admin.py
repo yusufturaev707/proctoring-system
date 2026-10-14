@@ -86,6 +86,7 @@ class SettingAdmin(admin.ModelAdmin):
                 )
             },
         ),
+        ("Kompyuter broni", {"fields": ("is_booking",)}),
         (
             "Tarmoq",
             {"fields": ("heartbeat_interval", "event_batch_interval", "offline_buffer_size")},

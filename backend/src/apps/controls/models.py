@@ -524,6 +524,29 @@ class Setting(SoftDeleteModel):
         _("Yo'q qilinmagan tahdid imtihonni to'sadi"), default=True,
     )
 
+    # --- Kompyuter broni (`apps/exams/bookings.py`) ---
+    # IMTIHON QOIDASI, shuning uchun profilda: bir binoda bir kuni
+    # oldindan joylashtiriladigan imtihon ham, "kelgan talabgor bo'sh
+    # stolga o'tiradi" imtihoni ham bo'ladi.
+    #
+    #   True  - talabgor OLDINDAN biriktirilgan kompyuterda (panel,
+    #           tashqi API); bron yuritilmagan sessiyada tekshiruv
+    #           o'chiq (`bookings_enforced`) - avvalgi xulq;
+    #   False - erkin joylashuv: sessiyaga kiritilgan istalgan bo'sh
+    #           ishchi kompyuter, joy `proctoring/start/` da o'sha
+    #           kompyuterga AVTOMATIK yoziladi; bo'shatish - bir xil.
+    #
+    # Standart `True`: yangi maydon mavjud o'rnatishlarning xulqini
+    # o'zgartirmasligi kerak (False sessiyaga kiritilmagan stollarni
+    # yopardi).
+    is_booking = models.BooleanField(
+        _("Kompyuterga oldindan biriktirish"), default=True,
+        help_text=_(
+            "O'chiq bo'lsa talabgor test sessiyasiga kiritilgan istalgan bo'sh "
+            "kompyuterda topshiradi va test boshlanganda o'sha kompyuterga biriktiriladi"
+        ),
+    )
+
     # --- Texnik muammolar ---
     is_enable_check_tp = models.BooleanField(_("Texnik muammoni tekshirish"), default=True)
 

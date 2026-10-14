@@ -8,7 +8,8 @@
       2. onnxruntime paketi nashrga mosligini tekshirish (GPU -> provayder DLL);
       3. PyInstaller spec -> dist\<nashr>\ProctoringClient\;
          3a. models_manifest.json (.exe yonida, model yaxlitligi);
-         3b. kod imzosi - faqat SIGN_CERT_THUMBPRINT berilganda;
+         3b. kod imzosi - SIGN_CERT_THUMBPRINT berilganda (tools\sign.ps1;
+             -RequireSign bilan izsiz build boshlanmaydi);
       4. ProctoringClientCheck.exe bilan tutun tekshiruvi (-SkipSmoke o'chiradi);
       5. Inno Setup (ISCC.exe) topilsa -> dist\installer\ProctoringClientSetup-<ver>-<nashr>.exe
          (imzo bilan: setup.exe va uninstaller ham ISCC ichida imzolanadi)
@@ -69,7 +70,16 @@ param(
 
     # Imzolashda _internal dagi IMZOSIZ PE fayllarni (.dll/.pyd/.exe) ham
     # imzolash. Faqat SIGN_CERT_THUMBPRINT berilganda ishlaydi.
-    [switch]$SignAllUnsigned
+    [switch]$SignAllUnsigned,
+
+    # O'rnatuvchi imzolovchi self-signed sertifikatni mashina omborlariga
+    # (Root, TrustedPublisher) QO'SHMASIN - ishonch GPO orqali tarqatilsa.
+    [switch]$NoCertTrust,
+
+    # Reliz build: SIGN_CERT_THUMBPRINT bo'lmasa build BOSHLANMAYDI.
+    # Usiz iz yo'qligi faqat sariq ogohlantirish va imzosiz o'rnatuvchi
+    # 20 daqiqalik build oxirida jimgina tarqatishga ketishi mumkin edi.
+    [switch]$RequireSign
 )
 
 $ErrorActionPreference = "Stop"
@@ -86,62 +96,37 @@ function Fail([string]$Text) {
 }
 
 # --------------------------------------------------------------------------
-# Kod imzosi (ixtiyoriy)
+# Kod imzosi (ixtiyoriy) - bajaruvchi tools\sign.ps1
 # --------------------------------------------------------------------------
-# Sertifikat berilmasa HECH NARSA qilinmaydi (dev va sinov build'lari).
-# Muhit o'zgaruvchilari - parol yoki kalit fayli skriptda/git'da emas:
-#   SIGN_CERT_THUMBPRINT  sertifikat izi (CurrentUser\My; EV token ham shu yerda ko'rinadi)
-#   SIGN_MACHINE_STORE=1  sertifikat LocalMachine\My da
-#   SIGN_TIMESTAMP_URL    RFC 3161 server (standart http://timestamp.digicert.com)
-#   SIGNTOOL_PATH         signtool.exe (standart: eng yangi Windows Kits\10\bin\*\x64)
-# Vaqt tamg'asi MAJBURIY: usiz imzo sertifikat muddati tugashi bilan
-# yaroqsiz bo'ladi va 500 mashinadagi client bir kunda "noma'lum nashriyot"
-# ga aylanadi.
+# Sertifikat berilmasa HECH NARSA qilinmaydi (dev va sinov build'lari);
+# -RequireSign bunga yo'l qo'ymaydi. Muhit o'zgaruvchilari va signtool'ni
+# topish - sign.ps1 da (SIGN_CERT_THUMBPRINT, SIGN_MACHINE_STORE,
+# SIGN_TIMESTAMP_URL, SIGNTOOL_PATH). Parol va kalit fayli skriptda/git'da
+# yo'q: kalit sertifikat omborida.
+#
+# Imzolash BITTA joyda: .exe/modullar ham, ISCC (setup.exe + uninstaller)
+# ham sign.ps1 ni chaqiradi - signtool argumentlari (vaqt tamg'asi!) ikki
+# nusxada yashab, bir-biridan ajralib ketmasligi uchun.
 $SignThumbprint = ""
 if ($env:SIGN_CERT_THUMBPRINT) { $SignThumbprint = ($env:SIGN_CERT_THUMBPRINT -replace "[^0-9A-Fa-f]", "") }
-$SignTimestamp = "http://timestamp.digicert.com"
-if ($env:SIGN_TIMESTAMP_URL) { $SignTimestamp = $env:SIGN_TIMESTAMP_URL }
-$SignTool = $null
+$SignScript = Join-Path (Split-Path -Parent $PSScriptRoot) "tools\sign.ps1"
 
-function Resolve-SignTool {
-    if ($env:SIGNTOOL_PATH) {
-        if (Test-Path $env:SIGNTOOL_PATH) { return $env:SIGNTOOL_PATH }
-        Fail ("SIGNTOOL_PATH topilmadi: " + $env:SIGNTOOL_PATH)
-    }
-    $kits = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\bin"
-    if (Test-Path $kits) {
-        $found = Get-ChildItem -Path $kits -Filter signtool.exe -Recurse -ErrorAction SilentlyContinue |
-            Where-Object { $_.Directory.Name -eq "x64" } |
-            Sort-Object { $_.Directory.Parent.Name } -Descending |
-            Select-Object -First 1
-        if ($found) { return $found.FullName }
-    }
-    $cmd = Get-Command "signtool.exe" -ErrorAction SilentlyContinue
-    if ($cmd) { return $cmd.Source }
-    Fail "SIGN_CERT_THUMBPRINT berilgan, lekin signtool.exe topilmadi (Windows SDK yoki SIGNTOOL_PATH)."
+if ($RequireSign -and -not $SignThumbprint) {
+    Fail ("-RequireSign: SIGN_CERT_THUMBPRINT o'rnatilmagan - build boshlanmadi.`n" +
+          "  Sertifikat: tools\create_codesign_cert.ps1, batafsil docs\CODESIGN.md")
+}
+if ($SignThumbprint -and -not (Test-Path -LiteralPath $SignScript)) {
+    Fail ("Imzolash skripti topilmadi: " + $SignScript)
 }
 
-function Get-SignArgs {
-    $a = @("sign", "/sha1", $SignThumbprint, "/fd", "sha256", "/tr", $SignTimestamp, "/td", "sha256")
-    if ($env:SIGN_MACHINE_STORE -eq "1") { $a += "/sm" }
-    return $a
-}
-
-function Invoke-CodeSign([string[]]$Paths, [string]$What) {
+function Invoke-CodeSign([string[]]$Paths, [string]$What, [switch]$Quiet) {
     if (-not $SignThumbprint) { return }
     if (-not $Paths -or $Paths.Count -eq 0) { return }
-    if (-not $script:SignTool) { $script:SignTool = Resolve-SignTool }
     Write-Host ("Imzolash: " + $What + " (" + $Paths.Count + " fayl)")
-    # Bir chaqiruvda ko'p fayl - vaqt tamg'asi serveriga kamroq murojaat,
-    # lekin buyruq satri ~32K bilan cheklangan: 50 tadan bo'lamiz.
-    $signArgs = @(Get-SignArgs)
-    for ($i = 0; $i -lt $Paths.Count; $i += 50) {
-        $chunk = @($Paths[$i..([Math]::Min($i + 49, $Paths.Count - 1))])
-        & $script:SignTool @signArgs /d "Proctoring Client" @chunk
-        if ($LASTEXITCODE -ne 0) { Fail ("signtool sign yiqildi (" + $What + ")") }
-        & $script:SignTool verify /pa /q @chunk
-        if ($LASTEXITCODE -ne 0) { Fail ("signtool verify yiqildi (" + $What + ")") }
-    }
+    $signArgs = @{ Path = $Paths; Description = "Proctoring Client" }
+    if ($Quiet) { $signArgs["QuietVerify"] = $true }
+    & $SignScript @signArgs
+    if ($LASTEXITCODE -ne 0) { Fail ("Kod imzosi yiqildi (" + $What + ")") }
 }
 
 # --------------------------------------------------------------------------
@@ -355,7 +340,8 @@ if ($SignThumbprint) {
         $unsigned = @(Get-ChildItem -Path (Join-Path $AppDir "_internal") -Recurse -File -Include *.dll, *.pyd, *.exe |
             Where-Object { (Get-AuthenticodeSignature -FilePath $_.FullName).Status -eq "NotSigned" } |
             ForEach-Object { $_.FullName })
-        Invoke-CodeSign $unsigned "_internal dagi imzosiz modullar"
+        # Yuzlab fayl: `verify /v` logni har fayl uchun o'nlab qatorga to'ldirardi.
+        Invoke-CodeSign $unsigned "_internal dagi imzosiz modullar" -Quiet
     }
 } else {
     Write-Host ""
@@ -451,16 +437,39 @@ if (Test-Path $redist) {
     Write-Host "  https://aka.ms/vs/17/release/vc_redist.x64.exe (README, 'VC++ runtime')" -ForegroundColor Yellow
 }
 if ($SignThumbprint) {
-    # setup.exe VA uninstaller'ni (unins000.exe) ISCC o'zi imzolaydi:
-    # uninstaller build paytida emas, ISCC ichida yasaladi, ya'ni uni
-    # keyin tashqaridan imzolab bo'lmaydi. `$f` / `$q` - ISCC o'rinbosarlari.
-    if (-not $SignTool) { $SignTool = Resolve-SignTool }
-    $storeFlag = ""
-    if ($env:SIGN_MACHINE_STORE -eq "1") { $storeFlag = " /sm" }
-    $signCmd = '$q' + $SignTool + '$q sign /sha1 ' + $SignThumbprint + ' /fd sha256 /tr ' + $SignTimestamp +
-               ' /td sha256' + $storeFlag + ' /d $qProctoring Client$q $f'
+    # setup.exe VA uninstaller'ni (unins000.exe) ISCC o'zi imzolaydi
+    # (`SignTool=`, proctoring_client.iss): uninstaller build paytida emas,
+    # ISCC ichida yasaladi, ya'ni uni keyin tashqaridan imzolab bo'lmaydi.
+    # Buyruq - o'sha sign.ps1 (iz ISCC jarayoniga muhit orqali o'tadi).
+    # `$f` (qo'shtirnoqli fayl nomi) / `$q` - ISCC o'rinbosarlari.
+    $signCmd = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File $q' + $SignScript +
+               '$q -Description $qProctoring Client$q -Path $f'
     $isccArgs += ("/Sproctoringsign=" + $signCmd)
     $isccArgs += "/DSignToolName=proctoringsign"
+
+    # Imzolovchi sertifikatning OCHIQ qismi o'rnatuvchiga: u har mashinada
+    # uni Root/TrustedPublisher ga qo'shadi (proctoring_client.iss,
+    # TrustCodeSignCert) - domen/GPO'siz mashinalarda ham imzo "Valid".
+    # `-Type CERT` - faqat ochiq kalit; maxfiy kalit ombordan chiqmaydi.
+    # Sertifikat yangilansa yangi reliz yangisini o'zi olib boradi.
+    if (-not $NoCertTrust) {
+        $certStore = "CurrentUser"
+        if ($env:SIGN_MACHINE_STORE -eq "1") { $certStore = "LocalMachine" }
+        $signCert = Get-Item -Path ("Cert:\" + $certStore + "\My\" + $SignThumbprint) -ErrorAction SilentlyContinue
+        if (-not $signCert) {
+            Fail ("Imzolovchi sertifikat omborda topilmadi: " + $SignThumbprint)
+        }
+        if ($signCert.Subject -eq $signCert.Issuer) {
+            $cerOut = Join-Path $WorkDir "bba-codesign.cer"
+            Export-Certificate -Cert $signCert -FilePath $cerOut -Type CERT | Out-Null
+            $isccArgs += ("/DCodeSignCert=" + $cerOut)
+            Write-Host ("O'rnatuvchi sertifikatni mashina omboriga qo'shadi: " + $signCert.Subject)
+        } else {
+            # CA bergan (OV/EV) sertifikat ILDIZ emas - Root'ga qo'yish
+            # noto'g'ri; uning ildizi Windows'da allaqachon bor.
+            Write-Host "Sertifikat CA tomonidan berilgan - o'rnatuvchi uni ombor(lar)ga qo'shmaydi."
+        }
+    }
 }
 $isccArgs += $Iss
 
@@ -485,7 +494,9 @@ $elapsed = (Get-Date) - $started
 $setup = Join-Path $InstallerOut ("ProctoringClientSetup-" + $Version + "-" + $Variant + ".exe")
 if (Test-Path $setup) {
     if ($SignThumbprint) {
-        & $SignTool verify /pa /q $setup
+        # Tayyor fayl ustida yakuniy tekshiruv: ISCC imzodan keyin faylni
+        # o'zgartirgan bo'lsa (yoki imzolash jimgina o'tkazilgan bo'lsa) shu ushlaydi.
+        & $SignScript -VerifyOnly -Path $setup
         if ($LASTEXITCODE -ne 0) { Fail ("setup.exe imzosi tekshiruvdan o'tmadi: " + $setup) }
         Write-Host "setup.exe imzolangan va tekshirildi."
     }

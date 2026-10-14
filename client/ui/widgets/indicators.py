@@ -4,8 +4,12 @@ Holat indikatorlari: status pill, busy overlay va xabar qatori.
 Ular "kutish" holatini har xil miqyosda ko'rsatadi:
     StatusPill      - fon jarayoni (model yuklanmoqda), oqimni to'smaydi
     BusyOverlay     - sahifani to'sadi (API so'rovi ketyapti)
-    MessageBar      - natija/xato matni (LAYOUTDA turadi)
     Snackbar        - o'tkinchi xabar, layoutga tegmaydi va o'zi yo'qoladi
+
+Forma ostidagi natija/xato xabari ham bu yerda emas — u MD3 tonal blok
+(`ui/widgets/notice.py:Notice`, ikonka + sarlavha + matn). Ilgari bu yerda
+`MessageBar` (markazlashgan bitta yorliq) bor edi va uni qaytarmang:
+sahifalarda ikki xil ko'rinish paydo bo'lardi.
 
 Proktorning ARALASHUVI bu yerda emas: u alohida oyna
 (`ui/dialogs/warning_dialog.py`). Sabab o'sha faylning izohida -
@@ -19,7 +23,7 @@ from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer
 from PyQt6.QtGui import QBrush, QColor, QFont, QPainter, QPen
 from PyQt6.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
 
-from ui.styles import COLORS, message_style
+from ui.styles import COLORS
 
 
 class StatusPill(QWidget):
@@ -291,60 +295,6 @@ class BusyOverlay(QWidget):
         painter.end()
 
 
-class MessageBar(QLabel):
-    """
-    Xato/muvaffaqiyat xabari. Bo'sh bo'lsa joy egallamaydi.
-
-    BALANDLIGINI O'ZI HISOBLAYDI (`_fit`). O'raladigan `QLabel` layout'ga
-    BIR QATORLIK balandlik aytadi: login kartasida uch qatorli xabar
-    ("IP manzilga ruxsat yo'q...") 50 px ga siqilib, yarmi
-    ko'rinmay qolardi - operator nima qilishni o'qiy olmasdi. Endi
-    minimal balandlik haqiqiy kenglikdagi `heightForWidth` ga teng va
-    karta xabar sig'guncha o'sadi.
-    """
-
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self.setWordWrap(True)
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        policy = self.sizePolicy()
-        policy.setHeightForWidth(True)
-        self.setSizePolicy(policy)
-        self.hide()
-
-    def show_message(self, text: str, kind: str = "error") -> None:
-        if not text:
-            self.clear_message()
-            return
-        self.setText(text)
-        self.setStyleSheet(message_style(kind))
-        self.show()
-        self._fit()
-
-    def clear_message(self) -> None:
-        self.setText("")
-        self.setMinimumHeight(0)
-        self.hide()
-
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        # Kenglik layout'da aniqlangach - balandlik shu kenglik bo'yicha.
-        self._fit()
-
-    def _fit(self) -> None:
-        if not self.text():
-            return
-        width = self.width()
-        if width <= 1 and self.parentWidget() is not None:
-            # Hali joylashtirilmagan: ota kenglikdan (chetlarsiz) taxmin.
-            width = self.parentWidget().contentsRect().width()
-        needed = self.heightForWidth(max(1, width))
-        # `heightForWidth` bo'sh/o'lchanmagan yorliqda -1 qaytaradi -
-        # `setMinimumHeight(-1)` Qt'da "Negative sizes" ogohlantirishi.
-        if needed > 0 and needed != self.minimumHeight():
-            self.setMinimumHeight(needed)
-
-
 #: Snackbar jiddiylik urg'usi - chap chetdagi chiziq rangi.
 #:
 #: MD3 snackbar BITTA rangda (`inverse_surface`): test sahifasi ustida
@@ -365,7 +315,7 @@ class Snackbar(QFrame):
     """
     Suzuvchi o'tkinchi xabar (MD3 snackbar). LAYOUTGA TEGMAYDI.
 
-    NIMA UCHUN `MessageBar` YETMAYDI. U layoutning qismi, ya'ni
+    NIMA UCHUN `Notice` YETMAYDI. U layoutning qismi, ya'ni
     ko'ringanda ostidagi hamma narsani PASTGA suradi. Imtihon
     sahifasida ostida `QWebEngineView` turadi va natija ko'rinadigan
     nosozlik edi: "Muammo qayd etildi" degan xabar butun test

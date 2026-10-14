@@ -85,6 +85,12 @@ _WATCHDOG_MAX_RESPAWNS = 5
 #: Stack indeksi -> `state.json` dagi `stage` (PAGE_* tartibida).
 _STAGES = ("login", "exam_select", "candidate", "faceid", "exam")
 
+#: `proctoring/start/` ning joy bo'yicha rad javoblari (erkin joylashuv:
+#: joy test boshlanishida yoziladi - `exams/bookings.py:claim_for_session`).
+_SEAT_START_CODES = frozenset(
+    {"computer_busy", "computer_out_of_service", "computer_not_in_schedule", "wrong_computer"}
+)
+
 
 class _SelfCheckBridge(QObject):
     """Fon thread'idagi self-check natijasini asosiy thread'ga olib o'tadi."""
@@ -494,7 +500,15 @@ class MainWindow(QMainWindow):
         # Avval sahifa, keyin xabar (`show()`, `exec()` EMAS): ilgari
         # `QMessageBox` yopilguncha FaceID sahifasi ochilmasdi.
         self._go_to_faceid()
-        if code == "webview_unavailable":
+        if code in _SEAT_START_CODES:
+            # Erkin joylashuv: joy test boshlanishida yoziladi va JSHSHIR
+            # tekshiruvidan beri stol band qilingan/buzilgan bo'lishi
+            # mumkin - kamera maslahati bu yerda noto'g'ri.
+            title = "Joy biriktirilmadi"
+            advice = ("Yuz tasdig'i saqlanadi. Administrator joyni to'g'rilagach "
+                      "imtihonni qayta boshlang yoki «Boshqa talabgor» bilan yopib, "
+                      "talabgorni bo'sh kompyuterga o'tkazing.")
+        elif code == "webview_unavailable":
             # Kamera emas, brauzer komponenti (QtWebEngine) ochilmadi -
             # "kamerani tekshiring" maslahati operatorni adashtirardi.
             title = "Test sahifasi ochilmadi"

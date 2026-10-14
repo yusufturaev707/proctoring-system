@@ -145,13 +145,17 @@ class ExamScheduleSerializer(serializers.ModelSerializer):
     region = serializers.IntegerField(source="zone.region_id", read_only=True, default=None)
     region_name = serializers.CharField(source="zone.region.name", read_only=True, default="")
     is_open = serializers.SerializerMethodField()
+    #: Imtihon profilidagi `Setting.is_booking` - FAQAT O'QISH. Bronlar
+    #: sahifasi rejimni aytadi: erkin joylashuvda bron jadvali bo'sh
+    #: turishi normal holat (joylar test boshlanganda o'zi to'ladi).
+    booking_required = serializers.SerializerMethodField()
 
     class Meta:
         model = ExamSchedule
         fields = (
             "id", "exam", "exam_name", "zone", "zone_name", "region", "region_name", "exam_date",
             "starts_at", "ends_at", "checkin_lead_minutes", "is_active",
-            "is_open", "created_at", "deleted_at",
+            "is_open", "booking_required", "created_at", "deleted_at",
         )
         read_only_fields = ("id", "created_at", "deleted_at")
 
@@ -164,6 +168,14 @@ class ExamScheduleSerializer(serializers.ModelSerializer):
         haqiqiy ruxsat har doim mos keladi.
         """
         return obj.is_open()
+
+    def get_booking_required(self, obj) -> bool:
+        # Server qarori bilan BITTA manba (`session.lookup_candidate`):
+        # keshlangan profil, imtihonda sozlama bo'lmasa - global standart.
+        from apps.controls import services as controls_services
+
+        config = controls_services.get_client_config(obj.exam)
+        return bool((config.get("booking") or {}).get("required", True))
 
     def validate(self, attrs):
         starts_at = attrs.get("starts_at") or getattr(self.instance, "starts_at", None)
@@ -308,3 +320,27 @@ class BookingBulkAssignSerializer(serializers.Serializer):
 class BookingGenerateSerializer(serializers.Serializer):
     schedule = BookingScheduleField()
     zone = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+
+
+class SessionComputersSerializer(serializers.Serializer):
+    """
+    `zone-computers/` (POST) — bino kompyuterlarini sessiyaga qo'shish/olish.
+
+    `zone` MAJBURIY: oyna bitta binoda ishlaydi va o'chirish ham shu bino
+    bilan cheklanadi — boshqa binoning ID'si tasodifan kelib qolsa u
+    yerdagi joy o'chib ketmasligi kerak.
+    """
+
+    schedule = BookingScheduleField()
+    zone = serializers.IntegerField(min_value=1)
+    add = serializers.ListField(
+        child=serializers.IntegerField(min_value=1), required=False, default=list, max_length=2000
+    )
+    remove = serializers.ListField(
+        child=serializers.IntegerField(min_value=1), required=False, default=list, max_length=2000
+    )
+
+    def validate(self, attrs):
+        if not attrs["add"] and not attrs["remove"]:
+            raise serializers.ValidationError("O'zgarish yo'q — kompyuter tanlanmagan")
+        return attrs

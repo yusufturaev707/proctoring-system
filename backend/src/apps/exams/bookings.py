@@ -11,12 +11,28 @@ Qoida ikki joyda yashasa (masalan panel "bo'sh" deb ko'rsatgan joyga
 API "band" deb javob bersa) administrator qaysi biriga ishonishni
 bilmasdi — shuning uchun hammasi shu modulda.
 
-BRON IXTIYORIY va u sessiya darajasida yoqiladi: test sessiyasida
-birorta ham talabgor biriktirilmagan bo'lsa JSHSHIR tekshiruvi bronga
-qaramaydi (`bookings_enforced`). Bu `ExamSchedule` dagi "jadval
-tuzilmagan = tekshiruv o'chirilgan" qoidasi bilan bir xil: yangi
-imkoniyat mavjud o'rnatishlarni to'xtatib qo'ymasligi kerak.
-`REQUIRE_COMPUTER_BOOKING=true` bu yumshoqlikni o'chiradi.
+IKKI REJIM — imtihon profilida (`Setting.is_booking`):
+
+    bron (True)             - talabgor OLDINDAN biriktirilgan kompyuterda.
+                              Bron sessiya darajasida yoqiladi: birorta
+                              ham talabgor biriktirilmagan bo'lsa JSHSHIR
+                              tekshiruvi bronga qaramaydi
+                              (`bookings_enforced`) - `ExamSchedule` dagi
+                              "jadval tuzilmagan = tekshiruv o'chiq"
+                              qoidasi bilan bir xil.
+                              `REQUIRE_COMPUTER_BOOKING=true` bu
+                              yumshoqlikni o'chiradi;
+    erkin joylashuv (False) - talabgor sessiyaga KIRITILGAN (joyi
+                              yig'ilgan) istalgan bo'sh ishchi kompyuterda.
+                              Joy `proctoring/start/` da o'sha kompyuterga
+                              avtomatik yoziladi (`claim_for_session`) va
+                              shundan keyin hammasi bron rejimidagidek:
+                              o'sha stolga bog'langan, bo'shatish
+                              (`release_after_session`) bir xil.
+
+Erkin rejim bron rejimining USTIGA qurilgan, uning o'rnini bosmaydi:
+administrator oldindan biriktirgan talabgor u yerda ham o'z joyiga
+boradi, biriktirilgan joyni esa boshqa talabgor egallay olmaydi.
 """
 
 from __future__ import annotations
@@ -30,7 +46,12 @@ from django.db.models import F, Q
 from django.utils import timezone
 
 from apps.common.exceptions import (
+    CandidateAlreadyFinished,
+    ComputerBusy,
+    ComputerNotInSchedule,
+    ComputerOutOfService,
     DomainError,
+    ExamScheduleMissing,
     SeatInUse,
     SeatNotBooked,
     SeatOutOfService,
@@ -140,6 +161,168 @@ def generate_seats(schedule: ExamSchedule, *, region_id=None, zone_id=None) -> d
     return {"created": len(computers) - before, "total": len(computers)}
 
 
+#: Bitta so'rovda qo'shiladigan/olinadigan eng ko'p kompyuter (har biri
+#: alohida). Bino ~500 o'rinli; `SEATS_LIMIT` (2000) bilan bir xil chegara.
+SESSION_COMPUTERS_LIMIT = 2000
+
+#: Joyni sessiyadan olib bo'lmaslik sabablari — panel ularni matn bilan
+#: ko'rsatadi va kompyuterni "qulflangan" deb chizadi.
+LOCK_BOOKED = "booked"
+LOCK_USED = "used"
+LOCK_IN_EXAM = "in_exam"
+
+
+def _open_sessions_by_computer(schedule: ExamSchedule, computer_ids) -> set:
+    """Shu sessiyada OCHIQ imtihon ketayotgan kompyuterlar (ID to'plami)."""
+    from apps.proctoring.models import ExamSession
+
+    return set(
+        ExamSession.objects.filter(schedule=schedule, computer_id__in=list(computer_ids))
+        .exclude(status__in=ExamSession.TERMINAL_STATUSES)
+        .values_list("computer_id", flat=True)
+    )
+
+
+def _seat_lock(booking: ComputerBooking, open_computers: set) -> str:
+    """
+    Joyni sessiyadan OLIB BO'LMASLIK sababi yoki "".
+
+    `used` (talabgor shu joyda yakunlagan) ham to'siq: qator kim qayerda
+    o'tirganini bayonnomada isbotlaydi va `finished_count`
+    `bookings_enforced` ga kiradi — qator o'chsa oxirgi talabgorlardan
+    keyin bron tekshiruvi jimgina o'chishi mumkin edi. Ishlamaydigan
+    mashina uchun to'g'ri yo'l — «buzilgan» belgisi.
+
+    `in_exam` — erkin rejimda joy start'gacha band EMAS, lekin stolda
+    allaqachon FaceID'dan o'tgan talabgor o'tirishi mumkin: qator
+    o'chsa uning `proctoring/start/` i `computer_not_in_schedule` olardi.
+    """
+    if booking.is_booked:
+        return LOCK_BOOKED
+    if booking.computer_id in open_computers:
+        return LOCK_IN_EXAM
+    if booking.finished_count > 0:
+        return LOCK_USED
+    return ""
+
+
+def zone_computers(schedule: ExamSchedule, zone_id, *, region_id=None) -> dict:
+    """
+    Bino kompyuterlari va har birining SHU sessiyadagi holati.
+
+    Panelning «Kompyuterlarni biriktirish» oynasi uchun: chapda —
+    sessiyaga hali kiritilmagan ishchi (`Computer.is_active`)
+    kompyuterlar, o'ngda — kiritilganlar. Doira `schedule_computers`
+    bilan BITTA qoida: boshqa binodagi, hisobdan chiqarilgan yoki boshqa
+    viloyatdagi mashina ro'yxatga umuman tushmaydi.
+
+    Sessiyada turgan, lekin endi doiradan tashqaridagi joylar (mashina
+    hisobdan chiqarilgan) ham qaytariladi (`decommissioned`) — aks holda
+    ular hech qayerda ko'rinmay, xaritada "arvoh" bo'lib qolardi.
+    """
+    found = list(
+        schedule_computers(schedule, region_id=region_id, zone_id=zone_id)
+        .order_by(F("number").asc(nulls_last=True), "inventory_code")[: SESSION_COMPUTERS_LIMIT + 1]
+    )
+    computers = {computer.pk: computer for computer in found[:SESSION_COMPUTERS_LIMIT]}
+    seats_qs = ComputerBooking.objects.filter(
+        schedule=schedule, computer__zone_id=zone_id
+    ).select_related("computer__zone__region")
+    if region_id:
+        seats_qs = seats_qs.filter(computer__zone__region_id=region_id)
+    seats = {seat.computer_id: seat for seat in seats_qs}
+    open_computers = _open_sessions_by_computer(
+        schedule, [pk for pk, seat in seats.items() if not seat.is_booked]
+    )
+
+    rows = []
+    for pk in [*computers, *(pk for pk in seats if pk not in computers)]:
+        seat = seats.get(pk)
+        computer = computers.get(pk) or seat.computer
+        rows.append({
+            "computer": pk,
+            "number": computer.number,
+            "label": computer.label,
+            "inventory_code": computer.inventory_code,
+            "decommissioned": pk not in computers,
+            "seat": seat.pk if seat else None,
+            "seat_active": seat.is_active if seat else None,
+            "lock": _seat_lock(seat, open_computers) if seat else "",
+        })
+    return {"results": rows, "truncated": len(found) > SESSION_COMPUTERS_LIMIT}
+
+
+@transaction.atomic
+def update_session_computers(
+    schedule: ExamSchedule, zone_id, *, add=(), remove=(), region_id=None
+) -> dict:
+    """
+    Bino kompyuterlarini sessiyaga QO'LDA kiritadi va chiqaradi.
+
+    `generate_seats` dan farqi: u binoning HAMMA kompyuterini qo'shadi,
+    bu esa administrator tanlaganlarini. Zalda zaxira yoki boshqa
+    imtihonga ajratilgan mashinalar bo'ladi va erkin joylashuvda
+    sessiyaga kiritilgan har stol talabgor qabul qiladi.
+
+    Har kompyuter ALOHIDA baholanadi: doiradan tashqarisi va qulflangan
+    joy (`_seat_lock`) `skipped` ga tushadi, qolganlari bajariladi —
+    bitta band joy 40 ta to'g'ri tanlovni bekor qilmasligi kerak.
+    """
+    if not schedule.is_active or schedule.deleted_at is not None:
+        raise SeatUnavailable("Test sessiyasi faol emas")
+
+    add_ids = {int(pk) for pk in add}
+    remove_ids = {int(pk) for pk in remove} - add_ids
+    skipped = []
+
+    allowed = set(
+        schedule_computers(schedule, region_id=region_id, zone_id=zone_id)
+        .filter(pk__in=add_ids)
+        .values_list("pk", flat=True)
+    )
+    for pk in sorted(add_ids - allowed):
+        skipped.append({"computer": pk, "reason": "out_of_scope",
+                        "message": "Kompyuter bu binoda yoki sessiya doirasida emas"})
+    before = ComputerBooking.objects.filter(schedule=schedule, computer_id__in=allowed).count()
+    ComputerBooking.objects.bulk_create(
+        [ComputerBooking(schedule=schedule, computer_id=pk) for pk in sorted(allowed)],
+        ignore_conflicts=True,
+        batch_size=500,
+    )
+    added = len(allowed) - before
+
+    removed = 0
+    if remove_ids:
+        # Qulf: parallel `assign` yoki `claim_for_session` shu lahzada
+        # joyni band qilsa, o'chirish band qatorni olib ketmasligi kerak.
+        queryset = ComputerBooking.objects.filter(
+            schedule=schedule, computer_id__in=remove_ids, computer__zone_id=zone_id
+        )
+        if region_id:
+            queryset = queryset.filter(computer__zone__region_id=region_id)
+        rows = list(queryset.select_for_update(of=("self",)).select_related("computer"))
+        open_computers = _open_sessions_by_computer(schedule, [row.computer_id for row in rows])
+        deletable = []
+        for row in rows:
+            lock = _seat_lock(row, open_computers)
+            if lock:
+                skipped.append({"computer": row.computer_id, "reason": lock,
+                                "message": "«{}»: {}".format(row.computer.label, LOCK_MESSAGES[lock])})
+            else:
+                deletable.append(row.pk)
+        removed = ComputerBooking.objects.filter(pk__in=deletable).delete()[0]
+
+    return {"added": added, "removed": removed, "skipped": skipped}
+
+
+LOCK_MESSAGES = {
+    LOCK_BOOKED: "talabgor biriktirilgan — avval bo'shating yoki ko'chiring",
+    LOCK_USED: "bu joyda talabgor imtihon topshirgan — joy tarixi saqlanadi, "
+               "ishlatmaslik uchun «buzilgan» deb belgilang",
+    LOCK_IN_EXAM: "kompyuterda imtihon ketmoqda",
+}
+
+
 # --------------------------------------------------------------------------
 # Biriktirish / bo'shatish
 # --------------------------------------------------------------------------
@@ -161,7 +344,18 @@ def _next_free_seat(schedule: ExamSchedule, *, region_id=None, zone_id=None):
     Band qilingan qator o'tkazib yuboriladi va har so'rov o'z joyini
     oladi.
     """
-    generate_seats(schedule, region_id=region_id, zone_id=zone_id)
+    # Joylar faqat doirada BIRORTA HAM joy bo'lmasa yig'iladi (sessiyani
+    # hech kim tuzmagan — tashqi tizim to'g'ridan-to'g'ri biriktiryapti).
+    # Ilgari har chaqiruvda yig'ilardi va administrator QO'LDA tuzgan
+    # sessiyaga (`update_session_computers`) ataylab qoldirilgan zaxira
+    # mashinalarni ham qaytarib qo'shardi.
+    scope = ComputerBooking.objects.filter(schedule=schedule)
+    if zone_id:
+        scope = scope.filter(computer__zone_id=zone_id)
+    if region_id:
+        scope = scope.filter(computer__zone__region_id=region_id)
+    if not scope.exists():
+        generate_seats(schedule, region_id=region_id, zone_id=zone_id)
     queryset = ComputerBooking.objects.filter(
         schedule=schedule,
         is_booked=False,
@@ -471,12 +665,55 @@ def _physical_computer(zone_id, *, machine_uuid: str = "", mac_address: str = ""
     )
 
 
+def _machine_here(bound, zone_id, *, machine_uuid: str = "", mac_address: str = ""):
+    """
+    Client ishlab turgan kompyuter yozuvi yoki `None` (tanilmadi).
+
+    Client juftlik (yoki eski client MAC) yuborgan bo'lsa — jismoniy
+    mashina, FAQAT BINO ICHIDA (`devices.verify_machine` dagi bilan bir
+    xil savol: "shu mashina shu binoda bormi?"). Topilmasa qurilma
+    biriktiruviga tushiladi, lekin UUID yuborilgan bo'lsa EMAS: juftlik
+    bo'yicha tanilmagan mashina (masalan UUID mos, MAC boshqa)
+    biriktiruv orqali ham "shu stol" bo'lib qolmaydi — aks holda qo'shni
+    stolning bir xil UUID'li mashinasi o'tib ketardi.
+    """
+    if not (normalize_machine_uuid(machine_uuid) or normalize_mac(mac_address)):
+        return bound
+    physical = (
+        _physical_computer(zone_id, machine_uuid=machine_uuid, mac_address=mac_address)
+        if zone_id
+        else None
+    )
+    if physical is not None:
+        return physical
+    return None if normalize_machine_uuid(machine_uuid) else bound
+
+
+def _binding_mismatch(seat: dict, bound) -> DomainError:
+    """Talabgor to'g'ri stolda, lekin dastur boshqa kompyuterga biriktirilgan."""
+    error = DomainError(
+        "Talabgor to'g'ri kompyuterda ({}), lekin dastur «{}» kompyuteriga "
+        "biriktirilgan — administrator qurilmani qayta biriktirishi kerak".format(
+            seat["label"], bound.label
+        ),
+        code="device_binding_mismatch",
+        extra={"seat": seat, "current": computer_payload(bound)},
+    )
+    error.status_code = 409
+    return error
+
+
 def resolve_candidate_seat(
     *, schedule: ExamSchedule | None, pinfl: str, device=None,
-    machine_uuid: str = "", mac_address: str = "",
+    machine_uuid: str = "", mac_address: str = "", booking_required: bool = True,
 ) -> dict | None:
     """
-    Talabgor to'g'ri kompyuterdami. `None` — bron bu sessiyada yuritilmaydi.
+    Talabgor to'g'ri kompyuterdami. `None` — joy bu sessiyada yuritilmaydi.
+
+    `booking_required` — imtihon profilidagi `Setting.is_booking`.
+    Talabgorning broni bo'lsa ikkala rejimda BIR XIL qoida (pastda);
+    bronsiz talabgor bron rejimida rad etiladi, erkin rejimda esa
+    o'tirgan stoli tekshiriladi (`_free_seat`).
 
     "BU MASHINA" QANDAY ANIQLANADI. Client yuborgan (Machine UUID, MAC)
     juftligi — jismoniy mashina (talabgor aynan qaysi stolda o'tiribdi;
@@ -498,7 +735,18 @@ def resolve_candidate_seat(
     Tekshiruv TARTIBI: avval "buzilgan", keyin joylashuv — buzilgan
     joyga talabgorni yuborishdan foyda yo'q.
     """
-    if not bookings_enforced(schedule):
+    if schedule is None:
+        # Jadval tuzilmagan (`REQUIRE_EXAM_SCHEDULE=false`) — bron ham, joy
+        # ham test sessiyasiga bog'langan, ya'ni solishtiradigan narsa yo'q.
+        # Ilgari bu HAR DOIM "tekshiruv o'chiq" edi va `REQUIRE_COMPUTER_BOOKING
+        # =true` ham jimgina chetlab o'tilardi: jadvalsiz imtihonga talabgor
+        # istalgan stoldan kirardi. Endi faqat ikkala qoida yumshoq bo'lsa
+        # (bron rejimi, `REQUIRE_COMPUTER_BOOKING=false`) o'tkaziladi;
+        # erkin joylashuv esa sessiyaning joylarisiz umuman ishlay olmaydi.
+        if booking_required and not settings.PROCTORING.get("REQUIRE_COMPUTER_BOOKING"):
+            return None
+        raise ExamScheduleMissing()
+    if booking_required and not bookings_enforced(schedule):
         return None
 
     booking = (
@@ -507,33 +755,27 @@ def resolve_candidate_seat(
         .first()
     )
     if booking is None:
-        raise SeatNotBooked()
+        if booking_required:
+            raise SeatNotBooked()
+        return _free_seat(
+            schedule=schedule, pinfl=pinfl, device=device,
+            machine_uuid=machine_uuid, mac_address=mac_address,
+        )
 
     seat = computer_payload(booking.computer)
     if not booking.is_active:
         raise SeatOutOfService(extra={"seat": seat})
 
     bound = device.computer if device is not None else None
-    here = bound
-    if normalize_machine_uuid(machine_uuid) or normalize_mac(mac_address):
-        # FAQAT BINO ICHIDA qidiriladi — `devices.verify_machine` dagi
-        # bilan bir xil savol ("shu mashina shu binoda bormi?"). Bino —
-        # qurilmaniki; qurilma bo'lmasa (`REQUIRE_DEVICE_ID=false`) —
-        # talabgor joyiniki: boshqa binodagi mashina bu joy bo'la
-        # olmaydi, uni "bu mashina" deb ko'rsatish esa operatorga begona
-        # binoning kompyuterini aytardi.
-        zone_id = bound.zone_id if bound is not None else booking.computer.zone_id
-        physical = _physical_computer(
-            zone_id, machine_uuid=machine_uuid, mac_address=mac_address
-        )
-        if physical is not None:
-            here = physical
-        elif normalize_machine_uuid(machine_uuid):
-            # UUID yuborgan mashina juftlik bo'yicha tanilmadi (masalan
-            # UUID mos, MAC boshqa) - u biriktiruv orqali ham "shu stol"
-            # bo'lib QOLMAYDI: aks holda qo'shni stolning bir xil UUID'li
-            # mashinasi talabgorni o'tkazib yuborardi.
-            here = None
+    # Bino — qurilmaniki; qurilma bo'lmasa (`REQUIRE_DEVICE_ID=false`) —
+    # talabgor joyiniki: boshqa binodagi mashina bu joy bo'la olmaydi,
+    # uni "bu mashina" deb ko'rsatish esa operatorga begona binoning
+    # kompyuterini aytardi.
+    here = _machine_here(
+        bound,
+        bound.zone_id if bound is not None else booking.computer.zone_id,
+        machine_uuid=machine_uuid, mac_address=mac_address,
+    )
 
     if here is None or here.pk != booking.computer_id:
         current = computer_payload(here)
@@ -545,14 +787,174 @@ def resolve_candidate_seat(
         raise WrongComputer(message, extra={"seat": seat, "current": current})
 
     if bound is not None and bound.pk != booking.computer_id:
-        error = DomainError(
-            "Talabgor to'g'ri kompyuterda ({}), lekin dastur «{}» kompyuteriga "
-            "biriktirilgan — administrator qurilmani qayta biriktirishi kerak".format(
-                seat["label"], bound.label
-            ),
-            code="device_binding_mismatch",
-            extra={"seat": seat, "current": computer_payload(bound)},
-        )
-        error.status_code = 409
-        raise error
+        raise _binding_mismatch(seat, bound)
     return seat
+
+
+def candidate_finished_here(schedule: ExamSchedule, pinfl: str) -> bool:
+    """
+    Talabgorning shu sessiyadagi joyi YAKUN bilan bo'shatilganmi.
+
+    Iz sessiyada (`meta.seat_release`) — bron qatorida emas: bo'shagan
+    joy darhol keyingi talabgorga o'tadi va qatorda oldingi egasining
+    JSHSHIR'i qolmaydi.
+    """
+    from apps.proctoring.models import ExamSession
+
+    return ExamSession.objects.filter(
+        schedule_id=schedule.pk, pinfl=pinfl, meta__has_key="seat_release"
+    ).exists()
+
+
+def _free_seat(
+    *, schedule: ExamSchedule, pinfl: str, device=None,
+    machine_uuid: str = "", mac_address: str = "",
+) -> dict:
+    """
+    Erkin joylashuv: bronsiz talabgor O'TIRGAN stol yaroqlimi.
+
+    Qaytgan joy `auto_assign: True` belgisi bilan — u hali BAND
+    QILINMAGAN. Band qilish `proctoring/start/` da (`claim_for_session`):
+    FaceID'dan o'tolmagan yoki kamera darvozasida qolgan talabgor stolni
+    egallab qolmasligi kerak — aks holda shu stoldagi keyingi talabgor
+    "band" javobini olardi. Belgi sessiyaga muzlatiladi (`meta.seat`) va
+    start AYNAN shunga qaraydi: profil oraliqda o'zgarsa ham qaror bir
+    xil qoladi.
+
+    Tekshiruv TARTIBI operatorning keyingi qadami bo'yicha: avval
+    talabgorning o'zi (yakunlagan bo'lsa hech qaysi stol yordam
+    bermaydi), keyin stol (boshqa stolga o'tkazish), oxirida qurilma
+    biriktiruvi (administrator).
+    """
+    if candidate_finished_here(schedule, pinfl):
+        raise CandidateAlreadyFinished()
+
+    bound = device.computer if device is not None else None
+    zone_id = bound.zone_id if bound is not None else schedule.zone_id
+    here = _machine_here(bound, zone_id, machine_uuid=machine_uuid, mac_address=mac_address)
+    if here is None:
+        raise ComputerNotInSchedule(
+            "Bu mashina (Machine UUID va MAC) binoda ro'yxatda yo'q",
+            extra={"current": None},
+        )
+
+    seat = computer_payload(here)
+    row = (
+        ComputerBooking.objects.filter(schedule=schedule, computer=here)
+        .only("pk", "is_active", "is_booked", "pinfl")
+        .first()
+    )
+    # "BAZADA BOR" yetmaydi — stol SESSIYAGA KIRITILGAN bo'lishi shart
+    # (joyi yig'ilgan, `generate_seats`): administrator qaysi stollarda
+    # imtihon o'tishini o'zi belgilaydi. Hisobdan chiqarilgan mashina
+    # ham shu yerda to'xtaydi (avval yig'ilgan joyi qolgan bo'lsa ham).
+    if row is None or here.deleted_at is not None or not here.is_active:
+        raise ComputerNotInSchedule(
+            "«{}» kompyuteri bu test sessiyasiga kiritilmagan".format(seat["label"]),
+            extra={"current": seat},
+        )
+    if not row.is_active:
+        raise ComputerOutOfService(
+            "«{}» kompyuteri bu sessiyada buzilgan deb belgilangan".format(seat["label"]),
+            extra={"current": seat},
+        )
+    if row.is_booked:
+        # Bronda turgan joy egasiniki: oldindan biriktirilgan talabgor
+        # hali kelmagan, egasi imtihonda yoki uzilib qaytadi.
+        raise ComputerBusy(
+            "«{}» kompyuteri boshqa talabgorga biriktirilgan ({})".format(
+                seat["label"], mask_pinfl(row.pinfl)
+            ),
+            extra={"current": seat},
+        )
+    if bound is not None and bound.pk != here.pk:
+        raise _binding_mismatch(seat, bound)
+    return {**seat, "auto_assign": True}
+
+
+@transaction.atomic
+def claim_for_session(session) -> ComputerBooking | None:
+    """
+    Erkin joylashuv: talabgor o'tirgan kompyuterni UNGA yozadi.
+
+    `proctoring/start/` dan — kamera darvozasidan o'tgach, BITTA
+    tranzaksiyada kuzatuv bilan (joy olinmasa kuzatuv ham boshlanmaydi
+    va aksincha). Shundan keyin talabgor bron rejimidagidek shu stolga
+    bog'langan: bo'shatish — «Yakunlash» yoki chetlashtirish
+    (`release_after_session`), qolganlarida band qoladi.
+
+    `None` — sessiya erkin joylashuvdan emas (bron rejimi yoki jadvalsiz).
+
+    TAKRORIY CHAQIRUV XAVFSIZ: kamera qayta tekshirilib start yana
+    kelsa, joy allaqachon shu talabgorniki — o'sha qaytadi.
+
+    JSHSHIR tekshiruvidan beri vaziyat o'zgargan bo'lishi mumkin
+    (administrator stolni buzilgan deb belgiladi, joyni boshqaga berdi
+    yoki talabgorni boshqa joyga biriktirdi) — o'shanda rad etiladi va
+    sessiya tirik qoladi (kamera rad javobidagi kabi).
+    """
+    seat = (session.meta or {}).get("seat") or {}
+    if not seat.get("auto_assign") or not session.schedule_id or not session.pinfl:
+        return None
+    computer_id = seat.get("computer_id")
+    here = {key: value for key, value in seat.items() if key != "auto_assign"}
+
+    existing = (
+        ComputerBooking.objects.select_for_update(of=("self",))
+        .select_related("computer__zone__region")
+        .filter(schedule_id=session.schedule_id, pinfl=session.pinfl)
+        .first()
+    )
+    if existing is not None:
+        if existing.computer_id == computer_id:
+            return existing
+        target = computer_payload(existing.computer)
+        raise WrongComputer(
+            "Talabgor {} kompyuteriga biriktirilgan".format(_where(target)),
+            extra={"seat": target, "current": here},
+        )
+
+    target = (
+        ComputerBooking.objects.select_for_update(of=("self",))
+        .select_related("computer__zone__region")
+        .filter(schedule_id=session.schedule_id, computer_id=computer_id)
+        .first()
+    )
+    label = seat.get("label") or "Kompyuter"
+    if target is None:
+        raise ComputerNotInSchedule(
+            "«{}» kompyuteri test sessiyasidan chiqarilgan".format(label),
+            extra={"current": here},
+        )
+    if not target.is_active:
+        raise ComputerOutOfService(
+            "«{}» kompyuteri bu sessiyada buzilgan deb belgilangan".format(label),
+            extra={"current": here},
+        )
+    if target.is_booked:
+        raise ComputerBusy(
+            "«{}» kompyuteri boshqa talabgorga biriktirilgan ({})".format(
+                label, mask_pinfl(target.pinfl)
+            ),
+            extra={"current": here},
+        )
+
+    target.pinfl = session.pinfl
+    target.is_booked = True
+    target.booked_at = timezone.now()
+    # Biriktirgan xodim yo'q — tizimning o'zi (auditda `by: session_start`).
+    target.booked_by = None
+    try:
+        # Ichki savepoint: parallel so'rov shu JSHSHIR'ni bir lahza oldin
+        # boshqa joyga yozgan bo'lsa (`unique_booking_schedule_pinfl`)
+        # tashqi tranzaksiya buzilmasdan aniq javob qaytadi.
+        with transaction.atomic():
+            target.save(
+                update_fields=["pinfl", "is_booked", "booked_at", "booked_by", "updated_at"]
+            )
+    except IntegrityError as exc:
+        raise ComputerBusy(
+            "Joy parallel so'rovda band qilindi — JSHSHIR'ni qaytadan kiriting",
+            extra={"current": here},
+        ) from exc
+    return target

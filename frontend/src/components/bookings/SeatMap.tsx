@@ -632,13 +632,15 @@ function seatStyles(theme: Theme, size: SeatSize, rowWidth: number): SystemStyle
  * o'rindiqdan o'rindiqqa o'tganda zal (500 o'rindiq) qayta chizilmaydi.
  * Matn o'rindiqning `aria-label` idan — ekran o'quvchisi bilan bir manba.
  */
-function HoverTip({ containerRef }: { containerRef: RefObject<HTMLDivElement | null> }) {
+export function HoverTip({
+  containerRef, selector = '.seat',
+}: { containerRef: RefObject<HTMLDivElement | null>; selector?: string }) {
   const [tip, setTip] = useState<{ el: Element; text: string | null } | null>(null)
   useEffect(() => {
     const node = containerRef.current
     if (!node) return undefined
     const show = (event: Event) => {
-      const el = (event.target as Element | null)?.closest?.('.seat')
+      const el = (event.target as Element | null)?.closest?.(selector)
       setTip((prev) => {
         if (!el) return null
         return prev?.el === el ? prev : { el, text: el.getAttribute('aria-label') }
@@ -650,20 +652,29 @@ function HoverTip({ containerRef }: { containerRef: RefObject<HTMLDivElement | n
     node.addEventListener('mouseleave', hide)
     node.addEventListener('focusout', hide)
     node.addEventListener('scroll', hide, true)
+    // Tortish va ramka chizish paytida sichqoncha hodisalari kelmaydi —
+    // usiz tooltip eski joyida osilib qolardi (`SessionComputersDialog`).
+    node.addEventListener('dragstart', hide)
+    node.addEventListener('pointerdown', hide)
     return () => {
+      node.removeEventListener('dragstart', hide)
+      node.removeEventListener('pointerdown', hide)
       node.removeEventListener('mouseover', show)
       node.removeEventListener('focusin', show)
       node.removeEventListener('mouseleave', hide)
       node.removeEventListener('focusout', hide)
       node.removeEventListener('scroll', hide, true)
     }
-  }, [containerRef])
+  }, [containerRef, selector])
   // O'rindiq ro'yxatdan chiqib ketsa (bino almashdi) - tooltip osilib qolmasin.
   const open = Boolean(tip?.el.isConnected)
   return (
     <Tooltip
       open={open}
       title={tip?.text || ''}
+      // Interaktiv tooltip sichqonchani "ushlaydi": uzun matn pastdagi
+      // o'rindiqni yopib, uni bosib bo'lmasdi.
+      disableInteractive
       disableHoverListener
       disableFocusListener
       disableTouchListener

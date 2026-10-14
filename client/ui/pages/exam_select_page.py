@@ -54,7 +54,8 @@ from ui.dialogs.policy_dialog import PolicyDialog
 from ui.styles import primary_button_style
 from ui.widgets.camera_panel import CameraPanel
 from ui.widgets.header import WorkstationHeader, ip_chip_hints
-from ui.widgets.indicators import Card, MessageBar
+from ui.widgets.indicators import Card
+from ui.widgets.notice import Notice
 
 log = logging.getLogger(__name__)
 
@@ -170,7 +171,7 @@ class ExamSelectPage(QWidget):
         self.exam_combo.currentIndexChanged.connect(self._on_exam_changed)
         card.body.addWidget(self.exam_combo)
 
-        self.message = MessageBar()
+        self.message = Notice()
         card.body.addSpacing(6)
         card.body.addWidget(self.message)
 
@@ -240,7 +241,7 @@ class ExamSelectPage(QWidget):
         # Modal AYNAN shu yerda: operator tugmani bosib javob
         # kutmoqda va inline xabar ekranning pastida ko'zdan
         # qochishi mumkin. Sahifa ochilganda esa modal chiqmaydi —
-        # u yerda `MessageBar` va o'chirilgan tugma yetarli.
+        # u yerda xabar bloki (`Notice`) va o'chirilgan tugma yetarli.
         self._warn_if_machine_blocked()
 
     def _on_reload_failed(self, message: str, code: str) -> None:
@@ -251,7 +252,9 @@ class ExamSelectPage(QWidget):
         # tozalash operatorni ma'lumotsiz qoldirardi. Xabar esa
         # ma'lumot eskirgan bo'lishi mumkinligini aytadi.
         self.message.show_message(
-            "{} Ekrandagi ma'lumot eskirgan bo'lishi mumkin.".format(message), "error"
+            "{} Ekrandagi ma'lumot eskirgan bo'lishi mumkin.".format(message),
+            "error",
+            title="Ma'lumotlar yangilanmadi",
         )
 
     # ------------------------------------------------------------------
@@ -415,8 +418,12 @@ class ExamSelectPage(QWidget):
         self.camera_panel.set_exam(exam.id if exam is not None else None)
         self._update_continue_state()
 
-    def _on_check_completed(self, _result) -> None:
+    def _on_check_completed(self, result) -> None:
         """Tekshiruv natijasi 'Davom etish' xabarida ham aks etadi."""
+        # Bo'sh natija (tekshiruv yiqildi, rollar almashdi) serverdagi
+        # suratchaga TEGMAYDI - u o'z muddati bilan yashayveradi.
+        if result:
+            self._state.note_camera_check(result)
         self._update_continue_state()
 
     def preselect_exam(self, exam_id: int) -> bool:
@@ -465,9 +472,10 @@ class ExamSelectPage(QWidget):
 
         if not self._has_computer:
             self.message.show_message(
-                "Bu kompyuter bazada ro'yxatga olinmagan — imtihonni boshlab "
-                "bo'lmaydi. Administrator uni MAC manzili bilan qo'shishi kerak.",
+                "Imtihonni boshlab bo'lmaydi. Administrator uni MAC manzili "
+                "bilan qo'shishi kerak.",
                 "error",
+                title="Kompyuter bazada ro'yxatga olinmagan",
             )
         elif not self._machine_ok:
             # Matn SERVERDAN: u qaysi bino qidirilganini va qaysi
@@ -478,12 +486,14 @@ class ExamSelectPage(QWidget):
                 self._state.device.machine_message
                 or "Bu mashinaning MAC manzili bazadagi ro'yxatda topilmadi.",
                 "error",
+                title="Kompyuter tasdiqlanmadi",
             )
         elif not has_exam:
             self.message.show_message(
                 "Bugungi sanaga imtihon jadvali tuzilmagan yoki barcha "
                 "imtihonlar yopiq.",
                 "warning",
+                title="Ochiq imtihon yo'q",
             )
         elif not is_open:
             self.message.show_message(
@@ -530,13 +540,14 @@ class ExamSelectPage(QWidget):
                 self._state.device.machine_message
                 or "Bu mashinaning MAC manzili bazadagi ro'yxatda topilmadi.",
                 "error",
+                title="Kompyuter tasdiqlanmadi",
             )
             self._warn_if_machine_blocked()
             return
 
         exam: ExamOption = self.exam_combo.currentData()
         if exam is None:
-            self.message.show_message("Testni tanlang")
+            self.message.show_message("Testni tanlang", "warning")
             return
         if not exam.is_open:
             self.message.show_message(
@@ -672,6 +683,12 @@ class ExamSelectPage(QWidget):
         from services import runtime_settings
         from services.face_engine import FaceEngine
 
+        check_result = self.camera_panel.check_result
+        # Natija ekranda qolgan, lekin serverda muddati o'tgan (operator
+        # sahifada soatlab turdi) - u yo'q deb hisoblanadi, aks holda
+        # to'siq yana faqat `proctoring/start/` da chiqardi.
+        left = self._state.camera_check_left()
+        check_expired = bool(check_result) and left is not None and left <= 0
         issues = policy_check.check_readiness(
             config=config,
             layout=self._state.cameras,
@@ -679,7 +696,8 @@ class ExamSelectPage(QWidget):
             config_loaded=loaded,
             # Server tekshiruvi mavjud bo'lsa, kamera bo'yicha xulosa
             # AYNAN undan olinadi - u haqiqiy o'lchovlarni ko'rgan.
-            check_result=self.camera_panel.check_result,
+            check_result={} if check_expired else check_result,
+            check_expired=check_expired,
             threats=threats,
             # IMTIHON SIYOSATI (`rdp.block_exam`, panelda "Yo'q qilinmagan
             # tahdid imtihonni to'sadi"). Profil kelmagan bo'lsa
@@ -712,6 +730,7 @@ class ExamSelectPage(QWidget):
                 "Sozlama talablariga mos kelmadi — yuqoridagi sabablarni bartaraf "
                 "eting va qaytadan urinib ko'ring.",
                 "error",
+                title="Imtihon boshlanmadi",
             )
             return
 

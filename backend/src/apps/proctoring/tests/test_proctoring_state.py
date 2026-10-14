@@ -414,6 +414,14 @@ class CameraCheckApiTests(CameraApiTestCase):
         if stored is not None:
             self.assertTrue(stored["can_start"])
 
+    def test_response_tells_how_long_the_check_is_valid(self):
+        payload = self.request("post", self.url, {"cameras": [measurement()]}).json()["data"]
+        stored = camera_check.load(self.device.device_id) is not None
+        # Saqlanmagan natija uchun 0: client uni "amal qiladi" demasin.
+        self.assertEqual(payload["expires_in"], camera_check.snapshot_ttl() if stored else 0)
+        if stored:
+            self.assertNotIn("expires_in", camera_check.load(self.device.device_id))
+
     def test_unknown_role_is_rejected(self):
         response = self.request(
             "post", self.url, {"cameras": [measurement(role="tertiary")]}

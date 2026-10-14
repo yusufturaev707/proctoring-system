@@ -552,6 +552,15 @@ admin, client tekshiruvi):
 
 * `generate_seats` (`generate/`) — har ishchi kompyuterga bo'sh qator,
   takroriy chaqiruv xavfsiz (`ignore_conflicts`).
+* **Qo'lda tuzish — `zone-computers/`** (GET `?schedule=&zone=`, POST
+  `{schedule, zone, add, remove}`; panel sarlavhasidagi «Biriktirish» →
+  `components/bookings/SessionComputersDialog.tsx`: viloyat → bino, ikki
+  panel, ko'p tanlash + drag). Sessiyadan olib bo'lmaydigan joy
+  (`bookings._seat_lock`): band, `finished_count > 0` (tarix +
+  `bookings_enforced`), ochiq sessiya shu kompyuterda (erkin rejimda joy
+  start'gacha band emas). Har kompyuter alohida — rad etilgani `skipped`.
+  Avtomatik `assign/` joylarni FAQAT doirada birorta joy bo'lmasa yig'adi
+  (`_next_free_seat`) — aks holda qo'lda qoldirilgan zaxira qaytib kirardi.
 * **Biriktirish PATCH emas — `assign/`** (`schedule`, `pinfl`, ixtiyoriy
   `computer`/`zone`): `computer` yo'q — eng kichik raqamli bo'sh joy
   (`select_for_update(skip_locked)`); talabgorning joyi bo'lsa o'sha
@@ -602,6 +611,32 @@ MAC, ikkalasi yo'q bo'lsa qurilma biriktiruvi. UUID yuborilgan, lekin juftlik
 tanilmagan (UUID mos, MAC boshqa) — "shu stol" EMAS, qurilma biriktiruvi
 ham uni shu stol qilmaydi (`wrong_computer`, `details.current = null`).
 Faqat bino ichida.
+
+**Ikki rejim — imtihon profilida `Setting.is_booking`** (standart `True`,
+client'ga `booking.required`; server o'qiydi — `lookup_candidate`):
+
+| | `True` (bron) | `False` (erkin joylashuv) |
+|---|---|---|
+| Bronsiz talabgor | `seat_not_booked` (bron yuritilsa) | sessiyaga KIRITILGAN (joyi yig'ilgan), ishchi, bo'sh stolda o'tadi |
+| Joy qachon band | oldindan (panel/API) | `proctoring/start/` da, kuzatuv bilan bitta tranzaksiyada (`bookings.claim_for_session`) |
+| Oldindan biriktirilgan | o'z joyiga | o'z joyiga (bron qoidalari) |
+| Bo'shatish | jadvaldagidek | bir xil |
+
+* Erkin rejim kodlari (409): `computer_not_in_schedule` (bazada yo'q yoki
+  joyi yig'ilmagan — "bazada bor" yetmaydi), `computer_out_of_service`,
+  `computer_busy`, `candidate_already_finished` (`meta.seat_release` bor —
+  usiz yakunlagan qo'shni stolda qayta boshlardi; qayta kirish —
+  administrator biriktirsa). `details.current` — shu stol.
+* JSHSHIR tekshiruvi joyni BAND QILMAYDI — `seat.auto_assign: true`
+  (`meta.seat` ga muzlaydi, start AYNAN shunga qaraydi). FaceID/kamera
+  darvozasida qolgan talabgor stolni egallab qolmasligi uchun.
+* Start'da joy olinmasa (oraliqda band/buzilgan) — tranzaksiya qaytadi,
+  sessiya tirik (`session_blocked`); iz `meta.seat_assigned` + audit
+  `by: session_start`. `REQUIRE_COMPUTER_BOOKING` faqat bron rejimiga.
+* **Jadvalsiz imtihon** (`REQUIRE_EXAM_SCHEDULE=false`, seans yo'q) bronni
+  chetlab o'tmaydi: erkin rejimda yoki `REQUIRE_COMPUTER_BOOKING=true` da —
+  409 `exam_schedule_missing` (platformadan OLDIN); faqat ikkalasi yumshoq
+  bo'lsa tekshiruvsiz o'tadi. Ilgari jadval yo'qligi bronni jimgina o'chirardi.
 
 **Challenge qurilmaga bog'langan** (`session._require_pending_device`):
 `face/verify/`/`face/attempt/` boshqa qurilmadan kelsa `SessionNotFound`,
@@ -945,6 +980,14 @@ boshqa imtihon tanlansa sessiya yopiladi), «Boshqa talabgor» (sessiya
 
 Majburiylik clientga oldindan aytiladi —
 `proctoring.camera.check_required` (`policy.check_readiness` to'siq qiladi).
+
+**Muddat OXIRGI tekshiruvdan** (4 soat, `CAMERA_CHECK_TTL`) va bir nechta
+talabgorga xizmat qiladi. `camera/check/` javobida `expires_in` (soniya,
+saqlanmagan bo'lsa `0`; suratchaga yozilmaydi) → `AppState.camera_check_until`
+(monoton soat, `reset_flow` tozalamaydi). JSHSHIR sahifasi muddat tugagan
+yoki `_CHECK_MARGIN_S` (10 daq) qolgan bo'lsa qidiruvni YUBORMAYDI va kutish
+paytida (30 s) ogohlantiradi — aks holda "Yakunlash" dan keyingi talabgor
+yuzdan o'tib bo'lgach rad etilardi. `expires_in` yo'q (eski server) — to'silmaydi.
 
 **"Test ochilmoqda" ekrani** (`ui/widgets/launch_screen.py`, MD3, to'liq
 QPainter) — `ExamWebViewPage.start()` dan platformaning BIRINCHI
@@ -1294,7 +1337,14 @@ Qobiq bitta — `base.py:CardDialog` (ramkasiz, shaffof fon, 28 px karta, soya).
   fokus «Testga qaytish» da, «Yakunlash» — yagona to'ldirilgan qizil tugma
   (`danger_button_style`).
 * **Imtihon sahifasida xabar suzadi** (`indicators.Snackbar`, pastki chap);
-  `MessageBar` layoutni surardi — faqat boshqa sahifalarda.
+  layoutdagi blok sahifani surardi — u faqat boshqa sahifalarda.
+* **Forma xabari — `ui/widgets/notice.py:Notice`** (MD3 tonal blok: chizilgan
+  ikonka, sarlavha "nima bo'ldi", matn "nima qilish kerak", chapga tekis;
+  `show_message(text, kind, title=)`). Login, imtihon tanlash, JSHSHIR, FaceID
+  va dialoglarda BITTA komponent; bron rad javobi ham shu (`SeatNotice(Notice)`).
+  `MessageBar` (markazlashgan bitta yorliq) olib tashlangan — qaytarmang.
+  Balandlik `_fit` da: o'lchashdan oldin `ensurePolished` (aks holda
+  uslubdagi shrift hisobga olinmay oxirgi qator kesiladi).
 
 ### Klaviatura tili — faqat Alt+Shift
 
@@ -1440,6 +1490,18 @@ ProctoringClientSetup-1.0.0-gpu.exe /VERYSILENT [/INVENTORY_CODE=INV-001]
   kodi (`^[A-Za-z0-9_-]{3,50}$`).
 * `onefile` emas (har ishga tushishda `%TEMP%` ga ochardi), Nuitka emas.
 * **Versiya bitta joyda — `client/version.py`**.
+* **Kod imzosi BITTA skriptda — `client/tools/sign.ps1`** (build.ps1 ham,
+  ISCC `SignTool=` ham uni chaqiradi; iz bo'lmasa TO'XTAYDI). Self-signed
+  sertifikat `tools/create_codesign_cert.ps1` (kalit NonExportable,
+  `.pfx` repo ichiga yozilmaydi), tarqatish/yangilash `client/docs/CODESIGN.md`.
+  Reliz — `build.ps1 -RequireSign`. Build mashinasi `.cer` ga ishonishi
+  shart (`-TrustOnly`), aks holda `verify /pa` yiqiladi. Mijozlarda
+  ishonchni O'RNATUVCHI qo'shadi: build sertifikatning ochiq qismini
+  (`/DCodeSignCert`, faqat self-signed) joylaydi, `.iss` `TrustCodeSignCert`
+  uni `certutil -addstore` bilan kompyuterning Root + TrustedPublisher
+  omboriga qo'yadi (xato to'smaydi, uninstall olib tashlamaydi);
+  `-NoCertTrust` o'chiradi (GPO). `.iss` da bo'shliqdan keyin `[` bilan
+  boshlangan qator ISCC'da bo'lim sarlavhasi bo'lib qoladi.
 * **`.env` o'rnatilgan dasturda `%ProgramData%\ProctoringClient\.env`**
   (`core/bundle_paths.env_file_candidates`: `PROCTORING_ENV_FILE` →
   ProgramData → `.exe` yoni). Qaysi fayl o'qilgani log'da (`main._log_env_file`).
@@ -1812,7 +1874,7 @@ deploy'ni (`deploy.sh`) yangi `dist` almashtirilishidan OLDIN to'xtatadi.
   `OverflowError` beradi (yoki `ctypes.c_void_p(...)` ga o'rang).
 * **(client) Windows tizim binarlarining PE resursi `.mui` dan** —
   `OriginalFilename` `mstsc.exe.mui` bo'ladi (`process_identity._strip_mui`).
-* **(client) Imtihon sahifasida `MessageBar` emas, `Snackbar`.**
+* **(client) Imtihon sahifasida `Notice` emas, `Snackbar`.**
 * **Tezkor tugma lug'ati UCH joyda**: client `services/lockdown.py`
   (manba), server `controls/hotkeys.py` (saqlashda tekshiradi, kanonik
   shakl; testda client bilan solishtiriladi), panel `utils/hotkeys.ts`.

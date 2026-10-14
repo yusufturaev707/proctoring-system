@@ -53,6 +53,7 @@ def check_readiness(
     face_ready: bool = True,
     config_loaded: bool = True,
     check_result: dict | None = None,
+    check_expired: bool = False,
     threats=None,
     threats_block: bool = True,
 ) -> list[PolicyIssue]:
@@ -63,6 +64,8 @@ def check_readiness(
     (`exam/config/` javobidagi `config`).
     `config_loaded=False` - sozlamani olib bo'lmadi (tarmoq xatosi).
     `check_result` - `camera/check/` javobi (server baholagan).
+    `check_expired` - tekshiruv o'tkazilgan, lekin serverdagi muddati
+    tugagan (`check_result` o'rniga bo'sh berilgan).
     `threats` - ishga tushishdagi tozalash hisoboti
     (`services.threat_scanner.ThreatReport`) yoki `None`.
 
@@ -128,14 +131,15 @@ def check_readiness(
         # bo'lgach. Shart serverdagi bilan bir xil: kamera siyosatda
         # talab qilinmasa tekshiruvsiz boshlash qonuniy. Bayroq kelmasa
         # (eski server) - avvalgidek ogohlantirish.
-        needs_camera = bool(
-            camera.get("primary_required", True) or camera.get("secondary_required", False)
-        )
-        required = bool(camera.get("check_required")) and needs_camera
+        required = camera_check_required(config)
         issues.append(
             PolicyIssue(
                 blocking=required,
-                title="Kamera tekshiruvi o'tkazilmagan",
+                title=(
+                    "Kamera tekshiruvi muddati tugagan"
+                    if check_expired
+                    else "Kamera tekshiruvi o'tkazilmagan"
+                ),
                 detail=(
                     "«Tekshirish» tugmasini bosing — tekshiruvsiz imtihon "
                     "boshlanmaydi."
@@ -148,6 +152,21 @@ def check_readiness(
 
     issues.extend(_check_modules(policy, layout, face_ready))
     return issues
+
+
+def camera_check_required(config: dict | None) -> bool:
+    """
+    Server `proctoring/start/` da kamera tekshiruvini talab qiladimi.
+
+    Shart serverdagi bilan bir xil (`services/proctoring.py:start`):
+    `REQUIRE_CAMERA_CHECK` (`camera.check_required`) VA siyosat
+    kamerani talab qiladi. Bayroq kelmasa (eski server) - `False`.
+    """
+    camera = (((config or {}).get("proctoring") or {}).get("camera")) or {}
+    needs_camera = bool(
+        camera.get("primary_required", True) or camera.get("secondary_required", False)
+    )
+    return bool(camera.get("check_required")) and needs_camera
 
 
 def _from_server_check(result: dict) -> list:

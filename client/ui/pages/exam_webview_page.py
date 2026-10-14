@@ -1454,7 +1454,7 @@ class ExamWebViewPage(QWidget):
         self._update_status_tooltip()
 
     def _on_screenshot_failed(self, message: str) -> None:
-        # Xabar `MessageBar` ga CHIQARILMAYDI: u tarmoq holati uchun
+        # Xabar `Snackbar` ga CHIQARILMAYDI: u tarmoq holati uchun
         # band va skrinshot xatosi odatda o'sha uzilishning natijasi -
         # ikkita bir xil ogohlantirish operatorni chalg'itadi. Nishon
         # esa ko'rinib turadi.

@@ -12,7 +12,7 @@ import AssignIcon from '@mui/icons-material/PersonAddAltOutlined'
 import ReleaseIcon from '@mui/icons-material/PersonRemoveOutlined'
 import MoveIcon from '@mui/icons-material/SwapHorizOutlined'
 import GenerateIcon from '@mui/icons-material/GridViewOutlined'
-import AutoIcon from '@mui/icons-material/AutoAwesomeOutlined'
+import AttachIcon from '@mui/icons-material/AddToQueueOutlined'
 import WarningIcon from '@mui/icons-material/WarningAmberOutlined'
 import MapIcon from '@mui/icons-material/GridOnRounded'
 import ListIcon from '@mui/icons-material/ViewListRounded'
@@ -32,6 +32,7 @@ import { fromNow } from '../utils/labels'
 import {
   IN_EXAM_HINT, Legend, SeatGrid, SeatPanel, ZoneRail, seatInExam, seatState,
 } from '../components/bookings/SeatMap'
+import SessionComputersDialog from '../components/bookings/SessionComputersDialog'
 import { EmptyState } from '../components/feedback/States'
 import type { ReactNode } from 'react'
 import type { Theme } from '@mui/material/styles'
@@ -43,17 +44,13 @@ import type { ApiRecord, Id } from '../types/api'
 type BookingView = 'map' | 'list'
 type BookingScope = 'all' | 'booked' | 'free' | 'broken'
 
-/** Biriktirish dialogi rejimi: aniq joyga, ko'chirish yoki umumiy. */
-interface AssignState {
-  seat?: Seat
-  move?: Seat
-}
+/** Talabgor dialogi rejimi: aniq bo'sh joyga yoki ko'chirish. */
+type AssignState = { seat: Seat; move?: never } | { move: Seat; seat?: never }
 
 /** `bookings/assign/` tanasi (`schedule` sahifa qo'shadi). */
 interface AssignPayload {
   pinfl: string
-  computer?: Id
-  zone?: Id
+  computer: Id
 }
 
 const PINFL_RE = /^\d{14}$/
@@ -99,6 +96,7 @@ export default function ComputerBookings() {
   const [scope, setScope] = useState<BookingScope>('all')
   const [assigning, setAssigning] = useState<AssignState | null>(null)
   const [releasing, setReleasing] = useState<Seat | null>(null)
+  const [attaching, setAttaching] = useState(false)
 
   // Sessiya tanlanmagan bo'lsa — ENG MOS seans: hozir ochiq, bo'lmasa
   // eng yaqin kelgusi, bo'lmasa eng oxirgisi. Operator sahifani odatda
@@ -266,14 +264,21 @@ export default function ComputerBookings() {
               </Button>
             </span>
           </Tooltip>
-          <Button
-            variant="contained"
-            startIcon={<AssignIcon />}
-            disabled={!scheduleId}
-            onClick={() => setAssigning({})}
-          >
-            Biriktirish
-          </Button>
+          {/* Kompyuterlarni sessiyaga QO'LDA kiritish (viloyat -> bino, ikki
+              panel). Talabgorni joyga biriktirish — xaritadagi o'rindiqda
+              yoki ro'yxat qatorida. */}
+          <Tooltip title="Binodagi kompyuterlarni tanlab, shu test sessiyasiga kiritish yoki undan olish">
+            <span>
+              <Button
+                variant="contained"
+                startIcon={<AttachIcon />}
+                disabled={!schedule}
+                onClick={() => setAttaching(true)}
+              >
+                Biriktirish
+              </Button>
+            </span>
+          </Tooltip>
         </>
       )}
     </Stack>
@@ -286,7 +291,6 @@ export default function ComputerBookings() {
           schedule={schedule}
           seat={assigning.seat}
           move={assigning.move}
-          zoneOptions={zoneOptions}
           loading={assignMutation.isPending}
           onSave={(payload) => assignMutation.mutate(payload)}
           onClose={() => setAssigning(null)}
@@ -311,6 +315,16 @@ export default function ComputerBookings() {
         onConfirm={() => releasing && releaseMutation.mutate(releasing.id)}
         onClose={() => setReleasing(null)}
       />
+
+      {attaching && schedule && (
+        <SessionComputersDialog
+          schedule={schedule}
+          regionOptions={regionOptions}
+          zoneOptions={zoneOptions}
+          initialZone={Number(searchParams.get('zone')) || null}
+          onClose={() => setAttaching(false)}
+        />
+      )}
     </>
   )
 
@@ -335,6 +349,22 @@ export default function ComputerBookings() {
       </>
     )
   }
+
+  // ERKIN JOYLASHUV (`Setting.is_booking` o'chiq): bo'sh bron jadvali
+  // bu rejimda NORMAL holat va administrator uni "hech kim biriktirilmagan,
+  // imtihon kuni hech kim kira olmaydi" deb o'qimasligi kerak. Joylar
+  // yig'ilishi esa SHART — client faqat sessiyaga kiritilgan stolni qabul qiladi.
+  const freeSeatingAlert = schedule && schedule.bookingRequired === false && (
+    <Alert severity="info" icon={<SeatIcon />}>
+      <strong>Erkin joylashuv.</strong> Bu imtihonda oldindan biriktirish shart emas: talabgor
+      shu sessiyaga kiritilgan istalgan bo‘sh ishchi kompyuterda topshiradi va test boshlanganda
+      o‘sha kompyuterga avtomatik biriktiriladi. Sessiyaga kiritilmagan kompyuterda imtihon
+      ochilmaydi{stats && stats.total === 0
+        ? ' — kompyuterlarni «Biriktirish» bilan tanlang yoki «Joylarni yaratish» bilan hammasini qo‘shing'
+        : ''}.
+      Oldindan biriktirilgan talabgor baribir o‘z joyiga boradi.
+    </Alert>
+  )
 
   const brokenAlert = (stats?.broken_booked ?? 0) > 0 && (
     <Alert
@@ -370,6 +400,7 @@ export default function ComputerBookings() {
             onChange={(option) => setScheduleId(Number(option?.value) || null)}
           />
           {schedule && <StatsStrip stats={stats} />}
+          {freeSeatingAlert}
           {brokenAlert}
           <BookingMap
             scheduleId={scheduleId}
@@ -415,7 +446,7 @@ export default function ComputerBookings() {
         ]}
         emptyDescription={
           stats && stats.total === 0
-            ? 'Bu test sessiyasida hali joy yo‘q — «Joylarni yaratish» ni bosing'
+            ? 'Bu test sessiyasida hali joy yo‘q — «Biriktirish» yoki «Joylarni yaratish» ni bosing'
             : 'Bu shartlarga mos joy topilmadi'
         }
         banner={
@@ -452,6 +483,7 @@ export default function ComputerBookings() {
                 }
               />
             )}
+            {freeSeatingAlert}
             {brokenAlert}
           </Stack>
         }
@@ -662,7 +694,7 @@ function BookingMap({
       <Card>
         <EmptyState
           title="Bu test sessiyasida hali joy yo‘q"
-          description="Joylar sessiya doirasidagi kompyuterlardan yig‘iladi — «Joylarni yaratish» ni bosing."
+          description="Kompyuterlarni «Biriktirish» bilan binoma-bino tanlang yoki «Joylarni yaratish» bilan sessiya doirasidagi barchasini qo‘shing."
           actionLabel={onGenerate ? 'Joylarni yaratish' : undefined}
           onAction={onGenerate || undefined}
         />
@@ -1033,11 +1065,16 @@ function StatsStrip({ stats, scope }: StatsStripProps) {
 }
 
 /**
- * Biriktirish va ko'chirish — bitta dialog, uch rejim:
+ * Talabgorni joyga biriktirish va ko'chirish — bitta dialog, ikki rejim:
  *
  *   `seat`  — jadvaldagi aniq bo'sh joyga (faqat JSHSHIR so'raladi);
- *   `move`  — talabgor tayin, yangi joy tanlanadi;
- *   hech biri — JSHSHIR + joy: avtomatik (eng kichik bo'sh raqam) yoki qo'lda.
+ *   `move`  — talabgor tayin, yangi bo'sh joy tanlanadi.
+ *
+ * Umumiy rejim (JSHSHIR + «Avtomatik» / «Joyni tanlash») sahifa
+ * sarlavhasidagi «Biriktirish» bilan birga olib tashlangan: u tugma endi
+ * kompyuterlarni SESSIYAGA kiritadi (`SessionComputersDialog`), talabgor
+ * esa aniq o'rindiqqa biriktiriladi. Avtomatik tanlash tashqi tizim
+ * uchun API'da qoldi (`assign/` `computer` siz).
  *
  * Bo'sh joylar ro'yxati BRON endpointidan olinadi, kompyuterlar
  * ro'yxatidan emas: u faqat SHU sessiyadagi, ishchi va band bo'lmagan
@@ -1047,17 +1084,14 @@ interface AssignDialogProps {
   schedule: Option
   seat?: Seat
   move?: Seat
-  zoneOptions: Option[]
   loading: boolean
   onSave: (payload: AssignPayload) => void
   onClose: () => void
 }
 
-function AssignDialog({ schedule, seat, move, zoneOptions, loading, onSave, onClose }: AssignDialogProps) {
+function AssignDialog({ schedule, seat, move, loading, onSave, onClose }: AssignDialogProps) {
   const [pinfl, setPinfl] = useState<string>(move?.pinfl || '')
   const [target, setTarget] = useState<Option | null>(null)
-  const [auto, setAuto] = useState(!seat && !move)
-  const [zone, setZone] = useState<Option | null>(null)
 
   const { options: freeSeats, isLoading } = useOptions(
     'computer-bookings',
@@ -1071,26 +1105,17 @@ function AssignDialog({ schedule, seat, move, zoneOptions, loading, onSave, onCl
   )
 
   const pinflError = pinfl && !PINFL_RE.test(pinfl) ? 'JSHSHIR 14 ta raqamdan iborat' : ''
-  const needsSeat = !seat && (move || !auto)
-  const valid = PINFL_RE.test(pinfl) && (!needsSeat || target)
+  const computer = seat ? seat.computer : target?.value
+  const valid = PINFL_RE.test(pinfl) && computer != null
 
   const submit = () => {
-    if (!valid || loading) return
-    const payload: AssignPayload = { pinfl }
-    if (seat) payload.computer = seat.computer
-    else if (needsSeat && target) payload.computer = target.value
-    else if (zone) payload.zone = zone.value
-    onSave(payload)
+    if (!valid || loading || computer == null) return
+    onSave({ pinfl, computer })
   }
-
-  const title = move ? 'Boshqa kompyuterga ko‘chirish' : 'Talabgorni biriktirish'
-  // Umumiy sessiyada avtomatik rejim uchun binoni tanlash mumkin —
-  // aks holda talabgor birinchi viloyatning birinchi binosiga tushardi.
-  const zoneChoices = schedule.zone ? [] : zoneOptions
 
   return (
     <Dialog open onClose={loading ? undefined : onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>{title}</DialogTitle>
+      <DialogTitle>{move ? 'Boshqa kompyuterga ko‘chirish' : 'Talabgorni biriktirish'}</DialogTitle>
       <DialogContent>
         <Stack spacing={2.25} sx={{ pt: 0.5 }}>
           <Typography variant="body2" color="text.secondary">{schedule.label}</Typography>
@@ -1119,45 +1144,7 @@ function AssignDialog({ schedule, seat, move, zoneOptions, loading, onSave, onCl
             onKeyDown={(event) => event.key === 'Enter' && submit()}
           />
 
-          {!seat && !move && (
-            <ToggleButtonGroup
-              exclusive
-              fullWidth
-              size="small"
-              value={auto ? 'auto' : 'manual'}
-              onChange={(_, value) => value && setAuto(value === 'auto')}
-            >
-              <ToggleButton value="auto">
-                <AutoIcon fontSize="small" sx={{ mr: 1 }} /> Avtomatik
-              </ToggleButton>
-              <ToggleButton value="manual">
-                <SeatIcon fontSize="small" sx={{ mr: 1 }} /> Joyni tanlash
-              </ToggleButton>
-            </ToggleButtonGroup>
-          )}
-
-          {!seat && !move && auto && (
-            <>
-              <Typography variant="body2" color="text.secondary">
-                Binodagi eng kichik raqamli bo‘sh ishchi kompyuter tanlanadi. Talabgorning joyi
-                allaqachon bo‘lsa, o‘sha qaytariladi.
-              </Typography>
-              {zoneChoices.length > 0 && (
-                <Autocomplete
-                  options={zoneChoices}
-                  value={zone}
-                  onChange={(_, option) => setZone(option)}
-                  isOptionEqualToValue={(option, item) => option.value === item.value}
-                  getOptionLabel={(option) => option?.label || ''}
-                  renderInput={(params) => (
-                    <TextField {...params} label="Bino (ixtiyoriy)" helperText="Umumiy sessiya — bino tanlanmasa birinchi bo‘sh joy olinadi" />
-                  )}
-                />
-              )}
-            </>
-          )}
-
-          {needsSeat && (
+          {move && (
             <Autocomplete
               options={freeSeats}
               loading={isLoading}
@@ -1165,10 +1152,8 @@ function AssignDialog({ schedule, seat, move, zoneOptions, loading, onSave, onCl
               onChange={(_, option) => setTarget(option)}
               isOptionEqualToValue={(option, item) => option.value === item.value}
               getOptionLabel={(option) => option?.label || ''}
-              renderInput={(params) => (
-                <TextField {...params} label="Bo‘sh kompyuter" autoFocus={Boolean(move)} />
-              )}
-              noOptionsText="Bo‘sh ishchi joy yo‘q — avval «Joylarni yaratish»"
+              renderInput={(params) => <TextField {...params} label="Bo‘sh kompyuter" autoFocus />}
+              noOptionsText="Bo‘sh ishchi joy yo‘q — avval kompyuterlarni sessiyaga kiriting («Biriktirish»)"
             />
           )}
         </Stack>

@@ -307,6 +307,23 @@ class SeatUnavailable(DomainError):
     default_code = "seat_unavailable"
 
 
+class ExamScheduleMissing(DomainError):
+    """
+    Bron (yoki erkin joylashuv) majburiy, lekin imtihonga test sessiyasi
+    (`ExamSchedule`) tuzilmagan - kompyuterni tekshirib bo'lmaydi.
+
+    Tashqi platformaga so'rov KETMAYDI (`SeatNotBooked` bilan bir xil
+    sabab): talabgor bu holatda baribir imtihonga kira olmaydi.
+    """
+
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = (
+        "Bu imtihon uchun test sessiyasi topilmadi — kompyuter bronini tekshirib "
+        "bo'lmaydi. Administrator «Jadval» sahifasida seans yaratishi kerak"
+    )
+    default_code = "exam_schedule_missing"
+
+
 class SeatInUse(DomainError):
     """
     Talabgor shu joyda IMTIHONDA — bronni bo'shatib ham, ko'chirib ham bo'lmaydi.
@@ -322,6 +339,58 @@ class SeatInUse(DomainError):
         "Avval sessiyani chetlashtiring."
     )
     default_code = "seat_in_use"
+
+
+# --------------------------------------------------------------------------
+# Erkin joylashuv (`Setting.is_booking=False`) — JSHSHIR tekshiruvi.
+#
+# Bron rejimidagi kodlardan ATAYLAB alohida: u yerda gap talabgorning
+# OLDINDAN berilgan joyi haqida ("administrator ko'chirsin"), bu yerda
+# esa talabgor HOZIR o'tirgan stol haqida va operatorning ishi boshqa —
+# talabgorni boshqa bo'sh kompyuterga o'tkazish. Kod client'da sarlavha
+# va keyingi qadamni tanlaydi (`client/ui/widgets/seat_notice.py`).
+# --------------------------------------------------------------------------
+class ComputerNotInSchedule(DomainError):
+    """Bu mashina bazada yo'q yoki test sessiyasiga kiritilmagan."""
+
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = "Bu kompyuter test sessiyasiga kiritilmagan"
+    default_code = "computer_not_in_schedule"
+
+
+class ComputerOutOfService(DomainError):
+    """Talabgor o'tirgan kompyuter shu sessiyada buzilgan deb belgilangan."""
+
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = "Bu kompyuter buzilgan deb belgilangan"
+    default_code = "computer_out_of_service"
+
+
+class ComputerBusy(DomainError):
+    """Talabgor o'tirgan kompyuter shu sessiyada BOSHQA talabgorniki."""
+
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = "Bu kompyuter boshqa talabgorga biriktirilgan"
+    default_code = "computer_busy"
+
+
+class CandidateAlreadyFinished(DomainError):
+    """
+    Talabgor shu test sessiyasida imtihonni YAKUNLAGAN (joyi bo'shatilgan).
+
+    Bron rejimida bunday talabgor joysiz qoladi va `seat_not_booked`
+    oladi - qayta kirish faqat administrator qayta biriktirsa. Erkin
+    joylashuvda shu qoida saqlanadi: aks holda «Yakunlash» dan yoki
+    chetlashtirishdan keyin u qo'shni bo'sh stolda testni qaytadan
+    boshlardi.
+    """
+
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = (
+        "Talabgor bu test sessiyasida imtihonni yakunlagan — qayta kirish uchun "
+        "administrator uni kompyuterga biriktirishi kerak"
+    )
+    default_code = "candidate_already_finished"
 
 
 class ScreenshotRejected(DomainError):

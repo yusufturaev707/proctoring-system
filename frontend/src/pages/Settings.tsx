@@ -767,6 +767,22 @@ export default function Settings() {
                   <Toggle label="Avtomatik tekshirish" checked={form.is_enable_check_tp} onChange={set('is_enable_check_tp')} disabled={!canManage} />
                 </Section>
               </Grid>
+              <Grid item xs={12} md={6}>
+                {/* Qaror SERVERDA (JSHSHIR tekshiruvi va proctoring/start/),
+                    client faqat natijani ko'rsatadi. */}
+                <Section title="Kompyuter broni">
+                  <Toggle
+                    label="Talabgor oldindan biriktirilgan kompyuterda"
+                    checked={form.is_booking}
+                    onChange={set('is_booking')} disabled={!canManage}
+                  />
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: -1.5 }}>
+                    {form.is_booking
+                      ? 'Talabgor faqat «Kompyuter bronlari» sahifasida unga biriktirilgan kompyuterda test topshiradi.'
+                      : 'Erkin joylashuv: talabgor test sessiyasiga kiritilgan istalgan bo‘sh kompyuterda topshiradi va test boshlanganda o‘sha kompyuterga avtomatik biriktiriladi. Joy bo‘shatish qoidalari bir xil.'}
+                  </Typography>
+                </Section>
+              </Grid>
             </Grid>
           )}
 

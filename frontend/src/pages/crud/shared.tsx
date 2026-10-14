@@ -113,6 +113,9 @@ export const useScheduleOptions = () =>
     zoneName: item.zone_name,
     isOpen: item.is_open,
     isActive: item.is_active,
+    // Imtihon profilidagi `is_booking`; eski server maydonni bermaydi -
+    // o'shanda avvalgi (bron) rejim.
+    bookingRequired: item.booking_required !== false,
   }))
 
 export const useExamTypeOptions = () =>
