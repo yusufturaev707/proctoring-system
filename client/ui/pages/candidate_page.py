@@ -64,6 +64,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.errors import THROTTLE_SCOPES, throttle_scope
 from proctoring.policy import camera_check_required
 from services.app_state import AppState, Candidate
 from services.network_status import network_status
@@ -801,6 +802,12 @@ class CandidatePage(QWidget):
         # Tarmoq/server vaqtincha — JSHSHIR to'g'ri, faqat qayta urinish
         # kerak. Aloqa tiklanganda `_on_network_changed` aytadi.
         self._network_failed = code in ("network", "server_unavailable")
+        # Chegara xatosi emas — "kuting" yoki "boshqasini qidiring";
+        # sarlavha NIMA to'silganini aytadi (`details.scope`).
+        scope = throttle_scope(details) if code == "throttled" else ""
+        if scope:
+            self.message.show_message(message, "warning", title=THROTTLE_SCOPES[scope][0])
+            return
         self.message.show_message(message, "error", title=_ERROR_TITLES.get(code, ""))
 
     def _on_network_changed(self, online: bool) -> None:

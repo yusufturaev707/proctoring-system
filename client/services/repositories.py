@@ -299,7 +299,10 @@ class ProctoringRepository:
         # yozuvlari uchun. Bo'sh bo'lsa yuborilmaydi.
         if mac_address:
             body["mac_address"] = mac_address
-        return self._api.post("/client/candidate/lookup/", json_body=body)
+        # `gate=False`: server chegarasi JSHSHIR bo'yicha ham bor — bitta
+        # to'silgan JSHSHIR keyingi talabgorlarning qidiruvini yopmasin
+        # (`ApiClient.request`, `error.details.scope`).
+        return self._api.post("/client/candidate/lookup/", json_body=body, gate=False)
 
     # --- 3. Kirishdagi FaceID ----------------------------------------
     def verify_face(self, *, challenge: str, embedding: Optional[list] = None,

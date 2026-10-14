@@ -88,3 +88,67 @@ ERROR_MESSAGES = {
 
 def humanize(code: str, fallback: str) -> str:
     return ERROR_MESSAGES.get(code, fallback or "Noma'lum xato")
+
+
+#: Server 429 javobidagi `details.scope` -> nima to'silgani va operator
+#: nima qiladi (`apps/common/throttling.py:ScopeDetailsThrottleMixin`).
+#: Uchalasida harakat BOSHQA: bitta JSHSHIR to'silganda keyingi talabgor
+#: bemalol qidiriladi, mashina chegarasida — boshqa kompyuter, hisob
+#: chegarasida (butun bino) — administrator.
+THROTTLE_SCOPES = {
+    "pinfl": (
+        "Bu JSHSHIR bo'yicha urinishlar chegarasi",
+        "Bu JSHSHIR bilan qidiruv {wait} vaqtincha yopildi. Boshqa "
+        "talabgorlarni bemalol qidirishingiz mumkin.",
+    ),
+    "device": (
+        "Bu kompyuterdan qidiruv chegarasi",
+        "Bu kompyuterdan JSHSHIR qidirish {wait} vaqtincha yopildi. "
+        "Talabgorni boshqa kompyuterda qabul qiling.",
+    ),
+    "operator": (
+        "Hisob bo'yicha qidiruv chegarasi",
+        "Operator hisobi (butun bino) bo'yicha qidiruv {wait} vaqtincha "
+        "yopildi. Administratorga murojaat qiling.",
+    ),
+}
+
+
+def _wait_phrase(seconds) -> str:
+    """"~25 daqiqaga" / "40 soniyaga" — operator vaqtni daqiqada o'ylaydi."""
+    try:
+        seconds = int(float(seconds) + 0.999)
+    except (TypeError, ValueError):
+        return ""
+    if seconds <= 0:
+        return ""
+    if seconds < 60:
+        return "{} soniyaga".format(seconds)
+    return "~{} daqiqaga".format((seconds + 59) // 60)
+
+
+def throttle_scope(details) -> str:
+    """429 javobidagi ma'lum chegara nomi (`pinfl`/`device`/`operator`) yoki ""."""
+    scope = details.get("scope") if isinstance(details, dict) else None
+    return scope if scope in THROTTLE_SCOPES else ""
+
+
+def throttled_message(details, retry_after=None) -> str:
+    """
+    429 matni: NIMA to'silgani va qancha kutish.
+
+    Muddat `details.wait` dan (serverning haqiqiy qiymati) — `Retry-After`
+    client'da 300 s bilan cheklanadi (`net_policy.MAX_RETRY_AFTER_S`) va
+    soatlik chegarada operatorga "5 daqiqa" deb, keyin yana rad etardi.
+    `scope` yo'q (boshqa endpoint, eski server) — umumiy matn.
+    """
+    wait = details.get("wait") if isinstance(details, dict) else None
+    phrase = _wait_phrase(wait if wait is not None else retry_after)
+    scope = throttle_scope(details)
+    if scope:
+        text = THROTTLE_SCOPES[scope][1].format(wait=phrase or "")
+        return " ".join(text.split())
+    text = ERROR_MESSAGES["throttled"]
+    if retry_after:
+        text = "{} ({} soniyadan keyin)".format(text.rstrip("."), int(retry_after + 0.999))
+    return text

@@ -253,3 +253,75 @@ class ThrottleWiringTests(TestCase):
             with self.subTest(view=view.__name__):
                 self.assertIn(device_layer, view.throttle_classes)
                 self.assertIn(account_layer, view.throttle_classes)
+
+
+class _Blocked(StaffLoginThrottle):
+    """To'lgan chegara: kutishi va ochiq nomi testda beriladi."""
+
+    public_scope = ""
+    wait_s = 0.0
+
+    def allow_request(self, request, view):
+        return False
+
+    def wait(self):
+        return self.wait_s
+
+
+def _blocked(scope: str, wait_s: float):
+    return type(f"Blocked_{scope}", (_Blocked,), {"public_scope": scope, "wait_s": wait_s})
+
+
+class _Open(StaffLoginThrottle):
+    def allow_request(self, request, view):
+        return True
+
+
+class ScopeDetailsThrottleTests(TestCase):
+    """429 da operator NIMA to'silganini biladi (`details.scope`)."""
+
+    def _call(self, *throttles):
+        from rest_framework.permissions import AllowAny
+        from rest_framework.response import Response
+        from rest_framework.test import APIRequestFactory
+        from rest_framework.views import APIView
+
+        from apps.common.throttling import ScopeDetailsThrottleMixin
+
+        class View(ScopeDetailsThrottleMixin, APIView):
+            authentication_classes = []
+            permission_classes = [AllowAny]
+            throttle_classes = list(throttles)
+
+            def post(self, request):
+                return Response({"ok": True})
+
+        return View.as_view()(APIRequestFactory().post("/x/", {}, format="json"))
+
+    def test_single_pinfl_block_names_the_pinfl(self):
+        response = self._call(_Open, _blocked("pinfl", 1799.2))
+        self.assertEqual(response.status_code, 429)
+        error = response.data["error"]
+        self.assertEqual(error["code"], "throttled")
+        # Haqiqiy muddat — client 300 s bilan cheklaydigan sarlavhadan mustaqil.
+        self.assertEqual(error["details"], {"scope": "pinfl", "wait": 1800})
+        self.assertEqual(response["Retry-After"], "1800")
+
+    def test_broadest_scope_wins_and_wait_is_the_longest(self):
+        response = self._call(_blocked("pinfl", 3000), _blocked("device", 60))
+        self.assertEqual(response.data["error"]["details"], {"scope": "device", "wait": 3000})
+
+        response = self._call(_blocked("device", 10), _blocked("operator", 20))
+        self.assertEqual(response.data["error"]["details"]["scope"], "operator")
+
+    def test_open_throttles_pass(self):
+        self.assertEqual(self._call(_Open).status_code, 200)
+
+    def test_lookup_view_reports_scope(self):
+        from apps.common.throttling import PinflLookupThrottle, ScopeDetailsThrottleMixin
+        from apps.proctoring.api.v1.client_views import CandidateLookupView
+
+        self.assertTrue(issubclass(CandidateLookupView, ScopeDetailsThrottleMixin))
+        scopes = {cls.public_scope for cls in CandidateLookupView.throttle_classes}
+        self.assertEqual(scopes, {"pinfl", "device", "operator"})
+        self.assertIn(PinflLookupThrottle, CandidateLookupView.throttle_classes)

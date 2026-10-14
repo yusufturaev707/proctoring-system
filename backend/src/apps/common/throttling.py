@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 
+from rest_framework.exceptions import Throttled
 from rest_framework.throttling import SimpleRateThrottle
 
 
@@ -115,6 +116,10 @@ class BaseScopedThrottle(SimpleRateThrottle):
     """Berilgan `scope` va ident bo'yicha cheklaydi."""
 
     scope = "anon"
+    #: Client'ga aytiladigan nom (`error.details.scope`, `ScopeDetailsThrottleMixin`).
+    #: Ichki `scope` emas: u sozlama kaliti va o'zgarishi mumkin, client esa
+    #: shu qiymatga qarab operatorga NIMA to'silganini aytadi.
+    public_scope = ""
 
     def get_ident_value(self, request, view) -> str | None:  # pragma: no cover
         raise NotImplementedError
@@ -135,6 +140,7 @@ class PinflLookupThrottle(BaseScopedThrottle):
     """
 
     scope = "pinfl_lookup"
+    public_scope = "pinfl"
 
     def get_ident_value(self, request, view):
         pinfl = (request.data or {}).get("pinfl")
@@ -186,6 +192,7 @@ class PinflLookupOperatorThrottle(BaseScopedThrottle):
     """
 
     scope = "pinfl_lookup_operator"
+    public_scope = "operator"
 
     def get_ident_value(self, request, view):
         user = getattr(request, "user", None)
@@ -204,9 +211,54 @@ class PinflLookupDeviceThrottle(BaseScopedThrottle):
     """
 
     scope = "pinfl_lookup_device"
+    public_scope = "device"
 
     def get_ident_value(self, request, view):
         return device_user_ident(request)
+
+
+#: Bir nechta chegara birdan to'lsa client'ga ENG KENGI aytiladi: u ko'proq
+#: narsani to'sadi va operatorning harakati shunga bog'liq (boshqa talabgorni
+#: qidirish ham yordam bermaydi).
+_SCOPE_BREADTH = ("operator", "device", "pinfl")
+
+
+class ScopedThrottled(Throttled):
+    """429, `error.details` da qaysi chegara to'lgani va haqiqiy kutish."""
+
+    def __init__(self, wait=None, *, scope: str = ""):
+        super().__init__(wait)
+        # `api_exception_handler` `extra` ni `error.details` ga qo'yadi.
+        self.extra = {"scope": scope, "wait": self.wait}
+
+
+class ScopeDetailsThrottleMixin:
+    """
+    429 javobiga `details.scope` va `details.wait` qo'shadi.
+
+    NIMA UCHUN. DRF faqat "kuting" deydi, qaysi chegara to'lganini emas.
+    JSHSHIR qidiruvida bu operator uchun ikki boshqa vaziyat: bitta
+    JSHSHIR to'silgan bo'lsa keyingi talabgorni bemalol qidirsa bo'ladi,
+    mashina yoki hisob chegarasi to'lgan bo'lsa — yo'q. `wait` —
+    serverning haqiqiy muddati: client `Retry-After` ni 300 s bilan
+    cheklaydi (`client/services/net_policy.py`) va operatorga "5 daqiqa"
+    deb, keyin yana rad etardi.
+
+    Qolgani DRF'niki bilan bir xil: har chegara tekshiriladi (o'tgani
+    so'rovni hisobga yozadi), `Retry-After` — eng uzun kutish.
+    """
+
+    def check_throttles(self, request):
+        blocked: list[tuple[str, float | None]] = []
+        for throttle in self.get_throttles():
+            if not throttle.allow_request(request, self):
+                blocked.append((getattr(throttle, "public_scope", ""), throttle.wait()))
+        if not blocked:
+            return
+        durations = [wait for _, wait in blocked if wait is not None]
+        scopes = {scope for scope, _ in blocked}
+        scope = next((name for name in _SCOPE_BREADTH if name in scopes), "")
+        raise ScopedThrottled(max(durations, default=None), scope=scope)
 
 
 class ExitVerifyThrottle(BaseScopedThrottle):

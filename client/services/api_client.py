@@ -24,7 +24,8 @@ QAYTA URINISH QOIDASI (`services/net_policy.py`):
     yakun) — takror YO'Q: u vaqt byudjetini o'zi hisoblagan.
   * `Retry-After` (429/503) — shu yo'lga o'sha muddatgacha so'rov
     umuman ketmaydi (`_gate`), davriy yuboruvchilar ham avtomatik
-    bo'ysunadi.
+    bo'ysunadi. Operator qo'lda yuboradigan so'rov (`gate=False`,
+    JSHSHIR qidiruvi) bundan istisno.
 
 Kechikishlar jitter bilan: server qayta ishga tushganda minglab client
 bir lahzada urilmasligi kerak.
@@ -42,7 +43,14 @@ from typing import Any, Callable, Optional
 import httpx
 
 from config import API_BASE_URL, API_CONNECT_TIMEOUT, API_SSL_VERIFY, API_TIMEOUT
-from core.errors import AuthError, ClientError, DeviceNotRegistered, NetworkError, humanize
+from core.errors import (
+    AuthError,
+    ClientError,
+    DeviceNotRegistered,
+    NetworkError,
+    humanize,
+    throttled_message,
+)
 from core.singleton import SingletonMeta
 from services import net_policy
 
@@ -212,9 +220,7 @@ def parse_response(response: httpx.Response) -> Any:
     ):
         raise AuthError(message, code=code or "unauthorized", details=details, status=status)
     if status == 429:
-        text = humanize("throttled", message)
-        if retry_after:
-            text = "{} ({} soniyadan keyin)".format(text.rstrip("."), int(retry_after + 0.999))
+        text = throttled_message(details, retry_after)
         raise _with_retry_after(
             ClientError(text, code="throttled", details=details, status=429), retry_after
         )
@@ -327,6 +333,7 @@ class ApiClient(metaclass=SingletonMeta):
         idempotent: Optional[bool] = None,
         retries: Optional[int] = None,
         auth_token: Optional[str] = None,
+        gate: bool = True,
         _retry: bool = True,
     ) -> Any:
         """
@@ -336,6 +343,13 @@ class ApiClient(metaclass=SingletonMeta):
         yuboruvchilar `retries=0` beradi — ularning o'z backoff'i bor.
         `auth_token` — `Authorization` uchun aniq token (joriy holatdan
         mustaqil; fon chiqishi).
+        `gate=False` — `Retry-After` darvozasi bu so'rovga ham, undan
+        keyingilariga ham qo'llanmaydi. Darvoza YO'L bo'yicha, server
+        chegarasi esa so'rov MAZMUNI bo'yicha bo'lishi mumkin: JSHSHIR
+        qidiruvida bitta JSHSHIR to'silsa, darvoza butun qidiruvni 5
+        daqiqaga yopib, boshqa talabgorlarni ham to'xtatardi. Qarorni
+        server qiladi; so'rovni esa operator qo'lda yuboradi (davriy
+        yuboruvchi emas), ya'ni serverni urib turmaydi.
         """
         method = method.upper()
         if idempotent is None:
@@ -345,7 +359,8 @@ class ApiClient(metaclass=SingletonMeta):
                 retries = 0
             else:
                 retries = _RETRIES_IDEMPOTENT if idempotent else _RETRIES_UNSAFE
-        self._check_gate(path)
+        if gate:
+            self._check_gate(path)
 
         attempt = 0
         while True:
@@ -413,7 +428,7 @@ class ApiClient(metaclass=SingletonMeta):
             status = response.status_code
             self._report_online(not _gateway_down(response))
             retry_after = net_policy.parse_retry_after(response.headers.get("Retry-After"))
-            if status in (429, 503) and retry_after:
+            if gate and status in (429, 503) and retry_after:
                 self._set_gate(path, retry_after)
 
             if (

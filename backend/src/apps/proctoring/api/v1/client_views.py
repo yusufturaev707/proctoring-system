@@ -47,6 +47,7 @@ from apps.common.throttling import (
     PinflLookupDeviceThrottle,
     PinflLookupOperatorThrottle,
     PinflLookupThrottle,
+    ScopeDetailsThrottleMixin,
     SessionStartThrottle,
     client_ip,
 )
@@ -871,7 +872,7 @@ class ProctoringStopView(SessionRequiredView):
 # --------------------------------------------------------------------------
 # 2. JSHSHIR bo'yicha talabgorni aniqlash
 # --------------------------------------------------------------------------
-class CandidateLookupView(ClientBaseView):
+class CandidateLookupView(ScopeDetailsThrottleMixin, ClientBaseView):
     """
     Eng nozik endpoint butun tizimda.
 
@@ -881,7 +882,9 @@ class CandidateLookupView(ClientBaseView):
       1. Qurilma imzosi (ro'yxatdan o'tgan client bo'lishi shart)
       2. IP allowlist (imtihon markazi tarmog'i)
       3. Uch xil throttle: JSHSHIR bo'yicha, mashina bo'yicha (qat'iy) va
-         operator hisobi bo'yicha (keng — hisob regionga bitta)
+         operator hisobi bo'yicha (keng — hisob regionga bitta); 429 da
+         qaysi biri to'lgani `details.scope` da (operator shunga qarab
+         keyingi talabgorni qidiradi yoki kutadi)
     """
 
     throttle_classes = [PinflLookupThrottle, PinflLookupDeviceThrottle, PinflLookupOperatorThrottle]

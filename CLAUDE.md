@@ -1681,6 +1681,12 @@ biznes-mantiq) / `api/v1/{serializers,views,urls}.py`. View'lar yupqa.
   Faqat `user:{pk}` yoki IP kaliti butun binoni bitta byudjetga tiqadi.
   Kenglarini oshirish (`THROTTLE_*`) — mashina chegarasini emas. DRF ro'yxati
   har so'rovda to'liq qayta yoziladi — o'n minglab limit qo'ymang.
+  JSHSHIR qidiruvining 429 javobida `details.scope` (`pinfl`/`device`/
+  `operator`) va haqiqiy `details.wait` (`ScopeDetailsThrottleMixin`) —
+  operator "boshqa talabgorni qidirish mumkinmi" ni biladi. Client bu yo'lga
+  `Retry-After` darvozasini QO'YMAYDI (`ApiClient.request(gate=False)`):
+  darvoza yo'l bo'yicha, chegara esa JSHSHIR bo'yicha — bitta JSHSHIR
+  butun qidiruvni 5 daqiqaga yopardi.
 * Har client login'i (ruxsat HA/YO'Q, manba IP, qurilma) →
   `backend/logs/client_access.log` (`client_access` logger), `AuditLog` ga emas.
 

@@ -72,6 +72,12 @@ class _Handler(BaseHTTPRequestHandler):
             body = json.dumps({"success": False,
                                "error": {"code": "throttled", "message": "slow down"}}).encode()
             return self._send(429, body, headers={"Retry-After": "30"})
+        if path == "/pinfl429":
+            # JSHSHIR qidiruvi: server chegarasi bitta JSHSHIR bo'yicha.
+            body = json.dumps({"success": False, "error": {
+                "code": "throttled", "message": "slow down",
+                "details": {"scope": "pinfl", "wait": 1790}}}).encode()
+            return self._send(429, body, headers={"Retry-After": "1790"})
         if path == "/badjson":
             return self._send(200, b"<html>captive portal</html>", "text/html")
         if path == "/empty":
@@ -229,6 +235,18 @@ class ApiClientFaultTests(unittest.TestCase):
         self.assertEqual(ctx.exception.code, "throttled")
         self.assertEqual(self.hits("/r429"), 1)  # ikkinchisi serverga bormadi
         self.assertEqual(self.api.get("/ok"), {"x": 1})  # boshqa yo'l ochiq
+
+    def test_ungated_request_reaches_server_again(self):
+        """`gate=False` (JSHSHIR qidiruvi): 429 keyingi so'rovni yopmaydi."""
+        for _ in range(2):
+            with self.assertRaises(ClientError) as ctx:
+                self.api.post("/pinfl429", gate=False)
+        self.assertEqual(self.hits("/pinfl429"), 2)
+        error = ctx.exception
+        self.assertEqual((error.code, error.details["scope"]), ("throttled", "pinfl"))
+        # Muddat serverning haqiqiysi (~30 daq), 300 s ga qisilgani emas.
+        self.assertIn("~30 daqiqaga", error.message)
+        self.assertIn("Boshqa talabgorlarni", error.message)
 
     # --- refresh ------------------------------------------------------
     def test_refresh_network_failure_is_not_auth_expired(self):
