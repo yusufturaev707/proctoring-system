@@ -105,11 +105,16 @@ LOCAL_APPS = [
     "apps.exams",
     "apps.proctoring",
     "apps.integrations",
+    "apps.monitoring",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
 MIDDLEWARE = [
+    # ENG TASHQARIDA: so'rov vaqti boshqa middleware'larni ham o'z ichiga
+    # olsin (foydalanuvchi sezadigan vaqt shu). `SYSTEM_MONITOR["ENABLED"]`
+    # o'chiq bo'lsa o'zini zanjirdan olib tashlaydi (`MiddlewareNotUsed`).
+    "apps.monitoring.middleware.RequestMetricsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -241,6 +246,7 @@ CELERY_TASK_ROUTES = {
     "proctoring.purge_expired_screenshots": {"queue": "maintenance"},
     "proctoring.purge_expired_evidence": {"queue": "maintenance"},
     "devices.*": {"queue": "maintenance"},
+    "monitoring.*": {"queue": "maintenance"},
 }
 
 
@@ -813,3 +819,27 @@ CAMERA_PROBE_TIMEOUT = float(env_int("CAMERA_PROBE_TIMEOUT", 3))
 # qayta ulanadi (o'quvchi issiq qoladi, uzilish sezilmaydi).
 CAMERA_LIVE_MAX_STREAMS = env_int("CAMERA_LIVE_MAX_STREAMS", 2)
 CAMERA_LIVE_STREAM_SECONDS = env_int("CAMERA_LIVE_STREAM_SECONDS", 60)
+
+# --- Server holati (admin panel, `apps/monitoring`) ---
+#
+# Panelning «Server holati» sahifasi: CPU/RAM/disk/tarmoq, systemd
+# servislari, PostgreSQL, Redis, Celery va HTTP so'rovlar statistikasi.
+# Prometheus/Grafana o'rnini BOSMAYDI (`deploy/MONITORING.md`) — bu
+# imtihon kuni administrator bir qarashda "hammasi joyidami?" degan
+# savolga javob olishi uchun.
+SYSTEM_MONITOR = {
+    "ENABLED": env_bool("SYSTEM_MONITOR_ENABLED", True),
+    # systemd unit'lari: `glob` qo'llanadi (Debian'da PostgreSQL haqiqiy
+    # unit'i `postgresql@15-main`, `postgresql.service` esa bo'sh qobiq).
+    # Bo'sh — standart ro'yxat (`apps/monitoring/host.py:DEFAULT_UNITS`).
+    "UNITS": env_list("SYSTEM_MONITOR_UNITS", []),
+    # Tinglanayotgan portlar: navbat (backlog) va ulanishlar soni.
+    # `nom:port` — bo'sh bo'lsa standart (`host.DEFAULT_PORTS`).
+    "PORTS": env_list("SYSTEM_MONITOR_PORTS", []),
+    # nginx `stub_status` manzili (`deploy/nginx.conf.example`, faqat
+    # lokal). Bo'sh — nginx ko'rsatkichlari o'chiq.
+    "NGINX_STATUS_URL": env("SYSTEM_MONITOR_NGINX_STATUS_URL", ""),
+    # Bir nechta administrator sahifani ochib qo'yganda yig'ish xarajati
+    # ko'paymasin: natija shuncha soniya umumiy keshda turadi.
+    "CACHE_SECONDS": env_int("SYSTEM_MONITOR_CACHE_SECONDS", 3),
+}

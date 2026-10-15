@@ -20,3 +20,21 @@ Redis 684 B/sessiya + ~190 B/hodisa (oqim `EVENT_STREAM_MAXLEN` 500k -> ~95 MB).
 
 Ixtiyoriy: Prometheus + node_exporter, postgres_exporter, redis_exporter,
 Grafana (yoki netdata) — yuqoridagi ko'rsatkichlarning o'zi.
+
+## Panel: «Server holati» (`/system`)
+
+Yuqoridagi buyruqlarning asosiylari panelda bitta sahifada (`apps/monitoring`,
+ruxsat `system.view`, faqat respublika darajasi): CPU (yadrolar, iowait,
+**steal** — ESXi xosti band), RAM/swap, PSI, disklar (inode, `%util`,
+`await`, to'lish prognozi), portlar navbati (`ss -ltn` Recv-Q), systemd
+servislari (holat, `NRestarts`, CPU, xotira), PostgreSQL, Redis, ingest
+oqimlari, Celery davriy vazifalari va HTTP so'rovlar (p50/p95/p99, 5xx,
+marshrutlar). Muammolar yuqoridagi SLO chegaralari bilan
+(`apps/monitoring/thresholds.py`) — sabab va "nima qilish kerak" bilan.
+
+* Tarix (24 soat, 30 s) — `monitoring.sample_system` (beat + maintenance).
+* nginx ko'rsatkichlari — `SYSTEM_MONITOR_NGINX_STATUS_URL` va
+  `nginx.conf.example` oxiridagi lokal `8081` bloki.
+* Bitta node uchun mo'ljallangan: xost ko'rsatkichlari so'rovni bajargan
+  serverniki. Bir nechta node — Prometheus + node_exporter.
+

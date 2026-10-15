@@ -39,6 +39,7 @@ const ModelVersionsPage = lazy(ROUTE_LOADERS['/model-versions'])
 const ProctoringPoliciesPage = lazy(ROUTE_LOADERS['/proctoring-policies'])
 const RiskWeightsPage = lazy(ROUTE_LOADERS['/risk-weights'])
 const AuditLogs = lazy(ROUTE_LOADERS['/audit'])
+const SystemStatus = lazy(ROUTE_LOADERS['/system'])
 const Profile = lazy(ROUTE_LOADERS['/profile'])
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -121,6 +122,7 @@ const ROUTES = [
   },
   { path: '/risk-weights', element: <RiskWeightsPage />, permission: 'controls.proctoring_view' },
   { path: '/audit', element: <AuditLogs />, permission: 'audit.view' },
+  { path: '/system', element: <SystemStatus />, permission: 'system.view' },
   { path: '/profile', element: <Profile />, permission: null },
 ]
 

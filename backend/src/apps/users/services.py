@@ -121,6 +121,13 @@ DEFAULT_PERMISSIONS: list[tuple[str, str, str]] = [
     # ochish audit izida qoladi.
     ("evidence.view", "Dalillarni ko'rish", "sessions"),
     ("audit.view", "Audit yozuvlarini ko'rish", "audit"),
+    # Server holati (CPU, disk, servislar, so'rovlar) — infratuzilma
+    # ma'lumoti, imtihon emas. Standart rollarning hech biriga berilmaydi
+    # (Administrator `*` orqali oladi); qo'shimcha faqat respublika
+    # darajasidagi rolga ma'no beradi (`RepublicLevelOnly`). Guruh
+    # `server`, `system` emas: u to'liq huquq (`*`) uchun band va rol
+    # muharririda alohida chiziladi (`permissionMeta.SPECIAL_GROUPS`).
+    ("system.view", "Server holatini ko'rish", "server"),
     # Desktop client (operator ish o'rni)
     ("client.operate", "Desktop client'da ishlash", "client"),
     ("client.identity", "Talabgor shaxsini tasdiqlash", "client"),

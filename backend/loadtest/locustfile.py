@@ -93,6 +93,9 @@ def _(parser):
                    help="Bo'sh bo'lmagan batch'dagi o'rtacha hodisa soni")
     g.add_argument("--lt-ws", type=int, default=1, help="ws/client ulanishi (1/0)")
     g.add_argument("--lt-ws-host", default="", help="WS manzili (standart: host, port+1)")
+    g.add_argument("--lt-hosts", default="",
+                   help="Vergul bilan HTTP manzillar — foydalanuvchilar navbat bilan taqsimlanadi "
+                        "(balanslagichsiz lokal stend: `local_stack.ps1 -HttpWorkers`). Bo'sh — --host")
     g.add_argument("--lt-real-ip", type=int, default=1,
                    help="X-Real-IP = bino NAT IP (staging nginx realip / lokal TRUSTED_PROXY_COUNT=1)")
     g.add_argument("--lt-finish-at-minutes", type=float, default=0.0,
@@ -158,6 +161,26 @@ def _init(environment, **_kw):
     _ENV = environment
 
 
+_HOST_COUNTER = count()
+
+
+def _pick_host(environment, default):
+    """
+    `--lt-hosts` bo'yicha navbatdagi manzil (round-robin).
+
+    Lokal Windows stendida HTTP — alohida jarayonlar alohida portlarda
+    (`local_stack.ps1` izohi: ko'p jarayonli uvicorn select() chegarasiga
+    uriladi). Staging'da nginx balanslaydi va bu parametr bo'sh qoladi.
+    """
+    hosts = [h.strip() for h in (getattr(environment.parsed_options, "lt_hosts", "") or "").split(",")
+             if h.strip()]
+    if not hosts:
+        return default
+    with _LOCK:
+        n = next(_HOST_COUNTER)
+    return hosts[n % len(hosts)]
+
+
 def _multipart(fields: dict, files: dict) -> tuple[bytes, str]:
     boundary = uuid.uuid4().hex
     out = []
@@ -189,6 +212,11 @@ class ExamClient(BaseHttpUser):
     # Keyingi taymergacha uxlaydi (heartbeat/presence/events/kadr).
     network_timeout = 30.0
     connection_timeout = 10.0
+
+    def __init__(self, environment):
+        # Mijoz (`self.client`) `super().__init__` da `self.host` bilan yaratiladi.
+        self.host = _pick_host(environment, self.host)
+        super().__init__(environment)
 
     def wait_time(self):
         return max(0.05, min(self._due.values()) - time.time()) if getattr(self, "_due", None) else 1.0
@@ -528,17 +556,31 @@ class PanelUser(BaseHttpUser):
     fixed_count = 20
     wait_time = between(1, 2)
 
+    def __init__(self, environment):
+        self.host = _pick_host(environment, self.host)
+        super().__init__(environment)
+
     def on_start(self):
         self.opts = self.environment.parsed_options
         with _LOCK:
             n = next(_PANEL_COUNTER)
         names = _MANIFEST["proctors"]
         self.username = names[n % len(names)]
-        resp = self.client.post(f"{API}/auth/login/", json={
-            "username": self.username, "password": _MANIFEST["password"]}, name="panel auth/login")
-        data = (resp.json() or {}).get("data") or {}
-        if not data.get("access"):
-            raise StopUser()
+        # `surface: "panel"` — panel login'i (frontend shunday yuboradi); usiz
+        # server uni client login'i deb IP ro'yxatidan o'tkazadi (403).
+        # Muvaffaqiyatsiz login'da proktor kutib qayta urinadi. ILGARI `StopUser`
+        # (yoki tarmoq xatosida `ErrorResponse.json` AttributeError) edi —
+        # Locust `fixed_count` foydalanuvchini DARHOL qayta tug'dirib, cheksiz
+        # tsikl hosil qilardi: ishchi heartbeat'ni o'tkazib yuborib, master
+        # spawn'ni qayta yuborardi va foydalanuvchilar soni 5020 dan oshib ketdi.
+        while True:
+            resp = self.client.post(f"{API}/auth/login/", json={
+                "username": self.username, "password": _MANIFEST["password"], "surface": "panel"},
+                name="panel auth/login")
+            data = _envelope_data(resp)
+            if data.get("access"):
+                break
+            gevent.sleep(5)
         self.h = {"Authorization": f"Bearer {data['access']}"}
         if self.opts.lt_conn_close:
             self.h["Connection"] = "close"
@@ -599,7 +641,7 @@ class PanelUser(BaseHttpUser):
             self.due["jwt"] = now + 29 * 60
             r = self.client.post(f"{API}/auth/refresh/", json={"refresh": self.refresh_token},
                                  name="panel auth/refresh")
-            data = (r.json() or {}).get("data") or {}
+            data = _envelope_data(r)
             if data.get("access"):
                 self.h = {**self.h, "Authorization": f"Bearer {data['access']}"}
                 self.refresh_token = data.get("refresh") or self.refresh_token
@@ -633,6 +675,15 @@ class PanelUser(BaseHttpUser):
 
 
 _PANEL_COUNTER = count()
+
+
+def _envelope_data(resp) -> dict:
+    """`{success, data}` konvertidan `data` — tarmoq xatosida ham istisnosiz."""
+    try:
+        body = resp.json() if getattr(resp, "text", None) else {}
+    except Exception:  # noqa: BLE001 — geventhttpclient ErrorResponse'da `.json` yo'q
+        return {}
+    return (body or {}).get("data") or {} if isinstance(body, dict) else {}
 
 
 # --------------------------------------------------------------------------

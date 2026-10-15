@@ -1,0 +1,44 @@
+Method,Name,Error,Occurrences
+POST,panel auth/login,"RetriesExceeded('http://127.0.0.1:8021/api/v1/auth/login/', 0, original=timed out)",2
+POST,client/handshake,CatchResponseError('0 '),12
+POST,client/face/verify,CatchResponseError('0 '),22
+WS,ws/monitor connect,WebSocketTimeoutException('Connection timed out'),16
+GET,panel dashboard/summary,CatchResponseError('0'),1
+POST,panel auth/login,"RetriesExceeded('http://127.0.0.1:8022/api/v1/auth/login/', 0, original=timed out)",2
+GET,client/exam/config,CatchResponseError('0 '),16
+POST,auth/login,CatchResponseError('0 '),820
+GET,panel dashboard/zones,CatchResponseError('0'),3
+GET,client/camera/config,CatchResponseError('0 '),14
+WS,ws/client connect,WebSocketConnectionClosedException('Connection to remote host was lost.'),8
+GET,panel sessions/live,CatchResponseError('0'),2
+POST,client/identity/confirm,CatchResponseError('0 '),46
+POST,client/events,CatchResponseError('503 service_unavailable'),3
+POST,client/presence,CatchResponseError('0 '),982
+POST,client/events,CatchResponseError('0 '),1019
+POST,panel auth/login,"RetriesExceeded('http://127.0.0.1:8023/api/v1/auth/login/', 0, original=timed out)",2
+GET,client/camera/config,CatchResponseError('503 service_unavailable'),1
+POST,client/exam/access,CatchResponseError('503 service_unavailable'),1
+GET,panel computers,CatchResponseError('0'),2
+POST,auth/login,CatchResponseError('503 service_unavailable'),7
+POST,client/exam/access,CatchResponseError('0 '),16
+POST,client/face/periodic,CatchResponseError('0 '),63
+POST,panel auth/login,"RetriesExceeded('http://127.0.0.1:8024/api/v1/auth/login/', 0, original=timed out)",1
+POST,client/camera/check,CatchResponseError('0 '),19
+WS,ws/monitor connect,"WebSocketBadStatusException(""Handshake status 500 Internal Server Error -+-+- {'date': 'Thu, 15 Oct 2026 05:12:37 GMT', 'connection': 'close', 'content-length': '21', 'content-type': 'text/plain; charset=utf-8'} -+-+- b'Internal Server Error'"")",1
+POST,panel auth/login,"RetriesExceeded('http://127.0.0.1:8030/api/v1/auth/login/', 0, original=timed out)",1
+POST,client/candidate/lookup,CatchResponseError('0 '),20
+GET,panel sessions/{id},CatchResponseError('0'),7
+POST,client/proctoring/start,CatchResponseError('0 '),3
+WS,ws/client connect,"ConnectionAbortedError(10053, 'An established connection was aborted by the software in your host machine', None, 10053, None)",530
+POST,client/camera/check,CatchResponseError('503 service_unavailable'),1
+POST,client/screenshots/upload,CatchResponseError('0 '),391
+POST,client/presence,CatchResponseError('503 service_unavailable'),7
+WS,ws/client connect,"ConnectionResetError(10054, 'An existing connection was forcibly closed by the remote host', None, 10054, None)",168
+POST,client/screenshots/upload,CatchResponseError('503 service_unavailable'),1
+POST,client/heartbeat,CatchResponseError('0 '),1842
+POST,client/face/attempt,CatchResponseError('0 '),5
+POST,client/candidate/lookup,CatchResponseError('503 service_unavailable'),1
+WS,ws/client connect,TimeoutError('timed out'),13
+WS,ws/client connect,WebSocketTimeoutException('Connection timed out'),1
+POST,client/heartbeat,CatchResponseError('503 service_unavailable'),7
+POST,client/proctoring/start,CatchResponseError('400 camera_check_required'),1

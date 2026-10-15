@@ -462,15 +462,12 @@ def _broadcast(record: dict) -> None:
         return
 
     try:
-        from asgiref.sync import async_to_sync
-        from channels.layers import get_channel_layer
-
-        layer = get_channel_layer()
-        if layer is None:
-            return
+        # Doimiy loop orqali — sabab `realtime._LayerLoop` da (har
+        # hodisaga yangi Redis ulanishi ochilmasin).
+        from apps.proctoring.services.realtime import group_send
 
         zone_id = record.get("zone_id") or 0
-        async_to_sync(layer.group_send)(
+        group_send(
             f"zone.{zone_id}",
             {
                 "type": "proctoring.event",

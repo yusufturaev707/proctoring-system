@@ -47,6 +47,13 @@ export const dashboard = {
   devices: (): Data => api.get('/dashboard/devices/').then((r) => r.data),
 }
 
+/** Server holati (`apps/monitoring`) — faqat respublika darajasi, `system.view`. */
+export const system = {
+  status: (): Data => api.get('/system/status/').then((r) => r.data),
+  history: (range: string): Data => api.get('/system/history/', { params: { range } }).then((r) => r.data),
+  requests: (minutes: number): Data => api.get('/system/requests/', { params: { minutes } }).then((r) => r.data),
+}
+
 export const sessions = {
   ...crud('/sessions/'),
   live: (params?: QueryParams): Data => api.get('/sessions/live/', { params }).then((r) => r.data),

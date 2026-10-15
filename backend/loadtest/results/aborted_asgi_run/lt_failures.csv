@@ -1,0 +1,22 @@
+Method,Name,Error,Occurrences
+GET,panel dashboard/zones,CatchResponseError('500'),33
+GET,panel computer-bookings/seats,CatchResponseError('500'),3
+POST,client/exam/access,CatchResponseError('500 internal_error'),2
+POST,client/identity/confirm,CatchResponseError('500 internal_error'),2
+GET,panel computer-bookings/zones,CatchResponseError('500'),4
+WS,ws/monitor connect,WebSocketConnectionClosedException('Connection to remote host was lost.'),2
+POST,client/handshake,CatchResponseError('500 internal_error'),152
+GET,panel computers,CatchResponseError('500'),4
+POST,client/presence,CatchResponseError('500 internal_error'),21
+POST,auth/login,CatchResponseError('500 internal_error'),1479
+GET,panel sessions (list),CatchResponseError('500'),5
+POST,client/camera/check,CatchResponseError('500 internal_error'),32
+GET,panel sessions/live,CatchResponseError('500'),64
+POST,client/face/attempt,CatchResponseError('500 internal_error'),5
+POST,client/candidate/lookup,CatchResponseError('500 internal_error'),44
+GET,panel device-tokens,CatchResponseError('500'),6
+POST,client/face/verify,CatchResponseError('500 internal_error'),5
+GET,client/exam/config,CatchResponseError('500 internal_error'),30
+GET,panel sessions/{id},CatchResponseError('500'),5
+GET,panel dashboard/summary,CatchResponseError('500'),42
+GET,client/camera/config,CatchResponseError('500 internal_error'),25

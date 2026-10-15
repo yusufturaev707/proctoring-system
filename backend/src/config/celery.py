@@ -72,6 +72,14 @@ app.conf.beat_schedule = {
         "schedule": 60.0,
         "options": {"queue": "maintenance", "expires": 50},
     },
+    # Server holati tarixi (panel grafiklari). Navbat `maintenance`:
+    # ingest ishchisi band bo'lsa ham tarix uzilmasin — aksincha, aynan
+    # o'sha paytdagi CPU/disk ko'rinishi kerak.
+    "monitoring-sample-system": {
+        "task": "monitoring.sample_system",
+        "schedule": 30.0,
+        "options": {"queue": "maintenance", "expires": 25},
+    },
     "rotate-event-partitions": {
         "task": "proctoring.rotate_event_partitions",
         "schedule": crontab(hour=3, minute=0),

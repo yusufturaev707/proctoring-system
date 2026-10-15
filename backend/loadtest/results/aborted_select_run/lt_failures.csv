@@ -1,0 +1,60 @@
+Method,Name,Error,Occurrences
+WS,ws/client connect,"WebSocketBadStatusException(""Handshake status 403 Forbidden -+-+- {'date': 'Thu, 15 Oct 2026 04:53:29 GMT', 'connection': 'close', 'content-length': '0', 'content-type': 'text/plain; charset=utf-8'} -+-+- b''"")",86
+POST,client/handshake,CatchResponseError('0 '),97
+POST,client/face/verify,CatchResponseError('0 '),19
+WS,ws/monitor connect,WebSocketTimeoutException('Connection timed out'),20
+GET,client/exam/config,CatchResponseError('0 '),44
+POST,auth/login,CatchResponseError('0 '),352
+WS,ws/monitor connect,"OSError(10048, '[WinError 10048] Only one usage of each socket address (protocol/network address/port) is normally permitted.')",6
+WS,ws/client connect,"WebSocketBadStatusException(""Handshake status 403 Forbidden -+-+- {'date': 'Thu, 15 Oct 2026 04:53:28 GMT', 'connection': 'close', 'content-length': '0', 'content-type': 'text/plain; charset=utf-8'} -+-+- b''"")",68
+POST,client/exam/access,CatchResponseError('403 identity_not_confirmed'),4
+WS,ws/client connect,"WebSocketBadStatusException(""Handshake status 403 Forbidden -+-+- {'date': 'Thu, 15 Oct 2026 04:51:03 GMT', 'connection': 'close', 'content-length': '0', 'content-type': 'text/plain; charset=utf-8'} -+-+- b''"")",60
+GET,client/camera/config,CatchResponseError('0 '),49
+WS,ws/client connect,"WebSocketBadStatusException(""Handshake status 403 Forbidden -+-+- {'date': 'Thu, 15 Oct 2026 04:53:58 GMT', 'connection': 'close', 'content-length': '0', 'content-type': 'text/plain; charset=utf-8'} -+-+- b''"")",46
+WS,ws/client connect,"WebSocketBadStatusException(""Handshake status 403 Forbidden -+-+- {'date': 'Thu, 15 Oct 2026 04:52:18 GMT', 'connection': 'close', 'content-length': '0', 'content-type': 'text/plain; charset=utf-8'} -+-+- b''"")",51
+WS,ws/monitor connect,"ConnectionResetError(10054, 'An existing connection was forcibly closed by the remote host', None, 10054, None)",126
+WS,ws/client connect,"WebSocketBadStatusException(""Handshake status 403 Forbidden -+-+- {'date': 'Thu, 15 Oct 2026 04:52:19 GMT', 'connection': 'close', 'content-length': '0', 'content-type': 'text/plain; charset=utf-8'} -+-+- b''"")",53
+WS,ws/client connect,"WebSocketBadStatusException(""Handshake status 403 Forbidden -+-+- {'date': 'Thu, 15 Oct 2026 04:53:05 GMT', 'connection': 'close', 'content-length': '0', 'content-type': 'text/plain; charset=utf-8'} -+-+- b''"")",59
+GET,panel sessions/live,CatchResponseError('0'),1
+POST,client/identity/confirm,CatchResponseError('0 '),39
+WS,ws/client connect,"WebSocketBadStatusException(""Handshake status 403 Forbidden -+-+- {'date': 'Thu, 15 Oct 2026 04:53:30 GMT', 'connection': 'close', 'content-length': '0', 'content-type': 'text/plain; charset=utf-8'} -+-+- b''"")",61
+POST,client/presence,CatchResponseError('0 '),354
+WS,ws/client connect,"WebSocketBadStatusException(""Handshake status 403 Forbidden -+-+- {'date': 'Thu, 15 Oct 2026 04:51:01 GMT', 'connection': 'close', 'content-length': '0', 'content-type': 'text/plain; charset=utf-8'} -+-+- b''"")",83
+WS,ws/monitor connect,WebSocketConnectionClosedException('Connection to remote host was lost.'),9
+WS,ws/client connect,"WebSocketBadStatusException(""Handshake status 403 Forbidden -+-+- {'date': 'Thu, 15 Oct 2026 04:52:21 GMT', 'connection': 'close', 'content-length': '0', 'content-type': 'text/plain; charset=utf-8'} -+-+- b''"")",29
+WS,ws/client connect,"WebSocketBadStatusException(""Handshake status 403 Forbidden -+-+- {'date': 'Thu, 15 Oct 2026 04:54:13 GMT', 'connection': 'close', 'content-length': '0', 'content-type': 'text/plain; charset=utf-8'} -+-+- b''"")",124
+WS,ws/client connect,"WebSocketBadStatusException(""Handshake status 403 Forbidden -+-+- {'date': 'Thu, 15 Oct 2026 04:53:04 GMT', 'connection': 'close', 'content-length': '0', 'content-type': 'text/plain; charset=utf-8'} -+-+- b''"")",42
+POST,client/events,CatchResponseError('0 '),245
+WS,ws/client connect,"WebSocketBadStatusException(""Handshake status 403 Forbidden -+-+- {'date': 'Thu, 15 Oct 2026 04:51:07 GMT', 'connection': 'close', 'content-length': '0', 'content-type': 'text/plain; charset=utf-8'} -+-+- b''"")",19
+WS,ws/client connect,"WebSocketBadStatusException(""Handshake status 403 Forbidden -+-+- {'date': 'Thu, 15 Oct 2026 04:53:59 GMT', 'connection': 'close', 'content-length': '0', 'content-type': 'text/plain; charset=utf-8'} -+-+- b''"")",113
+WS,ws/client connect,"WebSocketBadStatusException(""Handshake status 403 Forbidden -+-+- {'date': 'Thu, 15 Oct 2026 04:51:05 GMT', 'connection': 'close', 'content-length': '0', 'content-type': 'text/plain; charset=utf-8'} -+-+- b''"")",14
+WS,ws/client connect,"WebSocketBadStatusException(""Handshake status 403 Forbidden -+-+- {'date': 'Thu, 15 Oct 2026 04:51:00 GMT', 'connection': 'close', 'content-length': '0', 'content-type': 'text/plain; charset=utf-8'} -+-+- b''"")",43
+WS,ws/client connect,"OSError(10048, '[WinError 10048] Only one usage of each socket address (protocol/network address/port) is normally permitted.')",672
+WS,ws/client connect,"WebSocketBadStatusException(""Handshake status 403 Forbidden -+-+- {'date': 'Thu, 15 Oct 2026 04:50:59 GMT', 'connection': 'close', 'content-length': '0', 'content-type': 'text/plain; charset=utf-8'} -+-+- b''"")",52
+WS,ws/client connect,"ConnectionRefusedError(10061, '[WinError 10061] No connection could be made because the target machine actively refused it.')",2598
+WS,ws/client connect,"WebSocketBadStatusException(""Handshake status 403 Forbidden -+-+- {'date': 'Thu, 15 Oct 2026 04:53:47 GMT', 'connection': 'close', 'content-length': '0', 'content-type': 'text/plain; charset=utf-8'} -+-+- b''"")",6
+WS,ws/client connect,"WebSocketBadStatusException(""Handshake status 403 Forbidden -+-+- {'date': 'Thu, 15 Oct 2026 04:54:14 GMT', 'connection': 'close', 'content-length': '0', 'content-type': 'text/plain; charset=utf-8'} -+-+- b''"")",160
+WS,ws/client connect,"WebSocketBadStatusException(""Handshake status 403 Forbidden -+-+- {'date': 'Thu, 15 Oct 2026 04:53:27 GMT', 'connection': 'close', 'content-length': '0', 'content-type': 'text/plain; charset=utf-8'} -+-+- b''"")",28
+POST,client/exam/access,CatchResponseError('0 '),58
+POST,client/face/periodic,CatchResponseError('0 '),19
+WS,ws/client connect,"WebSocketBadStatusException(""Handshake status 403 Forbidden -+-+- {'date': 'Thu, 15 Oct 2026 04:51:02 GMT', 'connection': 'close', 'content-length': '0', 'content-type': 'text/plain; charset=utf-8'} -+-+- b''"")",31
+WS,ws/client connect,"WebSocketBadStatusException(""Handshake status 403 Forbidden -+-+- {'date': 'Thu, 15 Oct 2026 04:53:02 GMT', 'connection': 'close', 'content-length': '0', 'content-type': 'text/plain; charset=utf-8'} -+-+- b''"")",87
+WS,ws/client connect,"WebSocketBadStatusException(""Handshake status 403 Forbidden -+-+- {'date': 'Thu, 15 Oct 2026 04:53:32 GMT', 'connection': 'close', 'content-length': '0', 'content-type': 'text/plain; charset=utf-8'} -+-+- b''"")",3
+POST,client/camera/check,CatchResponseError('0 '),52
+WS,ws/monitor connect,"ConnectionRefusedError(10061, '[WinError 10061] No connection could be made because the target machine actively refused it.')",35
+WS,ws/client connect,"WebSocketBadStatusException(""Handshake status 403 Forbidden -+-+- {'date': 'Thu, 15 Oct 2026 04:52:20 GMT', 'connection': 'close', 'content-length': '0', 'content-type': 'text/plain; charset=utf-8'} -+-+- b''"")",154
+POST,client/candidate/lookup,CatchResponseError('0 '),44
+WS,ws/client connect,"WebSocketBadStatusException(""Handshake status 403 Forbidden -+-+- {'date': 'Thu, 15 Oct 2026 04:53:57 GMT', 'connection': 'close', 'content-length': '0', 'content-type': 'text/plain; charset=utf-8'} -+-+- b''"")",31
+POST,client/proctoring/start,CatchResponseError('0 '),27
+WS,ws/client connect,"WebSocketBadStatusException(""Handshake status 403 Forbidden -+-+- {'date': 'Thu, 15 Oct 2026 04:53:31 GMT', 'connection': 'close', 'content-length': '0', 'content-type': 'text/plain; charset=utf-8'} -+-+- b''"")",66
+POST,client/screenshots/upload,CatchResponseError('0 '),137
+WS,ws/client connect,"ConnectionResetError(10054, 'An existing connection was forcibly closed by the remote host', None, 10054, None)",4752
+GET,panel computer-bookings/seats,CatchResponseError('0'),1
+WS,ws/client connect,"WebSocketBadStatusException(""Handshake status 403 Forbidden -+-+- {'date': 'Thu, 15 Oct 2026 04:51:06 GMT', 'connection': 'close', 'content-length': '0', 'content-type': 'text/plain; charset=utf-8'} -+-+- b''"")",154
+POST,client/heartbeat,CatchResponseError('0 '),512
+POST,client/face/attempt,CatchResponseError('0 '),8
+WS,ws/client connect,"WebSocketBadStatusException(""Handshake status 403 Forbidden -+-+- {'date': 'Thu, 15 Oct 2026 04:53:03 GMT', 'connection': 'close', 'content-length': '0', 'content-type': 'text/plain; charset=utf-8'} -+-+- b''"")",55
+WS,ws/client connect,TimeoutError('timed out'),1
+WS,ws/client connect,WebSocketTimeoutException('Connection timed out'),1197
+WS,ws/client connect,"WebSocketBadStatusException(""Handshake status 500 Internal Server Error -+-+- {'date': 'Thu, 15 Oct 2026 04:53:45 GMT', 'connection': 'close', 'content-length': '21', 'content-type': 'text/plain; charset=utf-8'} -+-+- b'Internal Server Error'"")",2
+WS,ws/client connect,"WebSocketBadStatusException(""Handshake status 403 Forbidden -+-+- {'date': 'Thu, 15 Oct 2026 04:54:00 GMT', 'connection': 'close', 'content-length': '0', 'content-type': 'text/plain; charset=utf-8'} -+-+- b''"")",112

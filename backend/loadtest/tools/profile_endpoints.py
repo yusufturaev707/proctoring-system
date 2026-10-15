@@ -296,7 +296,8 @@ def run_panel(rec: Recorder, manifest: dict, repeats: int) -> None:
     anon = Client()
     for name in manifest["proctors"][:max(1, repeats)]:
         data = rec.call("panel_login", anon, "post", f"{API}/auth/login/",
-                        json_body={"username": name, "password": manifest["password"]})
+                        json_body={"username": name, "password": manifest["password"],
+                                   "surface": "panel"})  # panel login (IP ro'yxatisiz)
         if not data:
             return
         cli = Client(HTTP_AUTHORIZATION=f"Bearer {data['access']}")

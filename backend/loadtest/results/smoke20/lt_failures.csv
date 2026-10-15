@@ -1,0 +1,2 @@
+Method,Name,Error,Occurrences
+POST,panel auth/login,LocustBadStatusCode(code=403),16

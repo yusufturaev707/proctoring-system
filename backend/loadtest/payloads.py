@@ -214,7 +214,10 @@ def handshake_body(ident: dict) -> dict:
     return {
         "app_version": "1.0.0",
         "app_hash": "",
-        "hardware_fingerprint": f"muid:{ident['machine_uuid']}",
+        # Joriy client shakli (`system_info.hardware_fingerprint`): UUID + MAC
+        # juftligi. Seed etaloni eski `muid:<UUID>` — birinchi handshake
+        # server o'tishini (`is_fingerprint_upgrade`) ham sinaydi.
+        "hardware_fingerprint": f"muid:{ident['machine_uuid']}|mac:{ident['mac']}",
         "monitors": 1,
         "cameras": 1,
         "machine_uuid": ident["machine_uuid"],

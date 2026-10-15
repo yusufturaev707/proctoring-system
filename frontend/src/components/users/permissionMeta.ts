@@ -11,6 +11,7 @@ import DesktopIcon from '@mui/icons-material/DesktopMacOutlined'
 import WebIcon from '@mui/icons-material/WebOutlined'
 import ShieldIcon from '@mui/icons-material/AdminPanelSettingsOutlined'
 import KeyIcon from '@mui/icons-material/VpnKeyOutlined'
+import ServerIcon from '@mui/icons-material/DnsOutlined'
 
 /**
  * Ruxsatlar katalogining ko'rinishi — rol muharriri, foydalanuvchi
@@ -57,13 +58,14 @@ export const GROUP_META: Record<string, GroupMeta> = {
   controls: { label: 'Sozlamalar', icon: TuneIcon, description: 'Client profili, IP ro‘yxati, chiqish paroli, AI siyosati' },
   users: { label: 'Foydalanuvchilar', icon: PeopleIcon, description: 'Xodimlar va rollar' },
   audit: { label: 'Audit', icon: HistoryIcon, description: 'Kim, qachon, nima qildi' },
+  server: { label: 'Server', icon: ServerIcon, description: 'Server holati: CPU, disk, servislar, so‘rovlar' },
   client: { label: 'Desktop client', icon: DesktopIcon, description: 'Imtihon markazidagi ish o‘rni (operator)' },
 }
 
 /** Ish tartibi bo'yicha — menyu tartibi bilan bir xil. */
 const GROUP_ORDER = [
   'dashboard', 'sessions', 'technical', 'exams', 'devices', 'regions',
-  'controls', 'users', 'audit', 'client',
+  'controls', 'users', 'audit', 'server', 'client',
 ]
 
 export const groupMeta = (group: string): GroupMeta =>

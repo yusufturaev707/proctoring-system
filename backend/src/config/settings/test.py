@@ -73,3 +73,8 @@ SCREENSHOT_STORAGE["ROOT"] = Path(  # noqa: F405
     tempfile.mkdtemp(prefix="proctoring-screenshots-")
 )
 SCREENSHOT_STORAGE["SERVE_DIRECTLY"] = True  # noqa: F405
+
+# Server holati: middleware va Celery signallari har so'rov/vazifada
+# Redis'ga yozadi — testlarda bu shovqin va (Redis yo'q bo'lsa) kechikish.
+# Monitoring testlari o'zi `override_settings` bilan yoqadi.
+SYSTEM_MONITOR["ENABLED"] = False  # noqa: F405

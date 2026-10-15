@@ -1,0 +1,21 @@
+Method,Name,Error,Occurrences
+POST,client/handshake,CatchResponseError('0 '),3
+POST,client/face/verify,CatchResponseError('0 '),8
+POST,client/screenshots/upload,CatchResponseError('503 screenshot_store_failed'),1
+GET,client/exam/config,CatchResponseError('0 '),3
+POST,auth/login,CatchResponseError('0 '),48
+GET,client/camera/config,CatchResponseError('0 '),1
+POST,client/identity/confirm,CatchResponseError('0 '),8
+POST,client/presence,CatchResponseError('0 '),181
+POST,client/events,CatchResponseError('0 '),205
+POST,client/exam/access,CatchResponseError('0 '),7
+POST,client/face/periodic,CatchResponseError('0 '),22
+POST,client/camera/check,CatchResponseError('0 '),8
+POST,client/candidate/lookup,CatchResponseError('0 '),10
+POST,client/proctoring/start,CatchResponseError('0 '),5
+WS,ws/client connect,"ConnectionAbortedError(10053, 'An established connection was aborted by the software in your host machine', None, 10053, None)",80
+POST,client/screenshots/upload,CatchResponseError('0 '),89
+WS,ws/client connect,"ConnectionResetError(10054, 'An existing connection was forcibly closed by the remote host', None, 10054, None)",1
+POST,client/heartbeat,CatchResponseError('0 '),280
+POST,client/face/attempt,CatchResponseError('0 '),1
+WS,ws/client connect,"OSError(10055, '[WinError 10055] An operation on a socket could not be performed because the system lacked sufficient buffer space or because a queue was full.')",1

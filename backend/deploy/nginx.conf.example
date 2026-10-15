@@ -251,3 +251,22 @@ server {
 #   proxy_set_header X-Forwarded-For $remote_addr;
 #   proxy_set_header X-Forwarded-Proto $scheme;
 #   proxy_set_header X-Request-ID $request_id;
+
+# ---- nginx holati — panelning «Server holati» sahifasi uchun ----
+# Alohida LOKAL port: asosiy server bloki HTTPS va `server_name` ga
+# bog'langan, backend esa `http://127.0.0.1:8081/nginx_status` ni o'qiydi
+# (`SYSTEM_MONITOR_NGINX_STATUS_URL`). Tashqariga ochilmaydi.
+server {
+    listen 127.0.0.1:8081;
+    access_log off;
+
+    location = /nginx_status {
+        stub_status;
+        allow 127.0.0.1;
+        deny all;
+    }
+
+    location / {
+        return 404;
+    }
+}

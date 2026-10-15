@@ -29,6 +29,10 @@ Pillow>=11.0
 # dekodlash uchun (FFmpeg ichida). Serverda ML runtime YO'Q.
 opencv-python-headless>=4.10
 
+# ---- Server holati (admin panel, `apps/monitoring`) ----
+# CPU/xotira/disk/tarmoq hisoblagichlari; Linux va Windows (dev) uchun bitta API.
+psutil>=6.0
+
 # ---- Servers ----
 gunicorn>=23.0
 uvicorn[standard]>=0.34

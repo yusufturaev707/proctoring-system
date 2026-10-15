@@ -14,6 +14,7 @@ __all__ = [
     "HasRegionAssignment",
     "HasRolePermission",
     "RegionScopedPermission",
+    "RepublicLevelOnly",
     "RepublicLevelWrite",
     "scope_region_id",
 ]
@@ -83,6 +84,24 @@ class RepublicLevelWrite(BasePermission):
     def has_permission(self, request, view):
         if request.method in SAFE_METHODS:
             return True
+        user = request.user
+        return bool(user and user.is_authenticated and not user.is_region_scoped)
+
+
+class RepublicLevelOnly(BasePermission):
+    """
+    O'QISH ham faqat respublika darajasida (`RepublicLevelWrite` dan farqi).
+
+    Server holati (CPU, disk, servislar, barcha viloyatlar so'rovlari)
+    viloyatga bo'linmaydi: viloyat administratoriga u boshqa viloyatlar
+    yuklamasini va infratuzilma tafsilotini ochib qo'yardi, tuzatish
+    huquqi esa baribir unda emas.
+    """
+
+    message = "Bu bo'lim faqat respublika darajasidagi xodim uchun"
+    code = "republic_level_only"
+
+    def has_permission(self, request, view):
         user = request.user
         return bool(user and user.is_authenticated and not user.is_region_scoped)
 

@@ -26,6 +26,7 @@ import HistoryIcon from '@mui/icons-material/HistoryOutlined'
 import PolicyIcon from '@mui/icons-material/PolicyOutlined'
 import RiskIcon from '@mui/icons-material/SpeedOutlined'
 import SeatIcon from '@mui/icons-material/EventSeatOutlined'
+import ServerIcon from '@mui/icons-material/DnsOutlined'
 
 /**
  * Marshrut -> lazy import.
@@ -68,6 +69,7 @@ export const ROUTE_LOADERS: Record<string, () => Promise<PageModule>> = {
   '/proctoring-policies': () => import('../pages/crud/ProctoringPoliciesPage'),
   '/risk-weights': () => import('../pages/crud/RiskWeightsPage'),
   '/audit': () => import('../pages/AuditLogs'),
+  '/system': () => import('../pages/SystemStatus'),
   '/profile': () => import('../pages/Profile'),
 }
 
@@ -260,6 +262,10 @@ export const NAVIGATION: NavGroup[] = [
       {
         label: 'Audit jurnali', path: '/audit', icon: HistoryIcon, permission: 'audit.view',
         description: 'Kim, qachon, nima qildi — apellyatsiya uchun o‘zgarmas yozuvlar',
+      },
+      {
+        label: 'Server holati', path: '/system', icon: ServerIcon, permission: 'system.view',
+        description: 'CPU, xotira, disk, servislar va so‘rovlar — imtihon kuni “hammasi joyidami?”',
       },
     ],
   },

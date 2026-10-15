@@ -1,0 +1,427 @@
+{
+  "measured_at": "2026-10-15 10:20:56",
+  "environment": "Windows 11 dev, in-process Django test client, concurrency 1, PostgreSQL 17 + Redis 7 lokal (localhost)",
+  "users": 20,
+  "wall_seconds": 32.9,
+  "endpoints": {
+    "login": {
+      "n": 20,
+      "errors": 0,
+      "ms_median": 779.58,
+      "ms_p95": 973.8,
+      "req_bytes": 59,
+      "resp_bytes": 2027,
+      "sql": {
+        "SELECT": 7.05,
+        "INSERT": 2,
+        "UPDATE": 1,
+        "DELETE": 0
+      },
+      "redis_cmds": 6.0,
+      "group_sends": 0
+    },
+    "handshake": {
+      "n": 20,
+      "errors": 0,
+      "ms_median": 12.78,
+      "ms_p95": 42.09,
+      "req_bytes": 527,
+      "resp_bytes": 5013,
+      "sql": {
+        "SELECT": 8.2,
+        "INSERT": 0,
+        "UPDATE": 2,
+        "DELETE": 0
+      },
+      "redis_cmds": 3.0,
+      "group_sends": 0
+    },
+    "presence": {
+      "n": 20,
+      "errors": 0,
+      "ms_median": 8.44,
+      "ms_p95": 29.61,
+      "req_bytes": 18,
+      "resp_bytes": 132,
+      "sql": {
+        "SELECT": 4,
+        "INSERT": 0,
+        "UPDATE": 2,
+        "DELETE": 0
+      },
+      "redis_cmds": 6,
+      "group_sends": 0
+    },
+    "camera_config": {
+      "n": 20,
+      "errors": 0,
+      "ms_median": 6.39,
+      "ms_p95": 8.4,
+      "req_bytes": 0,
+      "resp_bytes": 1338,
+      "sql": {
+        "SELECT": 5,
+        "INSERT": 0,
+        "UPDATE": 0,
+        "DELETE": 0
+      },
+      "redis_cmds": 3,
+      "group_sends": 0
+    },
+    "camera_check": {
+      "n": 20,
+      "errors": 0,
+      "ms_median": 8.33,
+      "ms_p95": 11.16,
+      "req_bytes": 341,
+      "resp_bytes": 2378,
+      "sql": {
+        "SELECT": 5,
+        "INSERT": 0,
+        "UPDATE": 0,
+        "DELETE": 0
+      },
+      "redis_cmds": 5,
+      "group_sends": 0
+    },
+    "exam_config": {
+      "n": 20,
+      "errors": 0,
+      "ms_median": 6.79,
+      "ms_p95": 7.74,
+      "req_bytes": 0,
+      "resp_bytes": 4228,
+      "sql": {
+        "SELECT": 5,
+        "INSERT": 0,
+        "UPDATE": 0,
+        "DELETE": 0
+      },
+      "redis_cmds": 3,
+      "group_sends": 0
+    },
+    "candidate_lookup": {
+      "n": 20,
+      "errors": 0,
+      "ms_median": 182.42,
+      "ms_p95": 244.6,
+      "req_bytes": 133,
+      "resp_bytes": 18398,
+      "sql": {
+        "SELECT": 10,
+        "INSERT": 0,
+        "UPDATE": 0,
+        "DELETE": 0
+      },
+      "redis_cmds": 14,
+      "group_sends": 0
+    },
+    "face_attempt": {
+      "n": 20,
+      "errors": 0,
+      "ms_median": 17.85,
+      "ms_p95": 44.47,
+      "req_bytes": 141311,
+      "resp_bytes": 103,
+      "sql": {
+        "SELECT": 6,
+        "INSERT": 1,
+        "UPDATE": 0,
+        "DELETE": 0
+      },
+      "redis_cmds": 6,
+      "group_sends": 0
+    },
+    "face_verify": {
+      "n": 20,
+      "errors": 0,
+      "ms_median": 27.19,
+      "ms_p95": 283.74,
+      "req_bytes": 152714,
+      "resp_bytes": 270,
+      "sql": {
+        "SELECT": 7,
+        "INSERT": 2,
+        "UPDATE": 3,
+        "DELETE": 0
+      },
+      "redis_cmds": 10,
+      "group_sends": 0
+    },
+    "identity_confirm": {
+      "n": 20,
+      "errors": 0,
+      "ms_median": 9.63,
+      "ms_p95": 11.05,
+      "req_bytes": 23,
+      "resp_bytes": 308,
+      "sql": {
+        "SELECT": 5,
+        "INSERT": 1,
+        "UPDATE": 1,
+        "DELETE": 0
+      },
+      "redis_cmds": 1,
+      "group_sends": 0
+    },
+    "exam_access": {
+      "n": 20,
+      "errors": 0,
+      "ms_median": 8.83,
+      "ms_p95": 10.58,
+      "req_bytes": 0,
+      "resp_bytes": 406,
+      "sql": {
+        "SELECT": 5,
+        "INSERT": 0,
+        "UPDATE": 1,
+        "DELETE": 0
+      },
+      "redis_cmds": 1,
+      "group_sends": 0
+    },
+    "proctoring_start": {
+      "n": 20,
+      "errors": 0,
+      "ms_median": 12.59,
+      "ms_p95": 14.04,
+      "req_bytes": 21,
+      "resp_bytes": 977,
+      "sql": {
+        "SELECT": 5,
+        "INSERT": 1,
+        "UPDATE": 3,
+        "DELETE": 0
+      },
+      "redis_cmds": 3,
+      "group_sends": 0
+    },
+    "heartbeat": {
+      "n": 100,
+      "errors": 0,
+      "ms_median": 11.69,
+      "ms_p95": 12.85,
+      "req_bytes": 103,
+      "resp_bytes": 140,
+      "sql": {
+        "SELECT": 5,
+        "INSERT": 0,
+        "UPDATE": 1,
+        "DELETE": 0
+      },
+      "redis_cmds": 11,
+      "group_sends": 0
+    },
+    "presence_in_exam": {
+      "n": 20,
+      "errors": 0,
+      "ms_median": 7.34,
+      "ms_p95": 7.75,
+      "req_bytes": 17,
+      "resp_bytes": 132,
+      "sql": {
+        "SELECT": 4,
+        "INSERT": 0,
+        "UPDATE": 1,
+        "DELETE": 0
+      },
+      "redis_cmds": 6,
+      "group_sends": 0
+    },
+    "events_1_sev2": {
+      "n": 20,
+      "errors": 0,
+      "ms_median": 13.92,
+      "ms_p95": 19.76,
+      "req_bytes": 176,
+      "resp_bytes": 51,
+      "sql": {
+        "SELECT": 5.05,
+        "INSERT": 0,
+        "UPDATE": 0,
+        "DELETE": 0
+      },
+      "redis_cmds": 17.1,
+      "group_sends": 1
+    },
+    "events_10_sev2": {
+      "n": 20,
+      "errors": 0,
+      "ms_median": 34.49,
+      "ms_p95": 35.92,
+      "req_bytes": 1652,
+      "resp_bytes": 52,
+      "sql": {
+        "SELECT": 5,
+        "INSERT": 0,
+        "UPDATE": 0,
+        "DELETE": 0
+      },
+      "redis_cmds": 57,
+      "group_sends": 10
+    },
+    "events_50_sev2": {
+      "n": 20,
+      "errors": 0,
+      "ms_median": 124.4,
+      "ms_p95": 128.13,
+      "req_bytes": 8212,
+      "resp_bytes": 52,
+      "sql": {
+        "SELECT": 5,
+        "INSERT": 0,
+        "UPDATE": 0,
+        "DELETE": 0
+      },
+      "redis_cmds": 257,
+      "group_sends": 50
+    },
+    "events_10_sev1": {
+      "n": 20,
+      "errors": 0,
+      "ms_median": 27.02,
+      "ms_p95": 28.67,
+      "req_bytes": 1812,
+      "resp_bytes": 52,
+      "sql": {
+        "SELECT": 5,
+        "INSERT": 0,
+        "UPDATE": 0,
+        "DELETE": 0
+      },
+      "redis_cmds": 62,
+      "group_sends": 0
+    },
+    "screenshot_upload": {
+      "n": 100,
+      "errors": 0,
+      "ms_median": 18.24,
+      "ms_p95": 21.33,
+      "req_bytes": 293090,
+      "resp_bytes": 262,
+      "sql": {
+        "SELECT": 7,
+        "INSERT": 1,
+        "UPDATE": 0,
+        "DELETE": 0
+      },
+      "redis_cmds": 9,
+      "group_sends": 0
+    },
+    "screenshot_replace": {
+      "n": 20,
+      "errors": 0,
+      "ms_median": 19.17,
+      "ms_p95": 21.59,
+      "req_bytes": 308089,
+      "resp_bytes": 262,
+      "sql": {
+        "SELECT": 7,
+        "INSERT": 0,
+        "UPDATE": 1,
+        "DELETE": 0
+      },
+      "redis_cmds": 9,
+      "group_sends": 0
+    },
+    "face_periodic_fail": {
+      "n": 20,
+      "errors": 0,
+      "ms_median": 20.18,
+      "ms_p95": 22.67,
+      "req_bytes": 127936,
+      "resp_bytes": 129,
+      "sql": {
+        "SELECT": 5,
+        "INSERT": 2,
+        "UPDATE": 0,
+        "DELETE": 0
+      },
+      "redis_cmds": 24,
+      "group_sends": 1
+    },
+    "session_state": {
+      "n": 20,
+      "errors": 0,
+      "ms_median": 8.99,
+      "ms_p95": 9.92,
+      "req_bytes": 0,
+      "resp_bytes": 4294,
+      "sql": {
+        "SELECT": 5,
+        "INSERT": 0,
+        "UPDATE": 0,
+        "DELETE": 0
+      },
+      "redis_cmds": 3,
+      "group_sends": 0
+    },
+    "jwt_refresh": {
+      "n": 20,
+      "errors": 0,
+      "ms_median": 5.65,
+      "ms_p95": 9.2,
+      "req_bytes": 282,
+      "resp_bytes": 595,
+      "sql": {
+        "SELECT": 7,
+        "INSERT": 2,
+        "UPDATE": 0,
+        "DELETE": 0
+      },
+      "redis_cmds": 0,
+      "group_sends": 0
+    },
+    "recording": {
+      "n": 20,
+      "errors": 0,
+      "ms_median": 9.9,
+      "ms_p95": 12.22,
+      "req_bytes": 371,
+      "resp_bytes": 63,
+      "sql": {
+        "SELECT": 6,
+        "INSERT": 1,
+        "UPDATE": 0,
+        "DELETE": 0
+      },
+      "redis_cmds": 1,
+      "group_sends": 0
+    },
+    "session_finish": {
+      "n": 20,
+      "errors": 0,
+      "ms_median": 20.19,
+      "ms_p95": 98.01,
+      "req_bytes": 33,
+      "resp_bytes": 322,
+      "sql": {
+        "SELECT": 7,
+        "INSERT": 1,
+        "UPDATE": 5,
+        "DELETE": 0
+      },
+      "redis_cmds": 9.3,
+      "group_sends": 1
+    },
+    "panel_login": {
+      "n": 1,
+      "errors": 1,
+      "ms_median": 772.83,
+      "ms_p95": 772.83,
+      "req_bytes": 59,
+      "resp_bytes": 228,
+      "sql": {
+        "SELECT": 2,
+        "INSERT": 0,
+        "UPDATE": 0,
+        "DELETE": 0
+      },
+      "redis_cmds": 7,
+      "group_sends": 0
+    }
+  },
+  "errors": {
+    "panel_login:403": 1
+  }
+}
