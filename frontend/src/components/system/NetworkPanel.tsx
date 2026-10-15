@@ -4,7 +4,7 @@ import PortIcon from '@mui/icons-material/SettingsInputComponentOutlined'
 import TuneIcon from '@mui/icons-material/TuneOutlined'
 import RouterIcon from '@mui/icons-material/RouterOutlined'
 
-import { bitRate, levelOf, num, pct } from './format'
+import { bitRate, levelOf, nginxError, num, pct } from './format'
 import { Metric, MetricGrid, Mono, SectionCard, Unavailable } from './parts'
 import type { ApiRecord } from '../../types/api'
 
@@ -113,8 +113,8 @@ export default function NetworkPanel({ status }: { status: ApiRecord }) {
           {!nginx.available ? (
             <Unavailable>
               {nginx.configured
-                ? `nginx holati o‘qilmadi (${nginx.error || 'xato'}).`
-                : 'Sozlanmagan: `SYSTEM_MONITOR_NGINX_STATUS_URL` (deploy/nginx.conf.example oxiridagi lokal server bloki).'}
+                ? <>{nginxError(nginx.error)}{nginx.url && <><br /><Mono>{nginx.url}</Mono></>}</>
+                : 'Sozlanmagan: `.env` da `SYSTEM_MONITOR_NGINX_STATUS_URL=https://127.0.0.1/nginx_status`.'}
             </Unavailable>
           ) : (
             <MetricGrid min={120}>

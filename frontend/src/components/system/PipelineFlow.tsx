@@ -108,11 +108,14 @@ export default function PipelineFlow({ status }: { status: ApiRecord }) {
     {
       icon: RouterIcon,
       title: 'nginx',
-      level: nginx.available ? (nginx.dropped_total > 0 ? 'warning' : 'ok') : 'unknown',
-      primary: nginx.available ? `${num(nginx.active)} ulanish` : 'stub_status yo‘q',
+      level: nginx.available ? (nginx.dropped_total > 0 ? 'warning' : 'ok') : (nginx.configured ? 'warning' : 'unknown'),
+      primary: nginx.available ? `${num(nginx.active)} ulanish` : (nginx.configured ? 'o‘qilmadi' : 'sozlanmagan'),
       lines: nginx.available
         ? [`${num(nginx.requests_per_s, 1)} so‘rov/s`, `kutmoqda ${num(nginx.waiting)} · yozmoqda ${num(nginx.writing)}`]
-        : [port('nginx_https') ? `${num(port('nginx_https')?.established)} HTTPS ulanish` : 'SYSTEM_MONITOR_NGINX_STATUS_URL'],
+        : [
+          port('nginx_https') ? `${num(port('nginx_https')?.established)} HTTPS ulanish` : 'stub_status',
+          nginx.configured ? `sabab: «Tarmoq» yorlig‘ida` : 'SYSTEM_MONITOR_NGINX_STATUS_URL',
+        ],
     },
     {
       icon: ApiIcon,

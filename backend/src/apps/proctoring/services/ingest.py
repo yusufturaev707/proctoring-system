@@ -349,7 +349,7 @@ def _write_immediately(record: dict) -> None:
         )
     except Exception as exc:
         logger.exception("Hodisani yozib bo'lmadi: %s", exc)
-        to_dead_letter(settings.PROCTORING["EVENT_STREAM_KEY"], record, f"immediate: {exc}")
+        to_dead_letter(settings.PROCTORING["EVENT_STREAM_KEY"], record, f"immediate: {exc}", exc)
 
 
 # --------------------------------------------------------------------------

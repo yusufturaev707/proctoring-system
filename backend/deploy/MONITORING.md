@@ -33,8 +33,9 @@ marshrutlar). Muammolar yuqoridagi SLO chegaralari bilan
 (`apps/monitoring/thresholds.py`) — sabab va "nima qilish kerak" bilan.
 
 * Tarix (24 soat, 30 s) — `monitoring.sample_system` (beat + maintenance).
-* nginx ko'rsatkichlari — `SYSTEM_MONITOR_NGINX_STATUS_URL` va
-  `nginx.conf.example` oxiridagi lokal `8081` bloki.
+* nginx ko'rsatkichlari — `SYSTEM_MONITOR_NGINX_STATUS_URL=https://127.0.0.1/nginx_status`
+  (asosiy HTTPS blokidagi `location = /nginx_status`; loopback'da
+  sertifikat tekshirilmaydi).
 * Bitta node uchun mo'ljallangan: xost ko'rsatkichlari so'rovni bajargan
   serverniki. Bir nechta node — Prometheus + node_exporter.
 

@@ -119,3 +119,17 @@ export const VIRT_LABEL: Record<string, string> = {
   oracle: 'VirtualBox',
   xen: 'Xen',
 }
+
+/** nginx `stub_status` o'qilmadi — sabab va tuzatish (`collectors._fetch_status`). */
+export const NGINX_ERROR: Record<string, string> = {
+  redirect: 'Manzil HTTPS’ga yo‘naltirildi — `https://127.0.0.1/nginx_status` yozing.',
+  forbidden: 'nginx rad etdi (403): `allow 127.0.0.1` bor-yo‘qligini va manzil `localhost` emas, `127.0.0.1` ekanini tekshiring.',
+  not_found: 'Bu manzilda `location = /nginx_status` yo‘q (404).',
+  tls: 'TLS xatosi — manzil loopback (`127.0.0.1`) bo‘lishi kerak.',
+  timeout: 'nginx 1 s ichida javob bermadi.',
+  unreachable: 'nginx’ga ulanib bo‘lmadi — port va manzilni tekshiring.',
+  parse: 'Javob `stub_status` formatida emas.',
+}
+
+export const nginxError = (code: string | undefined): string =>
+  (code && NGINX_ERROR[code]) || `nginx holati o‘qilmadi (${code || 'xato'}).`

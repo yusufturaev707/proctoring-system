@@ -140,20 +140,42 @@ def ack(client, stream: str, entry_ids: list[str]) -> None:
         logger.error("XACK bajarilmadi (%s): %s", stream, exc)
 
 
-def to_dead_letter(stream: str, fields: dict, reason: str) -> None:
+def error_details(exc: BaseException) -> dict[str, str]:
+    """
+    Xatoning TILGA BOG'LIQ BO'LMAGAN belgilari: SQLSTATE va cheklov nomi.
+
+    PostgreSQL xabar matnini `lc_messages` tilida beradi (dev bazada —
+    ruscha va Windows'da kodirovkasi buzilgan holda). Matn bo'yicha sabab
+    aniqlab bo'lmasdi; `23503` + `proctoring_event_session_fk` esa har
+    tilda bir xil (`dead_letters` buyrug'i shu bo'yicha tasniflaydi).
+    """
+    source = getattr(exc, "__cause__", None) or exc
+    diag = getattr(source, "diag", None)
+    return {
+        "error": type(exc).__name__,
+        "code": getattr(source, "pgcode", None) or "",
+        "constraint": getattr(diag, "constraint_name", None) or "",
+    }
+
+
+def to_dead_letter(stream: str, fields: dict, reason: str, exc: BaseException | None = None) -> None:
     """
     Yozib bo'lmagan yozuvni tekshirish uchun alohida oqimga ko'chiradi.
 
     Bu "yo'qotmaslik"ning oxirgi qatlami. Oqim cheklangan uzunlikda —
-    u to'lib qolsa Redis xotirasini yeb qo'ymasin.
+    u to'lib qolsa Redis xotirasini yeb qo'ymasin. Ko'rish, qayta yozish
+    va tozalash — `python manage.py dead_letters`.
     """
+    entry = {
+        "reason": reason[:500],
+        "payload": json.dumps(fields, default=str)[:8000],
+    }
+    if exc is not None:
+        entry.update(error_details(exc))
     try:
         get_redis().xadd(
             dead_letter_key(stream),
-            {
-                "reason": reason[:500],
-                "payload": json.dumps(fields, default=str)[:8000],
-            },
+            entry,
             maxlen=settings.PROCTORING["STREAM_DEAD_LETTER_MAXLEN"],
             approximate=True,
         )
@@ -197,7 +219,7 @@ def write_with_fallback(model, rows: list[tuple[str, dict, object]], stream: str
             ok.append(entry_id)
         except Exception as row_exc:
             logger.error("%s: qator yozilmadi, dead-letter: %s", stream, row_exc)
-            to_dead_letter(stream, fields, str(row_exc))
+            to_dead_letter(stream, fields, str(row_exc), row_exc)
             ok.append(entry_id)
             dead += 1
 

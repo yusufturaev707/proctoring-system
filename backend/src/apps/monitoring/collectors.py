@@ -10,9 +10,11 @@ sonlar, holatlar va davomiyliklar.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import re
 import time
+from urllib.parse import urlsplit
 
 from django.conf import settings
 from django.db import connections, transaction
@@ -311,20 +313,69 @@ _NGINX_RE = re.compile(
 )
 
 
+def _is_loopback(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _fetch_status(url: str):
+    """
+    `stub_status` sahifasi yoki xato kodi (`(response, None)` / `(None, kod)`).
+
+    LOOPBACK MANZILDA SERTIFIKAT TEKSHIRILMAYDI. Sabab: `nginx_status`
+    odatda asosiy HTTPS server blokida (`allow 127.0.0.1`), 80-port esa
+    hammasini HTTPS'ga yo'naltiradi — backend uni faqat
+    `https://127.0.0.1/nginx_status` bilan o'qiy oladi, sertifikat esa
+    domenga berilgan va IP bilan HECH QACHON tekshiruvdan o'tmaydi.
+    Domen orqali so'rasa — manba manzil 127.0.0.1 bo'lmaydi va nginx
+    `deny all` beradi. Loopback trafigi mashinadan chiqmaydi, ya'ni TLS
+    tekshiruvi himoya qiladigan "tarmoqdagi oraliq odam" bu yerda yo'q.
+    Boshqa manzillarda tekshiruv yoqiq qoladi.
+
+    Yo'naltirishga ergashilmaydi: `http://` → `https://domen` ga o'tib,
+    tashqi manzilga so'rov yuborilmasin; o'rniga aniq maslahat beriladi.
+    """
+    import warnings
+
+    import requests
+    from urllib3.exceptions import InsecureRequestWarning
+
+    loopback = _is_loopback(urlsplit(url).hostname or "")
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", InsecureRequestWarning)
+            response = requests.get(url, timeout=1.0, verify=not loopback, allow_redirects=False)
+    except requests.exceptions.SSLError:
+        return None, "tls"
+    except requests.exceptions.Timeout:
+        return None, "timeout"
+    except requests.exceptions.RequestException:
+        return None, "unreachable"
+    if response.is_redirect or response.is_permanent_redirect:
+        return None, "redirect"
+    if response.status_code == 403:
+        return None, "forbidden"
+    if response.status_code == 404:
+        return None, "not_found"
+    if response.status_code >= 400:
+        return None, f"http_{response.status_code}"
+    return response, None
+
+
 def nginx() -> tuple[dict, dict]:
     url = settings.SYSTEM_MONITOR.get("NGINX_STATUS_URL") or ""
     if not url:
         return {"available": False, "configured": False}, {}
-    import requests
-
-    try:
-        response = requests.get(url, timeout=1.0)
-        response.raise_for_status()
-    except Exception as exc:  # noqa: BLE001
-        return {"available": False, "configured": True, "error": type(exc).__name__}, {}
+    response, error = _fetch_status(url)
+    if error:
+        return {"available": False, "configured": True, "error": error, "url": url}, {}
     match = _NGINX_RE.search(response.text)
     if not match:
-        return {"available": False, "configured": True, "error": "parse"}, {}
+        return {"available": False, "configured": True, "error": "parse", "url": url}, {}
     active, accepts, handled, requests_total, reading, writing, waiting = (int(v) for v in match.groups())
     data = {
         "available": True,

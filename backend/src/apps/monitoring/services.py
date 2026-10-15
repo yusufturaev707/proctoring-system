@@ -266,6 +266,11 @@ def problems(snapshot: dict) -> list[dict]:  # noqa: C901 — qoidalar ro'yxati,
             add("warning", "network", "nic_errors", f"{nic['name']}: paket xatolari/tashlanishlari",
                 "Tarmoq kartasi yoki vSwitch muammosi; VMXNET3 drayverini tekshiring.")
 
+    nginx = snapshot.get("nginx") or {}
+    if nginx.get("configured") and not nginx.get("available"):
+        add("warning", "nginx", "nginx_status", f"nginx holati o'qilmadi ({nginx.get('error')})",
+            "`SYSTEM_MONITOR_NGINX_STATUS_URL=https://127.0.0.1/nginx_status` — sabab «Tarmoq» yorlig'ida.")
+
     sockets = snapshot.get("sockets") or {}
     for port in sockets.get("ports", []):
         if port["name"] in ("api", "ws"):
@@ -350,7 +355,8 @@ def problems(snapshot: dict) -> list[dict]:  # noqa: C901 — qoidalar ro'yxati,
         if stream.get("dead"):
             add("warning", "streams", f"dead_{stream['name']}",
                 f"«{stream['name']}»: {stream['dead']} ta yozuv DB'ga yozilmadi (:dead)",
-                "Dalil yo'qolmagan — `:dead` oqimida turibdi. Sababini log'dan aniqlang.")
+                f"Dalil yo'qolmagan — `:dead` oqimida turibdi. Sabab va tuzatish: "
+                f"`python manage.py dead_letters stats --stream {stream['name']}`, keyin `replay` yoki `purge`.")
 
     # --- Celery ---
     celery = snapshot.get("celery") or {}

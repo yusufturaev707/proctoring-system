@@ -836,8 +836,9 @@ SYSTEM_MONITOR = {
     # Tinglanayotgan portlar: navbat (backlog) va ulanishlar soni.
     # `nom:port` — bo'sh bo'lsa standart (`host.DEFAULT_PORTS`).
     "PORTS": env_list("SYSTEM_MONITOR_PORTS", []),
-    # nginx `stub_status` manzili (`deploy/nginx.conf.example`, faqat
-    # lokal). Bo'sh — nginx ko'rsatkichlari o'chiq.
+    # nginx `stub_status` manzili — odatda `https://127.0.0.1/nginx_status`
+    # (asosiy HTTPS blokidagi lokal location; loopback'da sertifikat
+    # tekshirilmaydi — `collectors._fetch_status`). Bo'sh — o'chiq.
     "NGINX_STATUS_URL": env("SYSTEM_MONITOR_NGINX_STATUS_URL", ""),
     # Bir nechta administrator sahifani ochib qo'yganda yig'ish xarajati
     # ko'paymasin: natija shuncha soniya umumiy keshda turadi.
