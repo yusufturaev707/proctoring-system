@@ -176,3 +176,16 @@ class ErrorDetailsTests(SimpleTestCase):
             stream_service.error_details(_fk_error()),
             {"error": "IntegrityError", "code": "23503", "constraint": "proctoring_event_session_fk"},
         )
+
+
+class PurgeAllCommandTests(RedisStateMixin, TestCase):
+    def test_purge_all_empties_stream_with_backup(self):
+        stream = settings.PROCTORING["EVENT_STREAM_KEY"]
+        stream_service.to_dead_letter(stream, _event_fields(999_999), "proctoring_event_session_fk")
+        stream_service.to_dead_letter(stream, _event_fields(1), "connection refused")
+        backup = Path(tempfile.mkdtemp())
+        out = StringIO()
+        with mock.patch.object(dead_letters, "backup_dir", return_value=backup):
+            call_command("dead_letters", "purge", "--all", "--yes", stdout=out)
+        self.assertEqual(get_redis().xlen(stream_service.dead_letter_key(stream)), 0)
+        self.assertEqual(len(next(backup.glob("*.jsonl")).read_text(encoding="utf-8").splitlines()), 2)

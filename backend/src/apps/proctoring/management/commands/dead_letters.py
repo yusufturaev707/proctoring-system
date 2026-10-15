@@ -6,6 +6,7 @@
     python manage.py dead_letters replay --dry-run
     python manage.py dead_letters replay
     python manage.py dead_letters purge --category session_missing --yes
+    python manage.py dead_letters purge --all --yes        # hammasi (zaxira faylga yozib)
 
 `--stream screenshots` — S3 skrinshot metadata oqimi uchun (standart `events`).
 """
@@ -37,7 +38,8 @@ class Command(BaseCommand):
         replay.add_argument("--dry-run", action="store_true")
 
         purge = common(sub.add_parser("purge", help="JSONL faylga zaxira qilib o'chiradi"))
-        purge.add_argument("--category", action="append", required=True, choices=sorted(service.CATEGORIES))
+        purge.add_argument("--category", action="append", choices=sorted(service.CATEGORIES))
+        purge.add_argument("--all", action="store_true", help="Barcha turkumlar (oqimni to'liq tozalash)")
         purge.add_argument("--yes", action="store_true", help="Tasdiq (usiz faqat nima o'chishini aytadi)")
 
     def handle(self, *args, **options):
@@ -99,7 +101,12 @@ class Command(BaseCommand):
             )
 
     def _purge(self, options):
-        categories = set(options["category"])
+        if options["all"]:
+            categories = set(service.CATEGORIES)
+        elif options["category"]:
+            categories = set(options["category"])
+        else:
+            raise CommandError("--category yoki --all kerak")
         if not options["yes"]:
             result = service.stats(options["stream"])
             count = sum(group["count"] for key, group in result["groups"].items() if key in categories)
