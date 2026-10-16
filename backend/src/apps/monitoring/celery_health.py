@@ -15,7 +15,7 @@ import json
 import logging
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 import redis
 from django.conf import settings
@@ -181,10 +181,17 @@ def periodic_tasks(*, now: float | None = None) -> dict:
         else:
             health = "ok"
             try:
-                last_dt = datetime.fromtimestamp(float(last_ts), tz=timezone.utc)
-                remaining = entry["schedule"].remaining_estimate(last_dt)
+                schedule = entry["schedule"]
+                # Vaqt jadval zonasida (Asia/Tashkent) berilishi SHART: crontab
+                # `last_run_at.hour` ni o'z soati bilan solishtiradi, UTC'dagi
+                # 23:00 (= 04:00 Toshkent) "bugun 04:00 hali bo'lmagan" deb
+                # o'qilib, har bajarilgan kunlik vazifa "o'tkazib yuborilgan" chiqardi.
+                last_dt = datetime.fromtimestamp(float(last_ts), tz=getattr(schedule, "tz", None) or app.timezone)
+                # `remaining_estimate` haqiqiy soatga nisbatan — `now` (testda
+                # surilgan) bilan solishtirish uchun mutlaq vaqtga aylantiriladi.
+                next_due = time.time() + schedule.remaining_estimate(last_dt).total_seconds()
                 # Keyingi ishga tushish vaqti o'tib, 10 daqiqadan ko'p bo'lsa — o'tkazib yuborilgan.
-                if remaining.total_seconds() < -600:
+                if now - next_due > 600:
                     health = "stale"
             except Exception:  # noqa: BLE001
                 pass

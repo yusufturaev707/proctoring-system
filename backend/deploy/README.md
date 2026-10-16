@@ -154,7 +154,7 @@ autovacuum_max_workers = 6
 ### Redis
 
 ```ini
-maxmemory 8gb
+maxmemory 2gb                  # "Sig'im" bo'limi: 2 GB yetadi, 8 GB bermang
 maxmemory-policy noeviction    # MUHIM: sessiya holati eviction'ga tushmasin
 appendonly yes
 appendfsync everysec

@@ -322,7 +322,7 @@ def _is_loopback(host: str) -> bool:
         return False
 
 
-def _fetch_status(url: str):
+def _fetch_status(url: str, host_header: str = ""):
     """
     `stub_status` sahifasi yoki xato kodi (`(response, None)` / `(None, kod)`).
 
@@ -345,10 +345,15 @@ def _fetch_status(url: str):
     from urllib3.exceptions import InsecureRequestWarning
 
     loopback = _is_loopback(urlsplit(url).hostname or "")
+    # Server bloki `Host` bo'yicha tanlanadi (TLS'dan keyin ham) — domen
+    # berilsa so'rov `nginx_status` turgan blokka tushadi.
+    headers = {"Host": host_header} if host_header else None
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", InsecureRequestWarning)
-            response = requests.get(url, timeout=1.0, verify=not loopback, allow_redirects=False)
+            response = requests.get(
+                url, timeout=1.0, verify=not loopback, allow_redirects=False, headers=headers,
+            )
     except requests.exceptions.SSLError:
         return None, "tls"
     except requests.exceptions.Timeout:
@@ -370,7 +375,7 @@ def nginx() -> tuple[dict, dict]:
     url = settings.SYSTEM_MONITOR.get("NGINX_STATUS_URL") or ""
     if not url:
         return {"available": False, "configured": False}, {}
-    response, error = _fetch_status(url)
+    response, error = _fetch_status(url, settings.SYSTEM_MONITOR.get("NGINX_STATUS_HOST") or "")
     if error:
         return {"available": False, "configured": True, "error": error, "url": url}, {}
     match = _NGINX_RE.search(response.text)

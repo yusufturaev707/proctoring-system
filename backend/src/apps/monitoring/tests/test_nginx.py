@@ -41,6 +41,14 @@ class NginxStatusTests(SimpleTestCase):
         self.assertEqual(data["dropped_total"], 2)
         self.assertEqual(counters["nginx.requests"], 31070465.0)
 
+    def test_host_header_selects_server_block(self):
+        with override_settings(SYSTEM_MONITOR={
+            "NGINX_STATUS_URL": "https://127.0.0.1/nginx_status", "NGINX_STATUS_HOST": "proctoring.example.uz",
+        }), mock.patch("requests.get", return_value=_response()) as get:
+            data, _counters = collectors.nginx()
+        self.assertEqual(get.call_args.kwargs["headers"], {"Host": "proctoring.example.uz"})
+        self.assertTrue(data["available"])
+
     def test_remote_host_keeps_certificate_check(self):
         _data, _counters, get = self.fetch("https://monitor.example.uz/nginx_status")
         self.assertTrue(get.call_args.kwargs["verify"])

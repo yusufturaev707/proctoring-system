@@ -840,6 +840,10 @@ SYSTEM_MONITOR = {
     # (asosiy HTTPS blokidagi lokal location; loopback'da sertifikat
     # tekshirilmaydi — `collectors._fetch_status`). Bo'sh — o'chiq.
     "NGINX_STATUS_URL": env("SYSTEM_MONITOR_NGINX_STATUS_URL", ""),
+    # `Host` sarlavhasi (sayt domeni). `https://127.0.0.1` so'rovida domen
+    # yo'q va nginx uni 443 dagi `default_server` blokiga yuboradi — u
+    # `nginx_status` turgan blok bo'lmasa 404. Bo'sh — sarlavha qo'shilmaydi.
+    "NGINX_STATUS_HOST": env("SYSTEM_MONITOR_NGINX_STATUS_HOST", ""),
     # Bir nechta administrator sahifani ochib qo'yganda yig'ish xarajati
     # ko'paymasin: natija shuncha soniya umumiy keshda turadi.
     "CACHE_SECONDS": env_int("SYSTEM_MONITOR_CACHE_SECONDS", 3),

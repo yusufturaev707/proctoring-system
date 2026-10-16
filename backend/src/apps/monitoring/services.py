@@ -269,7 +269,8 @@ def problems(snapshot: dict) -> list[dict]:  # noqa: C901 — qoidalar ro'yxati,
     nginx = snapshot.get("nginx") or {}
     if nginx.get("configured") and not nginx.get("available"):
         add("warning", "nginx", "nginx_status", f"nginx holati o'qilmadi ({nginx.get('error')})",
-            "`SYSTEM_MONITOR_NGINX_STATUS_URL=https://127.0.0.1/nginx_status` — sabab «Tarmoq» yorlig'ida.")
+            "404 bo'lsa — so'rov boshqa server blokiga tushgan: `.env` ga "
+            "`SYSTEM_MONITOR_NGINX_STATUS_HOST=<sayt domeni>`. Boshqa sabablar «Tarmoq» yorlig'ida.")
 
     sockets = snapshot.get("sockets") or {}
     for port in sockets.get("ports", []):
@@ -335,7 +336,9 @@ def problems(snapshot: dict) -> list[dict]:  # noqa: C901 — qoidalar ro'yxati,
                 "`maxmemory-policy noeviction` bo'lishi SHART — aks holda sessiya tokenlari o'chiriladi.")
         if not redis.get("maxmemory"):
             add("warning", "redis", "redis_no_limit", "Redis xotira chegarasi (maxmemory) o'rnatilmagan",
-                "Redis butun RAM'ni egallab, PostgreSQL'ni siqib chiqarishi mumkin.")
+                "Redis butun RAM'ni egallab, PostgreSQL'ni siqib chiqarishi mumkin. "
+                "`/etc/redis/redis.conf`: `maxmemory 2gb` (deploy/README.md), keyin "
+                "`redis-cli CONFIG SET maxmemory 2gb` — qayta ishga tushirmasdan.")
         add(level("redis_memory_pct", redis.get("memory_percent")), "redis", "redis_memory",
             f"Redis xotirasi {redis.get('memory_percent')}%",
             "Oqim (`EVENT_STREAM_MAXLEN`) yoki ingest orqada qolgan — `lag` ni tekshiring.")
