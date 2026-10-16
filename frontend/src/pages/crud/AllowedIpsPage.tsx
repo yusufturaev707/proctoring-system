@@ -160,7 +160,9 @@ export default function AllowedIpsPage() {
             helperText: 'Bino bitta umumiy manzil bilan kelsa (router/NAT ortidan)',
           },
           {
-            name: 'network', label: 'yoki tarmoq (CIDR)', section: 'Manzil',
+            // Modelda bo'sh satr (`default=""`): tarmoqdan IP'ga o'tishda
+            // `null` yuborilsa server «may not be null» bilan rad etardi.
+            name: 'network', label: 'yoki tarmoq (CIDR)', section: 'Manzil', nullable: false,
             pattern: 'cidr4', colSpan: 6, validate: exactlyOneAddress,
             helperText: (_isEdit, form) => {
               const cidr = cidrInfo(String(form?.network || '').trim())

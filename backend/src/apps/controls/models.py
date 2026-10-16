@@ -90,11 +90,11 @@ class AllowedPublicIp(TimeStampedModel):
                 ),
                 name="allowed_ip_one_kind",
             ),
-            models.UniqueConstraint(
-                fields=["network"],
-                condition=~models.Q(network=""),
-                name="unique_allowed_ip_network",
-            ),
+            # models.UniqueConstraint(
+            #     fields=["network"],
+            #     condition=~models.Q(network=""),
+            #     name="unique_allowed_ip_network",
+            # ),
         ]
 
 

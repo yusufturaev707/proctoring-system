@@ -151,13 +151,22 @@ function ResourceForm({
         // Maydon allaqachon "tegilgan" bo'lsa, yozayotganda xatoni jonli
         // yangilaymiz. Aks holda birinchi yozuvda xato chiqib,
         // foydalanuvchini chalg'itadi.
+        // Xatosi KO'RINIB turgan boshqa maydonlar ham qayta tekshiriladi:
+        // maxsus validator bir nechta maydonga qaraydi («IP YOKI tarmoq»).
+        // Usiz IP o'chirilib tarmoq yozilgandan keyin ham IP ostida eski
+        // «aynan bittasini kiriting» xatosi qolib, ikkalasi ham majburiy
+        // degandek ko'rinardi. Xatosiz maydonga yangi xato qo'shilmaydi.
+        fields.forEach((other) => {
+          if (other.name === field.name || !prevErrors[other.name]) return
+          cleared[other.name] = validateField(other, next[other.name], next) || undefined
+        })
         if (!touched[field.name] && !prevErrors[field.name]) return cleared
         cleared[field.name] = validateField(field, value, next) || undefined
         return cleared
       })
       return next
     })
-  }, [touched])
+  }, [touched, fields])
 
   const handleBlur = useCallback((field: FieldDef) => {
     setTouched((prev) => ({ ...prev, [field.name]: true }))
