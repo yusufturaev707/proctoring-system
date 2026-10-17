@@ -45,6 +45,7 @@ from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
+    QLabel,
     QVBoxLayout,
     QWidget,
 )
@@ -58,7 +59,7 @@ from services.face_presence import FaceEpisodes
 from services.device_watch import DeviceWatcher
 from services.lockdown import lockdown
 from services.monitoring import SessionMonitor
-from services.network_status import network_status, on_power_resumed
+from services.network_status import format_clock, network_status, on_power_resumed
 from services.proctoring_supervisor import ProctoringSupervisor
 from services.realtime import ProctorChannel
 from services.repositories import ProctoringRepository
@@ -66,6 +67,7 @@ from services.screen_capture import ScreenshotService
 from services.screen_recorder import ScreenRecorder
 from services.workers import ApiWorker, WorkerHolder
 from ui.dialogs.finish_dialog import FinishDialog
+from ui.styles import COLORS
 from ui.dialogs.reload_dialog import ReloadDialog
 from ui.widgets.icons import GlyphButton, StatusDot
 from ui.pages.webview_errors import (
@@ -104,6 +106,56 @@ _MIN_STEP_TIMEOUT_S = 0.5
 #: keladi; eskirgani - kamera uzilgan yoki qotgan. Ilgari uzilish
 #: paytida oxirgi embedding "mos" deb sanalaverardi.
 _FACE_RESULT_MAX_AGE_S = 5.0
+
+
+#: Shundan uzoq uzilish sessiya yopilganda xabarda aytiladi (s): qisqa
+#: uzilish sababi bo'lolmaydi va uni aytish operatorni chalg'itardi.
+_OUTAGE_WORTH_MENTIONING_S = 60
+
+
+def describe_session_lost(reason: str, outage_s: float = 0.0) -> tuple:
+    """
+    Sessiya serverda yopildi - operatorga `(sarlavha, matn, tur)`.
+
+    Ilgari matn "Sessiya serverda yakunlandi (session_not_found)" edi:
+    xom kod operatorga hech narsa aytmasdi. Endi - nima bo'lgani va NIMA
+    QILISH kerakligi. Talabgorni qayta kiritish mumkin: yopilgan sessiya
+    qayta kirishni to'smaydi, joyi esa o'zida qoladi.
+    """
+    from services.network_status import describe_duration
+
+    if reason == "terminated":
+        return (
+            "Sessiya proktor tomonidan to'xtatildi",
+            "Talabgor imtihondan chetlashtirildi. Keyingi talabgorga o'tishingiz mumkin.",
+            "warning",
+        )
+    if reason == "session_forbidden":
+        return (
+            "Sessiya boshqa qurilmaga tegishli",
+            "Bu sessiya boshqa kompyuterda ochilgan. Talabgorni shu kompyuterda qayta "
+            "kiriting; takrorlansa administratorga murojaat qiling.",
+            "warning",
+        )
+    again = (
+        "Talabgorni qayta kiriting (JSHSHIR, keyin yuz tekshiruvi); takrorlansa "
+        "administratorga murojaat qiling."
+    )
+    if outage_s >= _OUTAGE_WORTH_MENTIONING_S:
+        return (
+            "Sessiya serverda yopilgan",
+            "Server bilan aloqa {} yo'q edi va shu orada server sessiyani yopgan "
+            "(test vaqti tugagan yoki panelda yakunlangan). {}".format(
+                describe_duration(outage_s), again
+            ),
+            "warning",
+        )
+    return (
+        "Sessiya serverda yopilgan",
+        "Server bu sessiyani yopgan (panelda yakunlangan yoki test vaqti tugagan). "
+        + again,
+        "warning",
+    )
 
 
 _RT = QWebEngineUrlRequestInfo.ResourceType
@@ -330,6 +382,18 @@ class ExamWebViewPage(QWidget):
             "record": "Yozuv: -",
             "risk": "Kuzatuv: -",
         }
+        #: Server bilan aloqa uzilgan payt (monoton soat), aloqa bo'lsa `None`.
+        #
+        # UZILISH TALABGORGA XALAQIT BERMAYDI: test sayti boshqa server va
+        # u ishlab turgan bo'lishi mumkin, ya'ni talabgor ishlashda davom
+        # etadi. Ekranga xabar CHIQMAYDI - faqat pastki paneldagi nuqta
+        # qizaradi va yonida hisoblagich turadi (`_offline_label`).
+        self._offline_since: Optional[float] = None
+        #: Oxirgi uzilish davomiyligi (s) - sessiya yopilganda xabar uchun.
+        self._last_outage_s = 0.0
+        self._offline_timer = QTimer(self)
+        self._offline_timer.setInterval(1000)
+        self._offline_timer.timeout.connect(self._tick_offline)
         self._camera: Optional[CameraWorker] = None
         #: `proctoring/start/` javobini kutayotgan kirish ma'lumoti.
         self._pending_access: Optional[dict] = None
@@ -479,6 +543,19 @@ class ExamWebViewPage(QWidget):
         self.status_dot = StatusDot(12)
         layout.addWidget(self.status_dot, 0, Qt.AlignmentFlag.AlignVCenter)
 
+        # UZILISH HISOBLAGICHI - faqat aloqa yo'qligida, nuqta yonida.
+        # Panel pastki o'ng burchakda: test sahifasining sarlavhasi va
+        # taymeri (odatda tepada) yopilmaydi. Matn - faqat raqam; nima
+        # ekanini tooltip aytadi.
+        self._offline_label = QLabel(self._bar)
+        self._offline_label.setStyleSheet(
+            "color: {}; font-size: 12px; font-weight: 600; "
+            "background: transparent; padding: 0 4px 0 0;".format(COLORS["error"])
+        )
+        self._offline_label.setToolTip("Server bilan aloqa yo'q — shuncha vaqtdan beri")
+        self._offline_label.hide()
+        layout.addWidget(self._offline_label, 0, Qt.AlignmentFlag.AlignVCenter)
+
         # QAYTA YUKLASH — sahifa qotib, lekin xato bermaganda yagona yo'l:
         # kioskda F5 va manzil satri yo'q, brauzer menyusi esa ataylab
         # o'chirilgan («Back» tufayli). Tasdiq bilan (`ReloadDialog`).
@@ -496,7 +573,7 @@ class ExamWebViewPage(QWidget):
 
         # YAKUNLASH TUGMASI QOLDIRILDI. U sessiyani to'g'ri yopadigan
         # YAGONA yo'l: usiz sessiya ochiq qolib, faqat
-        # `close_stale_sessions` bilan 15 daqiqadan keyin yig'ilardi
+        # `close_stale_sessions` bilan test vaqti tugagach yig'ilardi
         # va o'sha vaqt ichida talabgor boshqa mashinada qayta kira
         # olmasdi (`MainWindow._back_action` izohi).
         self.finish_btn = GlyphButton(
@@ -894,6 +971,10 @@ class ExamWebViewPage(QWidget):
                 "risk": "Kuzatuv: -",
             }
         )
+        # Aloqa holati ham noldan: oldingi sessiyaning uzilishi keyingisiga
+        # o'tmaydi (monitor ham holatini tiklaydi - `SessionMonitor.start`).
+        self._last_outage_s = 0.0
+        self._reset_offline()
         self._update_status_tooltip()
         # Oldingi talabgorga qaratilgan ogohlantirish keyingisining
         # ekranida qolib ketmasligi kerak.
@@ -1482,11 +1563,37 @@ class ExamWebViewPage(QWidget):
         self._update_status_tooltip()
 
     def _on_network_changed(self, online: bool) -> None:
-        # Nuqta YASHIL -> tinch, QIZIL -> pulsatsiya bilan. Aloqa
-        # yo'qligi e'tibor talab qiladi: hodisalar yuborilmayapti,
-        # ya'ni dalil real vaqtda yig'ilmayapti.
+        """
+        Server bilan aloqa o'zgardi - FAQAT pastki paneldagi belgi.
+
+        EKRANGA XABAR CHIQMAYDI (ilgari `Snackbar` edi). Server va test
+        sayti - ikki boshqa server: backend'ga aloqa yo'q paytda test
+        ko'pincha ishlab turadi va talabgor uni davom ettiradi. Xabar
+        unga hech narsa qila olmaydigan muammo haqida xalaqit berardi.
+        Imtihon ham TO'XTAMAYDI: kuzatuv, yozuv, arxiv mashinada davom
+        etadi, hodisalar buferda kutadi. Test sayti ham ochilmasa - u
+        o'zining xato ekranini ko'rsatadi (`WebErrorPanel`).
+
+        Nuqta QIZIL va pulsatsiya bilan, yonida hisoblagich: proktor yoki
+        operator yaqinlashsa, aloqa qancha vaqtdan beri yo'qligini ko'radi.
+        """
         self.status_dot.set_online(online)
-        self._status["network"] = "Aloqa bor" if online else "Aloqa yo'q"
+        now = time.monotonic()
+        if online:
+            if self._offline_since is not None:
+                self._last_outage_s = now - self._offline_since
+                log.info("Server bilan aloqa tiklandi (%.0f s yo'q edi)", self._last_outage_s)
+            self._offline_since = None
+            self._offline_timer.stop()
+            self._offline_label.hide()
+            self._status["network"] = "Aloqa bor"
+        else:
+            if self._offline_since is None:
+                self._offline_since = now
+            self._offline_timer.start()
+            self._offline_label.show()
+            self._tick_offline()
+        self._refit_bar()
         self._update_status_tooltip()
         # Uzilish hodisa oqimida ham qoladi. Bu bayonnoma uchun muhim:
         # uzilish paytida skrinshot va hodisalarda bo'shliq bo'ladi va
@@ -1497,12 +1604,53 @@ class ExamWebViewPage(QWidget):
             "network_restored" if online else "network_lost",
             severity=0 if online else 2,
         )
-        if not online:
-            self.message.show_message(
-                "Server bilan aloqa yo'q. Hodisalar buferda saqlanmoqda.", "warning"
-            )
-        else:
-            self.message.clear_message()
+
+    def _tick_offline(self) -> None:
+        """Hisoblagich (har soniya) - yozuv va tooltip."""
+        if self._offline_since is None:
+            return
+        elapsed = time.monotonic() - self._offline_since
+        self._offline_label.setText(format_clock(elapsed))
+        self._status["network"] = "Server bilan aloqa yo'q: {}".format(format_clock(elapsed))
+        self._update_status_tooltip()
+
+    def _reset_offline(self) -> None:
+        """
+        Yangi sessiya yoki to'xtash: hisoblagich o'chadi.
+
+        Davomiylik `_last_outage_s` da QOLADI (to'xtash paytida aloqa yo'q
+        bo'lsa - shu paytgacha): `MainWindow` sessiya yopilgani haqidagi
+        xabarda "aloqa qancha yo'q edi" ni aytadi.
+        """
+        if self._offline_since is not None:
+            self._last_outage_s = time.monotonic() - self._offline_since
+        self._offline_since = None
+        self._offline_timer.stop()
+        self._offline_label.hide()
+        self.status_dot.set_online(True)
+        self._status["network"] = "Aloqa bor"
+        self._refit_bar()
+
+    def _refit_bar(self) -> None:
+        """
+        Panel kengligi o'zgardi (hisoblagich) - o'lcham va joy qayta.
+
+        Z-tartibga TEGILMAYDI (`_place_floating_bar` dan farqi): uzilish
+        "Test ochilmoqda" ekrani yoki xato ekrani paytida bo'lsa, panel
+        ularning ustiga chiqib qolmasligi kerak (`_raise_chrome`).
+        """
+        self._bar.adjustSize()
+        self._bar.move(
+            self.width() - self._bar.width() - _BAR_MARGIN,
+            self.height() - self._bar.height() - _BAR_MARGIN,
+        )
+
+    @property
+    def last_outage_seconds(self) -> float:
+        """Oxirgi uzilish (s) - davom etayotgan bo'lsa hozirgacha."""
+        if self._offline_since is not None:
+            return time.monotonic() - self._offline_since
+        return self._last_outage_s
 
     def _on_screenshot_sent(self, total: int) -> None:
         self._status["shots"] = "Skrinshot: {}".format(total)
@@ -2139,6 +2287,8 @@ class ExamWebViewPage(QWidget):
     def stop(self) -> None:
         """Nazoratni to'xtatadi va WebView'ni tozalaydi."""
         self._exam_open = False
+        # Hisoblagich to'xtaydi, uzilish davomiyligi esa xabar uchun qoladi.
+        self._reset_offline()
         self._launch.dismiss()
         self._notify_proctoring_stop()
         self._face_timer.stop()

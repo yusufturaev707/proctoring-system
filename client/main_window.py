@@ -533,14 +533,16 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentIndex(self.PAGE_FACEID)
 
     def _on_session_lost(self, reason: str) -> None:
+        from ui.pages.exam_webview_page import describe_session_lost
+
+        # Uzilish davomiyligi `reset_flow` dan OLDIN o'qiladi: sahifa uni
+        # `stop()` da yozib qo'ygan, sabab ko'pincha aynan shu uzilish.
+        outage = getattr(self._webview_page, "last_outage_seconds", 0.0) or 0.0
+        log.warning("Sessiya serverda yopildi: %s (uzilish %.0f s)", reason or "-", outage)
+        title, text, kind = describe_session_lost(reason, outage)
         self._state.reset_flow()
         self._go_to_candidate()
-        self._show_notice(
-            "Sessiya yakunlandi",
-            "Sessiya serverda yakunlandi ({}). Keyingi talabgorga o'tishingiz "
-            "mumkin.".format(reason or "-"),
-            kind="info",
-        )
+        self._show_notice(title, text, kind=kind)
         self._after_exam_closed()
 
     # ------------------------------------------------------------------

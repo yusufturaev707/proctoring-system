@@ -49,6 +49,28 @@ class NetworkStatus(QObject):
             pass
 
 
+def format_clock(seconds: float) -> str:
+    """Uzilish hisoblagichi: `04:12`, soatdan oshsa `1:04:12`."""
+    total = max(0, int(seconds or 0))
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    if hours:
+        return "{}:{:02d}:{:02d}".format(hours, minutes, secs)
+    return "{:02d}:{:02d}".format(minutes, secs)
+
+
+def describe_duration(seconds: float) -> str:
+    """Odam o'qiydigan davomiylik: `45 soniya`, `4 daqiqa`, `1 soat 12 daqiqa`."""
+    total = max(0, int(seconds or 0))
+    if total < 60:
+        return "{} soniya".format(total)
+    hours, rest = divmod(total, 3600)
+    minutes = rest // 60
+    if not hours:
+        return "{} daqiqa".format(minutes)
+    return "{} soat {} daqiqa".format(hours, minutes) if minutes else "{} soat".format(hours)
+
+
 def on_power_resumed(slot) -> bool:
     """
     `slot` ni "kompyuter uyqudan uyg'ondi" signaliga ulaydi.

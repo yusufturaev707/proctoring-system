@@ -237,6 +237,117 @@ class StaleSessionHeartbeatTests(RedisStateMixin, TestCase):
         self.assertEqual(result["closed"], 1)
 
 
+class OfflineDuringExamTests(RedisStateMixin, TestCase):
+    """
+    Imtihondagi sessiya ALOQA UZILGANI UCHUN yopilmaydi - faqat test vaqti
+    + `STALE_SESSION_AFTER` o'tgach.
+
+    Ilgari 15 daqiqalik uzilish butun zalni imtihondan chiqarardi, holbuki
+    test sayti ishlab turgan bo'lishi mumkin.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.exam = factories.make_exam()
+        self.exam.duration_minutes = 180
+        self.exam.save(update_fields=["duration_minutes"])
+
+    def make(self, *, started_min_ago, offline_min, status=ExamSession.Status.IN_PROGRESS,
+             platform_minutes=None):
+        now = timezone.now()
+        meta = {}
+        if platform_minutes is not None:
+            meta = {"platform": {"duration_minutes": platform_minutes}}
+        return factories.make_session(
+            exam=self.exam,
+            device=factories.make_device(),
+            status=status,
+            started_at=now - timedelta(minutes=started_min_ago),
+            last_heartbeat_at=now - timedelta(minutes=offline_min),
+            meta=meta,
+        )
+
+    def status_after_sweep(self, session):
+        close_stale_sessions()
+        session.refresh_from_db()
+        return session.status
+
+    def test_long_outage_inside_test_time_keeps_session(self):
+        for started, offline in ((30, 20), (120, 110), (190, 60)):
+            with self.subTest(started=started, offline=offline):
+                session = self.make(started_min_ago=started, offline_min=offline)
+                self.assertEqual(self.status_after_sweep(session), ExamSession.Status.IN_PROGRESS)
+
+    def test_session_is_closed_after_test_time_and_grace(self):
+        # 180 daqiqa test + 15 daqiqa = 195; 200 daqiqa oldin boshlangan.
+        session = self.make(started_min_ago=200, offline_min=100)
+        self.assertEqual(self.status_after_sweep(session), ExamSession.Status.EXPIRED)
+
+    def test_platform_duration_has_priority(self):
+        short = self.make(started_min_ago=80, offline_min=70, platform_minutes=60)
+        zero = self.make(started_min_ago=80, offline_min=70, platform_minutes=0)
+        close_stale_sessions()
+        short.refresh_from_db()
+        zero.refresh_from_db()
+        self.assertEqual(short.status, ExamSession.Status.EXPIRED)       # 60 + 15 < 80
+        self.assertEqual(zero.status, ExamSession.Status.IN_PROGRESS)    # 0 -> profil, 180
+
+    def test_waiting_sessions_keep_the_old_rule(self):
+        """Imtihon hali boshlanmagan (FaceID / tasdiq) - 15 daqiqa kifoya."""
+        for status in (ExamSession.Status.READY, ExamSession.Status.FACE_CHECK):
+            with self.subTest(status=status):
+                session = self.make(started_min_ago=20, offline_min=20, status=status)
+                self.assertEqual(self.status_after_sweep(session), ExamSession.Status.EXPIRED)
+
+    def test_kept_sessions_do_not_occupy_the_batch(self):
+        """Muddati kelmaganlar SQL'da tushadi - partiyani egallamaydi."""
+        from apps.proctoring.tasks import _offline_window_passed
+
+        kept = self.make(started_min_ago=30, offline_min=20)
+        dead = self.make(started_min_ago=300, offline_min=200)
+        ids = set(
+            _offline_window_passed(
+                ExamSession.objects.all(), now=timezone.now(),
+                grace_s=settings.PROCTORING["STALE_SESSION_AFTER"],
+            ).values_list("pk", flat=True)
+        )
+        self.assertIn(dead.pk, ids)
+        self.assertNotIn(kept.pk, ids)
+
+    def test_heartbeat_returning_after_long_outage_works(self):
+        """
+        40 daqiqalik uzilishdan keyin client davom etadi (HTTP darajasida).
+
+        Ilgari bu yerda `session_not_found` kelib, client imtihon oynasini
+        yopardi.
+        """
+        session = self.make(started_min_ago=60, offline_min=40)
+        close_stale_sessions()
+
+        raw_token = "test-token-after-long-outage"
+        session.token_hash = hash_token(raw_token)
+        session.token_expires_at = timezone.now() + timedelta(hours=2)
+        session.save(update_fields=["token_hash", "token_expires_at"])
+        response = APIClient().post(
+            reverse("client-heartbeat"),
+            {"network_ok": True},
+            format="json",
+            HTTP_AUTHORIZATION=bearer(factories.make_user(permissions=["client.operate"])),
+            HTTP_X_DEVICE_ID=session.device.device_id,
+            HTTP_X_PROCTORING_SESSION=raw_token,
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertFalse(response.json()["data"]["should_stop"])
+        session.refresh_from_db()
+        self.assertEqual(session.status, ExamSession.Status.IN_PROGRESS)
+        # Heartbeat Redis'ga yozildi (DB'ga write-behind bilan keyin ko'chadi).
+        from apps.proctoring.services import state as session_state
+
+        hb = session_state.get_states([session.pk])[session.pk].get("hb")
+        self.assertGreaterEqual(int(hb), int(time.time()) - 60)
+
+
 class StaleSessionRedisDownTests(TestCase):
     def test_nothing_is_closed_while_redis_is_down(self):
         """Tirikligini tekshirib bo'lmasa — yopmaymiz."""

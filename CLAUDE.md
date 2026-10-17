@@ -118,6 +118,21 @@ faqat ingest ishchisi yozadi, u to'xtasa barcha sessiyalar "eskiradi".
 Yopishdan oldin Redis `hb` tekshiriladi (tirigi yopilmaydi, DB vaqti
 tuzatiladi); Redis ishlamasa shu yurishda hech kim yopilmaydi.
 
+**Imtihondagi sessiya aloqa uzilgani uchun YOPILMAYDI** (`in_progress`):
+faqat test vaqti (`meta.platform.duration_minutes` → `Exam.duration_minutes`
+→ `SESSION_TOKEN_TTL`) + `STALE_SESSION_AFTER` o'tgach
+(`tasks._offline_window_passed`, SQL'da — Python'da tashlansa kutayotganlar
+500 talik partiyani egallab, o'lganlarini to'sardi). `ready`/`face_check` —
+avvalgidek 15 daqiqa. Boshqa mashinadan qayta kirish uchun eski sessiyani
+proktor yakunlaydi (shu mashinada — `_replace_previous_on_device`).
+
+**Client'da uzilish ekranga XABAR CHIQARMAYDI** (`ExamWebViewPage.
+_on_network_changed`; test sayti boshqa server va ishlab turgan bo'lishi
+mumkin): faqat pastki paneldagi nuqta qizaradi va yonida hisoblagich
+(`_offline_label`, `format_clock`). Snackbar/dialog QAYTARMANG. Sessiya
+serverda yopilsa — `describe_session_lost` (xom kod emas, uzilish
+davomiyligi bilan).
+
 `services/stream.py` uch yo'qotish stsenariysini qamraydi: `XAUTOCLAIM`
 bilan osilgan PEL yozuvlari, batch yiqilsa qator-ma-qator yozish, yozib
 bo'lmaganini `:dead` oqimiga ko'chirish. **Soddalashtirmang** — "dalil

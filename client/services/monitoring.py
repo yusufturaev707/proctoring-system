@@ -155,6 +155,11 @@ class SessionMonitor(QObject):
             # uchun dalil yo'qolmasligi kerak.
             self._queue = deque(self._queue, maxlen=size)
         self._active = True
+        # Yangi sessiya "aloqa bor" dan boshlanadi (sahifa ham shunday -
+        # `ExamWebViewPage._reset_offline`). Oldingi sessiya aloqasiz
+        # yakunlangan bo'lsa, `_online=False` qolib, birinchi xato
+        # "o'zgarish" bo'lmasdi va sahifada uzilish ko'rinmasdi.
+        self._online = True
         self._heartbeat_busy = False
         self._flushing = False
         self._heartbeat_backoff.success()

@@ -371,19 +371,38 @@ def close_stale_sessions():
         HECH KIM yopilmaydi (uzilish paytida heartbeat DB'ga yoziladi —
         `HeartbeatView`);
       * Redis'da `hb` yo'q yoki u ham eski — yopiladi.
+
+    IMTIHONDAGI SESSIYA ALOQA UZILGANI UCHUN YOPILMAYDI. Binoda internet
+    15 daqiqadan ko'proq uzilsa, ilgari butun zal bir vaqtda imtihondan
+    chiqib ketardi — holbuki test sayti boshqa server va ishlab turgan
+    bo'lishi mumkin, client esa kuzatuvni mashinada davom ettiradi.
+    `in_progress` sessiya endi faqat TEST VAQTI + `STALE_SESSION_AFTER`
+    o'tgach yopiladi (`_offline_window_passed`): haqiqatan o'lgan client
+    (elektr, qulash) baribir oxir-oqibat yig'iladi. Shu mashinada qayta
+    kirilsa eski sessiya darhol yopiladi (`_replace_previous_on_device`);
+    boshqa mashinadan kirish uchun uni proktor panelda yakunlaydi.
+    `ready` / `face_check` (imtihon hali boshlanmagan) — avvalgidek.
     """
     stale_after = settings.PROCTORING["STALE_SESSION_AFTER"]
-    threshold = timezone.now() - timedelta(seconds=stale_after)
-    stale = list(
+    now = timezone.now()
+    threshold = now - timedelta(seconds=stale_after)
+    # IKKI SO'ROV, har biri o'z partiyasi bilan: muddati kelmagan
+    # imtihondagi sessiyalar SQL'da tushib qoladi — Python'da tashlansa,
+    # ular har yurishda birinchi 500 talikni egallab (eng eski heartbeat),
+    # haqiqatan o'lganlarini abadiy to'sib qo'yardi.
+    waiting = ExamSession.objects.filter(
+        status__in=[ExamSession.Status.READY, ExamSession.Status.FACE_CHECK],
+        last_heartbeat_at__lt=threshold,
+    ).order_by("last_heartbeat_at")[:500]
+    in_exam = _offline_window_passed(
         ExamSession.objects.filter(
-            status__in=[
-                ExamSession.Status.IN_PROGRESS,
-                ExamSession.Status.READY,
-                ExamSession.Status.FACE_CHECK,
-            ],
+            status=ExamSession.Status.IN_PROGRESS,
             last_heartbeat_at__lt=threshold,
-        ).order_by("last_heartbeat_at")[:500]
-    )
+        ),
+        now=now,
+        grace_s=stale_after,
+    ).order_by("last_heartbeat_at")[:500]
+    stale = list(waiting) + list(in_exam)
     if not stale:
         return {"closed": 0}
 
@@ -420,6 +439,38 @@ def close_stale_sessions():
     if closed:
         logger.info("%s ta eskirgan sessiya yopildi", closed)
     return {"closed": closed, "alive": len(alive)}
+
+
+def _offline_window_passed(queryset, *, now, grace_s: int):
+    """
+    Test vaqti + `grace_s` o'tgan imtihondagi sessiyalar (SQL'da).
+
+    Test vaqti: `started_at` + davomiylik — platforma bergani
+    (`meta.platform.duration_minutes`, sessiyaga muzlatilgan), u bo'lmasa
+    imtihon profilidagi `Exam.duration_minutes`, u ham bo'lmasa token
+    muddati (`SESSION_TOKEN_TTL`) — chegarasiz qolmasligi uchun.
+    `started_at` yo'q bo'lsa (bo'lmasligi kerak) — eski qoida: darhol.
+    """
+    from django.db.models import DateTimeField, DurationField, ExpressionWrapper, F, IntegerField, Q, Value
+    from django.db.models.fields.json import KT
+    from django.db.models.functions import Cast, Coalesce, NullIf
+
+    fallback_minutes = max(1, int(settings.PROCTORING["SESSION_TOKEN_TTL"]) // 60)
+    minutes = Coalesce(
+        NullIf(Cast(KT("meta__platform__duration_minutes"), IntegerField()), Value(0)),
+        NullIf(F("exam__duration_minutes"), Value(0)),
+        Value(fallback_minutes),
+        output_field=IntegerField(),
+    )
+    deadline = ExpressionWrapper(
+        F("started_at")
+        + ExpressionWrapper(Value(timedelta(minutes=1)) * minutes, output_field=DurationField())
+        + Value(timedelta(seconds=grace_s)),
+        output_field=DateTimeField(),
+    )
+    return queryset.annotate(offline_deadline=deadline).filter(
+        Q(started_at__isnull=True) | Q(offline_deadline__lt=now)
+    )
 
 
 def _alive_heartbeats(sessions, states: dict, *, stale_after: int) -> dict[int, int]:
