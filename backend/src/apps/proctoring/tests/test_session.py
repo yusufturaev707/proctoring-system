@@ -451,6 +451,65 @@ class ExamAccessTests(SessionFlowTestCase):
         result = session_service.issue_exam_access(session)
         self.assertTrue(result["allowed_domains"])
 
+    def test_resource_domains_are_separate_from_allowed_domains(self):
+        """
+        Savol rasmlari domeni (CDN) ALOHIDA kalitda.
+
+        `allowed_domains` ga qo'shilsa client uni navigatsiya, skript va
+        XHR uchun ham ochardi - talabgor CDN domeniga sahifa sifatida
+        o'tib keta olardi. Yaroqsiz yozuv tashlanadi, istisno emas.
+        """
+        session = self._confirmed()
+        session.exam.resource_domains = ["cdn.files.uz", "localhost"]
+        session.exam.save(update_fields=["resource_domains"])
+
+        result = session_service.issue_exam_access(session)
+
+        self.assertEqual(result["resource_domains"], ["cdn.files.uz"])
+        self.assertNotIn("cdn.files.uz", result["allowed_domains"])
+
+    def test_resource_domains_default_empty(self):
+        result = session_service.issue_exam_access(self._confirmed())
+        self.assertEqual(result["resource_domains"], [])
+
+    def test_http_webview_policy_carries_resource_domains(self):
+        """
+        HTTP qatlami: client `webview_policy` dan o'qiydi, servis javobidan emas.
+
+        Kalit `ExamAccessView` da `webview_policy` ga ko'chiriladi; u yerda
+        unutilsa servis testlari o'tardi, client esa ro'yxatni hech qachon
+        olmasdi va rasmlar bloklanaverardi.
+        """
+        from django.urls import reverse
+        from rest_framework.test import APIClient
+
+        from apps.proctoring.tests.test_client_api import bearer
+
+        session = self._confirmed()
+        self.exam.resource_domains = ["cdn.files.uz"]
+        self.exam.save(update_fields=["resource_domains"])
+        token = session_service.issue_session_token(session)
+        operator = factories.make_user(permissions=["client.operate"])
+
+        response = APIClient().post(
+            reverse("client-exam-access"),
+            {},
+            format="json",
+            HTTP_AUTHORIZATION=bearer(operator),
+            HTTP_X_DEVICE_ID=self.device.device_id,
+            HTTP_X_PROCTORING_SESSION=token,
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        data = response.json()["data"]
+        policy = data["webview_policy"]
+        self.assertEqual(policy["resource_domains"], ["cdn.files.uz"])
+        self.assertNotIn("cdn.files.uz", policy["allowed_domains"])
+        self.assertTrue(policy["allowed_domains"])
+        # Ichki kalitlar tashqariga ikki marta chiqmaydi.
+        self.assertNotIn("resource_domains", data)
+        self.assertNotIn("allowed_domains", data)
+
     def test_site_header_never_reaches_the_client(self):
         """
         Platforma kredensiali client'ga BERILMAYDI.

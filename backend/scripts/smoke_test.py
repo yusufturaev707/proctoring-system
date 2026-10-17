@@ -210,12 +210,20 @@ print("\n=== 2. Qurilmani ro'yxatga olish ===")
 # bog'langan: `check_source_ip` har bir client so'rovida "shu manba IP
 # shu binoga ruxsat etilganmi?" deb tekshiradi, ya'ni test kompyuteri
 # aynan o'sha binoda turishi shart.
+#: Mashina juftligi (Machine UUID + MAC) - haqiqiy client har handshake
+#: va JSHSHIR qidiruvida yuboradi; `REQUIRE_MACHINE_MATCH=true` da server
+#: usiz `machine_not_verified` qaytaradi.
+SMOKE_UUID = "5A0E7E57-0000-4C0D-8E57-000000000001"
+SMOKE_MAC = "AA:00:00:00:00:01"
+MACHINE = {"machine_uuid": SMOKE_UUID, "mac_address": SMOKE_MAC}
+
 computer, _ = Computer.objects.update_or_create(
     inventory_code="SMOKE-TEST",
     defaults={
         "zone": zone,
         "ip_address": "10.255.255.254",
-        "mac_address": "AA:00:00:00:00:01",
+        "mac_address": SMOKE_MAC,
+        "machine_uuid": SMOKE_UUID,
         "is_active": True,
         # `deleted_at` NI TIKLASH SHART. `Computer` — `SoftDeleteModel`,
         # ya'ni standart menejer o'chirilgan qatorlarni ham ko'radi:
@@ -271,7 +279,7 @@ def signed(path, session_token=None):
 
 print("\n=== 3. Client oqimi ===")
 resp = client.post("/api/v1/client/handshake/",
-                   data=json.dumps({"app_version": "1.0.0", "monitors": 1}),
+                   data=json.dumps({"app_version": "1.0.0", "monitors": 1, **MACHINE}),
                    content_type="application/json", **signed("/api/v1/client/handshake/"))
 data = body(resp)
 check("handshake 200", resp.status_code == 200, f"{resp.status_code} {data}")
@@ -312,8 +320,24 @@ ExamSchedule.objects.update_or_create(
 )
 check("bugungi kirish oynasi ochiq",
       any(s.is_open() for s in ExamSchedule.objects.filter(exam=exam, exam_date=_today)))
+
+# KOMPYUTER BRONI. `REQUIRE_COMPUTER_BOOKING=true` (yoki seansda bron
+# yuritilsa) talabgor biriktirilmagan bo'lsa qidiruv `seat_not_booked`
+# beradi. Panel/tashqi API bilan BIR XIL servis (`bookings.assign`),
+# takroriy ishga tushirishda idempotent.
+from django.db import transaction  # noqa: E402
+
+from apps.exams import bookings  # noqa: E402
+
+_schedule = ExamSchedule.objects.get(exam=exam, zone=None, exam_date=_today)
+with transaction.atomic():
+    _seat, _ = bookings.assign(_schedule, "31234567890123", computer=computer)
+check("talabgor kompyuterga biriktirildi",
+      _seat.is_booked and _seat.computer_id == computer.pk, str(_seat))
+
 path = "/api/v1/client/candidate/lookup/"
-resp = client.post(path, data=json.dumps({"pinfl": "31234567890123", "exam_id": exam.pk}),
+resp = client.post(path, data=json.dumps({"pinfl": "31234567890123", "exam_id": exam.pk,
+                                          **MACHINE}),
                    content_type="application/json", **signed(path))
 data = body(resp)
 check("candidate lookup 200", resp.status_code == 200, f"{resp.status_code} {data}")
@@ -369,17 +393,17 @@ resp = client.post(path, data=json.dumps({"decision": "confirm", "document_type"
 check("JWT'siz tasdiq rad etildi", resp.status_code in (401, 403),
       f"{resp.status_code} {body(resp)}")
 
-# Hujjatsiz tasdiq — validatsiya
+# Sababsiz RAD ETISH - validatsiya (yon ta'sirsiz: sessiya tirik qoladi).
+# Hujjat maydonlari esa IXTIYORIY: operator hujjatni ekranda solishtiradi
+# (`IdentityConfirmWithoutDocumentTests`) - client aynan shunday yuboradi.
+resp = client.post(path, data=json.dumps({"decision": "reject"}),
+                   content_type="application/json", **signed(path, session_token))
+check("sababsiz rad etish 400", resp.status_code == 400, str(resp.status_code))
+
 resp = client.post(path, data=json.dumps({"decision": "confirm"}),
                    content_type="application/json", **signed(path, session_token))
-check("hujjatsiz tasdiq rad etildi", resp.status_code == 400, str(resp.status_code))
-
-resp = client.post(path, data=json.dumps({"decision": "confirm", "document_type": "passport",
-                                          "document_number": "AA1234567",
-                                          "note": "Hujjat rasmi mos"}),
-                   content_type="application/json", **signed(path, session_token))
 data = body(resp)
-check("tasdiq 200", resp.status_code == 200, f"{resp.status_code} {data}")
+check("hujjatsiz tasdiq 200 (client shakli)", resp.status_code == 200, f"{resp.status_code} {data}")
 check("operator qayd etildi",
       data.get("data", {}).get("identity", {}).get("by") == "smoke_operator", str(data))
 
@@ -398,11 +422,23 @@ resp = client.post(path, data="{}", content_type="application/json",
 data = body(resp)
 check("exam access 200", resp.status_code == 200, f"{resp.status_code} {data}")
 check("WebView policy bor", "webview_policy" in data.get("data", {}))
-check("tashqi platforma tokeni keldi",
-      bool(data.get("data", {}).get("platform_session_token")), str(data)[:160])
-check("bizning token bilan chalkashmadi",
-      data.get("data", {}).get("platform_session_token") != session_token)
-check("token URL'da emas", "token=" not in str(data.get("data", {}).get("login_url", "")))
+# Havolani PLATFORMA tayyorlaydi va token uning ICHIDA (`delivery: url`,
+# `test_link_reaches_the_webview_after_identity`). Bizning sessiya tokeni
+# esa hech qachon havolaga tushmaydi.
+_login_url = str(data.get("data", {}).get("login_url", ""))
+check("platforma havolasi keldi (delivery=url)",
+      _login_url.startswith("http") and data.get("data", {}).get("delivery") == "url",
+      str(data)[:160])
+check("bizning sessiya tokeni havolada yo'q", session_token not in _login_url)
+_policy = data.get("data", {}).get("webview_policy") or {}
+check("allowlist bo'sh emas", bool(_policy.get("allowed_domains")), str(_policy))
+# Savol rasmlari (CDN) - ALOHIDA kalit, faqat sub-resurslarga
+# (`Exam.resource_domains`); asosiy allowlist'ga qo'shilmaydi.
+check("resource_domains kaliti bor (ro'yxat)",
+      isinstance(_policy.get("resource_domains"), list), str(_policy))
+check("resource_domains asosiy allowlist'ga tushmagan",
+      not set(_policy.get("resource_domains") or []) & set(_policy.get("allowed_domains") or []),
+      str(_policy))
 
 path = "/api/v1/client/events/"
 events = [{"type": "window_blur", "severity": 2, "occurred_at": "2026-08-07T10:00:00Z",
@@ -588,9 +624,10 @@ check("F.I.Sh. sessiyada muzlatilgan",
 check("yuz etaloni sessiyaga yozildi", bool(session.reference_embedding))
 check("shaxs operator tomonidan tasdiqlangan",
       session.identity_verified, str(session.identity))
-check("tasdiqda operator va hujjat qayd etilgan",
-      session.identity.get("by") == "smoke_operator"
-      and session.identity.get("document_number") == "AA1234567",
+# Hujjat raqami IXTIYORIY (operator ekranda solishtiradi); "kim javobgar"
+# izi - operator va vaqt - saqlanadi.
+check("tasdiqda operator va vaqt qayd etilgan",
+      session.identity.get("by") == "smoke_operator" and bool(session.identity.get("at")),
       str(session.identity))
 check("JSHSHIR bo'yicha qidiruv ishlaydi",
       ExamSession.objects.filter(pinfl__startswith="3123").exists())

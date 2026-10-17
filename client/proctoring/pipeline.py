@@ -326,7 +326,13 @@ class ProctoringPipeline(QThread):
         # jimgina to'xtab, `proctoring_degraded` ham chiqmasdi.
         if self._rates["identity"].enabled or self._rates["gaze"].enabled:
             try:
-                self._identity = FaceIdentity()
+                # Tanlov bali imtihon chegarasidan: talabgor kadrdagi
+                # etalonga mos yuz (`identity/candidate.py`).
+                from services.face_engine import similarity_score
+
+                self._identity = FaceIdentity(
+                    select_score=similarity_score(self._face_threshold())
+                )
                 if self._reference is not None:
                     self._identity.set_reference(self._reference)
                 ready = self._identity.is_ready

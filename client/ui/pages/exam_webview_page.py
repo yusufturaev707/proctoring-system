@@ -106,6 +106,30 @@ _MIN_STEP_TIMEOUT_S = 0.5
 _FACE_RESULT_MAX_AGE_S = 5.0
 
 
+_RT = QWebEngineUrlRequestInfo.ResourceType
+
+#: Resurs domenlari (`webview_policy.resource_domains`) ochiladigan
+#: so'rov turlari - faqat "ko'rsatiladigan" narsa: savol rasmi, shrift,
+#: uslub, audio/video.
+#:
+#: ATAYLAB YO'Q: `MainFrame`/`SubFrame` (talabgor CDN domeniga sahifa
+#: sifatida o'tib ketardi), `Script`/`Worker` (begona kod), `Xhr`/`Json`/
+#: `SubResource`/`Ping`/`WebSocket` (ma'lumot chiqarib yuborish yo'li),
+#: `Object`/`PluginResource`, `Prefetch`. Ular uchun asosiy allowlist.
+_RESOURCE_TYPES = frozenset({
+    _RT.ResourceTypeImage,
+    _RT.ResourceTypeFavicon,
+    _RT.ResourceTypeFontResource,
+    _RT.ResourceTypeStylesheet,
+    _RT.ResourceTypeMedia,
+})
+
+
+def _host_matches(host: str, domains) -> bool:
+    """Domen o'zi yoki uning subdomeni (`cdn.test.uz` -> `a.cdn.test.uz`)."""
+    return any(host == domain or host.endswith("." + domain) for domain in domains)
+
+
 class DomainAllowlistInterceptor(QWebEngineUrlRequestInterceptor):
     """
     Faqat ruxsat etilgan domenlarga so'rov qo'yadi.
@@ -117,15 +141,29 @@ class DomainAllowlistInterceptor(QWebEngineUrlRequestInterceptor):
     ro'yxatda ham saqlanardi; u `site_url` bilan birga
     yangilanmasa, imtihon oq ekranda ochilardi.
 
+    IKKINCHI ro'yxat - `resource_domains` (`Exam.resource_domains`):
+    savol rasmlari va shriftlar ko'pincha boshqa serverdan (CDN)
+    keladi. U faqat `_RESOURCE_TYPES` turidagi so'rovga ochiladi;
+    shu domenga navigatsiya, iframe, skript va XHR baribir bloklanadi.
+
     Ro'yxat bo'sh bo'lsa hech narsa bloklanmaydi - bu holat
     backendda ham "tekshiruv o'chirilgan" degani.
     """
 
-    def __init__(self, allowed: list, on_blocked=None, local_port: int = 0) -> None:
+    def __init__(self, allowed: list, on_blocked=None, local_port: int = 0,
+                 resource_domains=()) -> None:
         super().__init__()
         self._allowed = [domain.lower().strip() for domain in allowed if domain]
+        self._resources = [
+            domain.lower().strip() for domain in (resource_domains or ()) if domain
+        ]
         self._on_blocked = on_blocked
         self._local_port = local_port
+        #: Sub-resurs bo'yicha xabar berilgan hostlar. Sahifadagi 40 ta
+        #: rasm bitta begona serverdan bo'lsa - 40 ta emas, BITTA hodisa:
+        #: talabgor bu so'rovlarni boshqarmaydi va har biri jurnalda
+        #: shovqin edi. Navigatsiya (asosiy oyna) har safar aytiladi.
+        self._reported: set = set()
 
     def interceptRequest(self, info) -> None:
         if not self._allowed:
@@ -145,18 +183,26 @@ class DomainAllowlistInterceptor(QWebEngineUrlRequestInterceptor):
             and url.port() == self._local_port
         ):
             return
-        for domain in self._allowed:
-            if host == domain or host.endswith("." + domain):
-                return
+        if _host_matches(host, self._allowed):
+            return
+        resource_type = info.resourceType()
+        if (
+            self._resources
+            and resource_type in _RESOURCE_TYPES
+            and _host_matches(host, self._resources)
+        ):
+            return
         info.block(True)
-        if self._on_blocked is not None:
-            # IO THREAD'IDA: chaqiruvchi UI'ga tegmaydi, faqat bayroq
-            # va hodisa buferi (`_on_blocked_host`).
-            main_frame = (
-                info.resourceType()
-                == QWebEngineUrlRequestInfo.ResourceType.ResourceTypeMainFrame
-            )
-            self._on_blocked(host, main_frame)
+        if self._on_blocked is None:
+            return
+        main_frame = resource_type == _RT.ResourceTypeMainFrame
+        if not main_frame:
+            if host in self._reported:
+                return
+            self._reported.add(host)
+        # IO THREAD'IDA: chaqiruvchi UI'ga tegmaydi, faqat bayroq
+        # va hodisa buferi (`_on_blocked_host`).
+        self._on_blocked(host, main_frame)
 
 
 class LockedWebPage(QWebEnginePage):
@@ -974,6 +1020,9 @@ class ExamWebViewPage(QWidget):
         self._interceptor = DomainAllowlistInterceptor(
             allowed, self._on_blocked_host,
             local_port=self._local_service.port if self._local_service is not None else 0,
+            # Savol rasmlari/shriftlar (CDN) - faqat sub-resurslarga.
+            # Eski server kalitni yubormaydi - hozirgi xatti-harakat.
+            resource_domains=policy.get("resource_domains") or [],
         )
         profile.setUrlRequestInterceptor(self._interceptor)
 
@@ -1080,6 +1129,12 @@ class ExamWebViewPage(QWidget):
         """4-sahifadan kelgan kamerani davriy tekshiruvga ulaydi."""
         self._camera = camera
         if camera is not None:
+            # TALABGOR ETALON BO'YICHA tanlanadi: kameraga egilgan begona
+            # odamning yuzi kattaroq bo'lsa ham u "talabgor" deb
+            # solishtirilmaydi (`camera_worker.select_candidate_face`).
+            # Ishchi sessiya oxirida yopiladi (`retire_camera`) va
+            # FaceID sahifasiga qaytmaydi - etalon keyingi talabgorga o'tmaydi.
+            camera.set_reference(self._state.face_reference, self._face_threshold())
             camera.frame_ready.connect(self._on_camera_frame)
             camera.face_result.connect(self._on_face_result)
             camera.camera_error.connect(self._on_camera_error)
@@ -1565,7 +1620,13 @@ class ExamWebViewPage(QWidget):
         # buferga yozamiz va bayroq qo'yamiz, UI'ga tegmaymiz.
         if main_frame:
             self._blocked_main_host = host
-        self._monitor.push_event("navigation_blocked", severity=2, payload={"host": host})
+        # `main_frame` - proktor uchun farq: talabgor boshqa saytga o'tmoqchi
+        # bo'ldimi yoki sahifaning o'zi begona serverdan rasm/skript so'radimi
+        # (ikkinchisi odatda `Exam.resource_domains` sozlanmagani).
+        self._monitor.push_event(
+            "navigation_blocked", severity=2,
+            payload={"host": host, "main_frame": main_frame},
+        )
 
     def _on_download_requested(self, item) -> None:
         item.cancel()

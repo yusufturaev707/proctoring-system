@@ -1064,6 +1064,9 @@ class ExamAccessView(SessionRequiredView):
         # QWebEngineUrlRequestInterceptor allowlist sifatida ishlatadi.
         access["webview_policy"] = {
             "allowed_domains": access.pop("allowed_domains", []),
+            # Faqat rasm/shrift/CSS/media - client navigatsiya va
+            # skriptga qo'llamaydi (`DomainAllowlistInterceptor`).
+            "resource_domains": access.pop("resource_domains", []),
             "block_devtools": True,
             "block_context_menu": True,
             "block_new_windows": True,

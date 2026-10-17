@@ -194,11 +194,21 @@ class TrackerUpdateTests(unittest.TestCase):
         # Disklar manbai bu safar o'qilmadi - E: "uzildi" EMAS.
         self.assertEqual(self.tracker.update(snap(flash, failed={"drive"}), 3), [])
 
-    def test_source_failed_at_start_gets_silent_baseline(self):
+    def test_source_failed_at_start_gets_at_start_baseline(self):
+        """
+        Boshida o'qilmagan manba: undagi narsa "boshidan bor edi" (`at_start`).
+
+        Ilgari bu baseline JIM edi va dastur ochilishidan oldin ulangan
+        qurilma butun imtihon davomida hech qayerda ko'rinmasdi.
+        """
         tracker = PeripheralTracker()
         tracker.start(snap(failed={"audio"}))
         speakers = audio("Headphones (Realtek)")
-        self.assertEqual(tracker.update(snap(speakers), 1), [])
+        events = tracker.update(snap(speakers), 1)
+        self.assertEqual(
+            [(e.type, e.payload.get("at_start")) for e in events],
+            [("peripheral_connected", True)],
+        )
         self.assertEqual(tracker.update(snap(speakers), 2), [])
 
     def test_mouse_is_low_severity_and_removal_is_info(self):

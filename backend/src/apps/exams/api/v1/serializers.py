@@ -73,12 +73,19 @@ class ExamSerializer(serializers.ModelSerializer):
         help_text="To'liq sarlavha: «Authorization: Bearer <token>»",
     )
     site_header_masked = serializers.SerializerMethodField()
+    # Savol rasmlari/shriftlar keladigan domenlar. `ListField` - model
+    # `JSONField` i har qanday JSON'ni qabul qilardi (lug'at, son).
+    # Tekshiruv va kanonik shakl `validate_resource_domains` da.
+    resource_domains = serializers.ListField(
+        child=serializers.CharField(max_length=500, trim_whitespace=True),
+        required=False, allow_empty=True,
+    )
 
     class Meta:
         model = Exam
         fields = (
             "id", "name", "key", "exam_type", "exam_type_name", "external_code",
-            "site_url", "site_header", "site_header_masked",
+            "site_url", "site_header", "site_header_masked", "resource_domains",
             "duration_minutes", "setting",
             "setting_name", "is_active", "sessions_count", "created_at", "deleted_at",
         )
@@ -86,6 +93,16 @@ class ExamSerializer(serializers.ModelSerializer):
 
     def get_site_header_masked(self, obj) -> str:
         return exam_services.mask_site_header(obj)
+
+    def validate_resource_domains(self, value):
+        # Qoida bitta joyda (`apps/exams/domains.py`) - Django admin ham
+        # shuni chaqiradi (`Exam.clean`).
+        from apps.exams.domains import clean_resource_domains
+
+        try:
+            return clean_resource_domains(value)
+        except ValueError as exc:
+            raise serializers.ValidationError(str(exc)) from exc
 
     def validate_site_header(self, value):
         """

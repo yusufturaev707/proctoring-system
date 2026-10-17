@@ -68,6 +68,38 @@ log = logging.getLogger(__name__)
 _CONTINUE_WIDTH = 280
 
 
+def _scan_machine(*, threats: bool, peripherals: bool, allow=(),
+                  allow_virtual_host: bool = False) -> dict:
+    """
+    "Davom etish" dagi mashina tekshiruvi - BITTA FON CHAQIRUVIDA.
+
+    Ikki qism bir-biridan MUSTAQIL: tahdid skaneri yiqilsa ham tashqi
+    xotira baribir tekshiriladi va aksincha. Ikkita alohida worker
+    bo'lsa, `_finish_check` ikkalasini kutish uchun holat yig'ishi
+    kerak edi; ketma-ket bajarish esa arzon - qurilmalar ~0.1 s.
+
+    Qaytaradi: `{"threats": ThreatReport | None, "threat_error": str,
+    "peripherals": [payload] | None}`.
+    """
+    result = {"threats": None, "threat_error": "", "peripherals": None}
+    if threats:
+        from services import threat_scanner
+
+        try:
+            result["threats"] = threat_scanner.sweep(
+                allow=allow, allow_virtual_host=allow_virtual_host
+            )
+        except Exception as exc:  # noqa: BLE001 - qurilma tekshiruvi davom etsin
+            log.warning("Tahdid skaneri qayta ishlamadi", exc_info=True)
+            result["threat_error"] = type(exc).__name__
+    if peripherals:
+        from services import peripherals as peripheral_scan
+
+        # ISTISNO TASHLAMAYDI - aniqlab bo'lmasa `None` (ogohlantirish yo'q).
+        result["peripherals"] = peripheral_scan.scan_attached_storage()
+    return result
+
+
 def _machine_identity() -> dict:
     """
     Mashinaning MAC va LAN manzili — WinAPI orqali, bitta adapterdan.
@@ -616,9 +648,11 @@ class ExamSelectPage(QWidget):
         FON THREAD'IDA: skanerlash ~0.3-2 soniya (imzolarni o'qish,
         xizmatlar ro'yxati) va UI thread'da u oynani muzlatardi.
 
-        Skaner o'chirilgan bo'lsa qadam butunlay o'tkazib yuboriladi —
-        `_finish_check` `None` hisobot bilan chaqiriladi va tahdid
-        bo'yicha hech qanday muammo qo'shilmaydi.
+        Shu chaqiruvda ULANGAN TASHQI XOTIRA ham tekshiriladi
+        (`_scan_machine`), panelda «Qo'shimcha qurilmalar» yoqilgan
+        bo'lsa. Skaner ham, qurilmalar ham o'chiq bo'lsa qadam butunlay
+        o'tkazib yuboriladi — `_finish_check` `None` hisobot bilan
+        chaqiriladi.
         """
         from config import (
             THREAT_ALLOW_VIRTUAL_HOST,
@@ -626,7 +660,10 @@ class ExamSelectPage(QWidget):
             THREAT_SCAN_ENABLED,
         )
 
-        if not THREAT_SCAN_ENABLED:
+        # TASHQI XOTIRA ham shu yerda (ishga tushishdan oldin ulangani
+        # ham): operator uni talabgor kelishidan oldin ko'radi.
+        detect_peripherals = self._detect_peripherals(config)
+        if not THREAT_SCAN_ENABLED and not detect_peripherals:
             self._finish_check(
                 config=config, setting_name=setting_name, loaded=loaded, threats=None
             )
@@ -634,26 +671,39 @@ class ExamSelectPage(QWidget):
 
         from services import threat_scanner
 
-        def done(report) -> None:
-            threat_scanner.remember(report)
-            self._finish_check(
-                config=config, setting_name=setting_name, loaded=loaded, threats=report
-            )
-
-        def failed(message: str, code: str) -> None:
+        def fallback_threats():
             # Skaner yiqildi. OXIRGI MA'LUM hisobotga qaytamiz: uni
             # butunlay tashlab yuborish ishga tushishda topilgan
             # tahdidni jimgina kechirardi.
-            log.warning("Tahdid skaneri qayta ishlamadi (%s): %s", code or "-", message)
+            return threat_scanner.last_report() if THREAT_SCAN_ENABLED else None
+
+        def done(result) -> None:
+            result = result or {}
+            threats = None
+            if THREAT_SCAN_ENABLED:
+                if result.get("threat_error"):
+                    threats = fallback_threats()
+                else:
+                    threats = result.get("threats")
+                    threat_scanner.remember(threats)
+            self._finish_check(
+                config=config, setting_name=setting_name, loaded=loaded,
+                threats=threats, peripherals=result.get("peripherals"),
+            )
+
+        def failed(message: str, code: str) -> None:
+            log.warning("Mashina tekshiruvi ishlamadi (%s): %s", code or "-", message)
             self._finish_check(
                 config=config,
                 setting_name=setting_name,
                 loaded=loaded,
-                threats=threat_scanner.last_report(),
+                threats=fallback_threats(),
             )
 
         worker = ApiWorker(
-            threat_scanner.sweep,
+            _scan_machine,
+            threats=THREAT_SCAN_ENABLED,
+            peripherals=detect_peripherals,
             allow=THREAT_SCAN_ALLOW,
             allow_virtual_host=THREAT_ALLOW_VIRTUAL_HOST,
             parent=self,
@@ -661,6 +711,16 @@ class ExamSelectPage(QWidget):
         worker.succeeded.connect(done)
         worker.failed.connect(failed)
         self._workers.run(worker)
+
+    def _detect_peripherals(self, config: dict) -> bool:
+        """
+        Panelda «Qo'shimcha qurilmalar» yoqilganmi (`device.detect_peripherals`).
+
+        Imtihon profili olinmagan bo'lsa (`config={}`) - handshake'dagi
+        global profil: imtihon ham baribir shu bilan boshlanadi.
+        """
+        source = config or self._state.config or {}
+        return bool((source.get("device") or {}).get("detect_peripherals", False))
 
     @staticmethod
     def _setting_caption(setting: dict) -> str:
@@ -672,7 +732,8 @@ class ExamSelectPage(QWidget):
         )
 
     def _finish_check(
-        self, *, config: dict, setting_name: str, loaded: bool, threats=None
+        self, *, config: dict, setting_name: str, loaded: bool, threats=None,
+        peripherals=None,
     ) -> None:
         self._set_checking(False)
         exam = self._pending_exam
@@ -703,6 +764,8 @@ class ExamSelectPage(QWidget):
             # tahdid imtihonni to'sadi"). Profil kelmagan bo'lsa
             # (`config={}`) - `.env` dagi `THREAT_BLOCK_EXAM` zaxirasi.
             threats_block=runtime_settings.get(config, "rdp.block_exam"),
+            # Fleshka, tashqi disk, telefon - ogohlantirish (to'siq emas).
+            peripherals=peripherals,
         )
 
         if not issues:

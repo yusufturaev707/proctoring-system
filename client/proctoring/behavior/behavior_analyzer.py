@@ -279,8 +279,9 @@ class BehaviorAnalyzer:
                 confidence=1.0,
                 payload={
                     "faces": identity.count,
-                    # Eng kattasi — talabgor (`face_identity` qoidasi),
-                    # qolganlari — kadrdagi boshqa yuzlar.
+                    # `primary` — talabgor (`face_identity` qoidasi:
+                    # etalonga mos yuz, bo'lmasa eng kattasi), qolganlari —
+                    # kadrdagi boshqa yuzlar.
                     "marks": _marks(*[
                         _mark(
                             "Talabgor" if face is identity.primary else "Boshqa yuz",

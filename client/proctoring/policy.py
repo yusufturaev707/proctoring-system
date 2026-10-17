@@ -56,6 +56,7 @@ def check_readiness(
     check_expired: bool = False,
     threats=None,
     threats_block: bool = True,
+    peripherals=None,
 ) -> list[PolicyIssue]:
     """
     Imtihonni boshlashga tayyormi.
@@ -68,6 +69,9 @@ def check_readiness(
     tugagan (`check_result` o'rniga bo'sh berilgan).
     `threats` - ishga tushishdagi tozalash hisoboti
     (`services.threat_scanner.ThreatReport`) yoki `None`.
+    `peripherals` - hozir ulangan tashqi xotira va telefonlar
+    (`services.peripherals.scan_attached_storage` payload'lari) yoki
+    `None` (tekshirilmadi / aniqlab bo'lmadi).
 
     IKKI MANBA, ANIQ USTUVORLIK. Server tekshiruvi mavjud bo'lsa,
     kamera bo'yicha xulosa AYNAN UNDAN olinadi va mahalliy evristika
@@ -91,6 +95,8 @@ def check_readiness(
     # qo'yish orqali butun tekshiruvni chetlab o'tish yo'lini
     # ochardi.
     issues.extend(_check_threats(threats, threats_block))
+    # Tashqi xotira ham sozlamadan MUSTAQIL: u mashinaning hozirgi holati.
+    issues.extend(_check_peripherals(peripherals))
 
     if not config_loaded:
         # OGOHLANTIRISH, to'siq EMAS.
@@ -330,6 +336,55 @@ def _check_threats(report, blocks: bool) -> list:
             )
         )
     return issues
+
+
+#: Ogohlantirishda ko'rsatiladigan qurilmalar soni - qolgani "yana N ta".
+_PERIPHERAL_LIST_LIMIT = 4
+
+
+def _check_peripherals(items) -> list:
+    """
+    Kompyuterga ulangan fleshka, tashqi disk, telefon - OGOHLANTIRISH.
+
+    NIMA UCHUN OPERATORGA, IMTIHONDAN OLDIN. Imtihon boshida ulangan
+    qurilma proktorga baribir ketadi (`peripheral_connected`, `at_start`)
+    va xavf baliga qo'shiladi - lekin talabgor allaqachon o'tirgan va
+    "fleshka kimniki" degan savolga hech kim javob bermaydi. Bu yerda
+    operator uni talabgor kelishidan OLDIN uzib qo'yadi.
+
+    TO'SIQ EMAS (qo'shimcha qurilmalar faqat qayd etiladi): ichki
+    kartaridar yoki tarmoq diski ham shu yerga tushishi mumkin va
+    imtihonni ular uchun to'xtatish noto'g'ri bo'lardi.
+    """
+    if not items:
+        return []
+    kinds = {str(item.get("kind") or "") for item in items}
+    if kinds <= {"phone"}:
+        title = "Kompyuterga telefon ulangan"
+    elif "phone" in kinds:
+        title = "Kompyuterga tashqi xotira va telefon ulangan"
+    else:
+        title = "Kompyuterga tashqi xotira ulangan"
+
+    # Har qurilma ALOHIDA qatorda: bitta satrga tiqilganda nom va disk
+    # harfi aralashib, operator qaysi uyani tekshirishini topolmasdi.
+    lines = ["• " + _peripheral_line(item) for item in items[:_PERIPHERAL_LIST_LIMIT]]
+    if len(items) > _PERIPHERAL_LIST_LIMIT:
+        lines.append("• va yana {} ta".format(len(items) - _PERIPHERAL_LIST_LIMIT))
+    lines.append(
+        "Imtihondan oldin uzib qo'ying: ulangan qolsa, imtihon boshida "
+        "proktorga xabar ketadi."
+    )
+    return [PolicyIssue(blocking=False, title=title, detail="\n".join(lines))]
+
+
+def _peripheral_line(item: dict) -> str:
+    """`Kingston DataTraveler — E: KINGSTON 14.4 GB` - nomi va disk harfi."""
+    label = str(item.get("label") or "Noma'lum qurilma")
+    drives = [str(drive) for drive in (item.get("drives") or []) if drive]
+    if drives and drives != [label]:
+        return "{} — {}".format(label, ", ".join(drives))
+    return label
 
 
 def _check_modules(policy: dict, layout: CameraLayout, face_ready: bool) -> list:

@@ -87,6 +87,15 @@ class Exam(SoftDeleteModel):
         _("Platforma sarlavhasi"), blank=True, default=""
     )
 
+    # Savol rasmlari, shrift, CSS keladigan QO'SHIMCHA domenlar (CDN).
+    # Client ularni FAQAT sub-resurslarga ochadi - navigatsiya, iframe,
+    # skript va XHR uchun asosiy allowlist o'zgarmaydi. Qoida va sabab -
+    # `apps/exams/domains.py`.
+    resource_domains = models.JSONField(
+        _("Resurs domenlari"), default=list, blank=True,
+        help_text=_("Savol rasmlari va shriftlar keladigan domenlar, masalan cdn.test.uz"),
+    )
+
     duration_minutes = models.PositiveIntegerField(_("Davomiyligi (daq)"), default=180)
     setting = models.ForeignKey(
         "controls.Setting",
@@ -125,6 +134,31 @@ class Exam(SoftDeleteModel):
 
         host = urlparse(self.site_url).hostname
         return [host] if host else []
+
+    def get_resource_domains(self) -> list[str]:
+        """
+        Client'ga beriladigan resurs domenlari (faqat sub-resurslar uchun).
+
+        Yaroqsiz yozuv jimgina tashlanadi (`safe_resource_domains`):
+        bazadagi eski/qo'lda yozilgan qiymat imtihonni ochishni
+        to'xtatmasligi kerak.
+        """
+        from apps.exams.domains import safe_resource_domains
+
+        return safe_resource_domains(self.resource_domains)
+
+    def clean(self):
+        # Django admin formasi ham panel bilan BIR XIL qoidadan o'tadi
+        # (`ExamSerializer.validate_resource_domains`).
+        from django.core.exceptions import ValidationError
+
+        from apps.exams.domains import clean_resource_domains
+
+        super().clean()
+        try:
+            self.resource_domains = clean_resource_domains(self.resource_domains)
+        except ValueError as exc:
+            raise ValidationError({"resource_domains": str(exc)}) from exc
 
     class Meta:
         verbose_name = _("Imtihon")

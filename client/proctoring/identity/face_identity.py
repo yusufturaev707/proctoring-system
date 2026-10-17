@@ -36,6 +36,9 @@ from typing import Optional
 
 import numpy as np
 
+from config import MIN_FACE_WIDTH_PX
+from proctoring.identity.candidate import match_reference, normalize_reference, selection_score
+
 log = logging.getLogger(__name__)
 
 
@@ -66,8 +69,11 @@ class IdentityResult:
     """Bitta kadr uchun shaxs holati."""
 
     faces: list = field(default_factory=list)
-    #: Asosiy yuz — kadrdagi eng KATTASI (kameraga eng yaqin odam).
+    #: Asosiy yuz — TALABGOR: etalonga mos yuz (`candidate.match_reference`),
+    #: mos yuz bo'lmasa kadrdagi eng KATTASI (kameraga eng yaqin odam).
     primary: Optional[Face] = None
+    #: `primary` etalon bo'yicha tanlanganmi (o'lcham bo'yicha emas).
+    matched: bool = False
     #: Etalonga o'xshashlik (0..1). Etalon yo'q bo'lsa `None`.
     similarity: Optional[float] = None
     #: Yuzning kadr kengligiga nisbati — "uzoq/yaqin" uchun.
@@ -100,8 +106,11 @@ class IdentityResult:
 class FaceIdentity:
     """Pipeline uchun shaxs moduli."""
 
-    def __init__(self) -> None:
+    def __init__(self, select_score: Optional[int] = None) -> None:
         self._reference: Optional[np.ndarray] = None
+        #: Etalon bo'yicha tanlov bali (0..100) - imtihon chegarasidan
+        #: (`candidate.selection_score`).
+        self._select_score = selection_score(select_score)
 
     # ------------------------------------------------------------------
     @property
@@ -122,15 +131,10 @@ class FaceIdentity:
         `None` - etalonsiz rejim: o'xshashlik hisoblanmaydi, lekin
         yuz bor-yo'qligi va soni baribir kuzatiladi.
         """
-        if embedding is None:
-            self._reference = None
-            return
-        vector = np.asarray(embedding, dtype=np.float32).ravel()
-        norm = float(np.linalg.norm(vector))
         # Etalon NORMALLASHTIRILADI: `FaceEngine.detect` ham
         # normallashtirilgan vektor qaytaradi va cosine o'xshashlik
         # oddiy skalyar ko'paytmaga aylanadi.
-        self._reference = (vector / norm) if norm > 0 else None
+        self._reference = normalize_reference(embedding)
 
     def reset(self) -> None:
         self._reference = None
@@ -158,12 +162,29 @@ class FaceIdentity:
         # egallamasligi kerak.
         raw.sort(key=lambda item: item.width, reverse=True)
         primary = raw[0]
+        # ETALON USTUN: kameraga egilgan begona odamning yuzi kattaroq
+        # bo'lsa ham talabgor - etalonga mos yuz. Qoida FaceID ishchisi
+        # bilan BITTA (`camera_worker.select_candidate_face`,
+        # `candidate.match_reference`). Begona odam yashirilmaydi:
+        # `faces` da qoladi va `multiple_faces` beradi.
+        matched = None
+        if self._reference is not None and len(raw) > 1:
+            matched, _score = match_reference(
+                raw, self._reference,
+                min_score=self._select_score,
+                min_width=MIN_FACE_WIDTH_PX,
+                width_of=lambda item: item.width,
+                embedding_of=lambda item: item.embedding,
+            )
+            if matched is not None:
+                primary = matched
 
         height, width = frame.shape[:2]
         center_x, center_y = primary.center
         result = IdentityResult(
             faces=raw,
             primary=primary,
+            matched=matched is not None,
             face_ratio=primary.width / max(1, width),
             offset=float(
                 max(

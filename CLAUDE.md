@@ -304,6 +304,20 @@ egilgan suflyor "talabgor" bo'lib solishtirilardi. Qoida
 Chetlatilgan yuzlar belgilanmaydi. Serverga `faces_detected` har doim `1`
 (`verify_initial_face` boshqasini qabul qilmaydi).
 
+**Test davomida talabgor — ETALONGA MOS yuz**, o'lchamidan qat'i nazar
+(`proctoring/identity/candidate.py:match_reference`; ikkala yo'l —
+`select_candidate_face(reference=)` va `FaceIdentity.analyse` — SHUNI
+chaqiradi). Etalon — `AppState.face_reference` (`CameraWorker.set_reference`
+`_attach_camera` da; AI yo'lida `set_reference`). Tanlov bali
+`min(25, min_score_exam)` (`selection_score`) — qaror EMAS, "mos/mos emas"
+avvalgidek imtihon chegarasi bilan. Kattaroq begona yuz fon bo'la olmaydi:
+FaceID ishchisida `multiple` (solishtirilmaydi), AI'da `faces` da qoladi
+(`multiple_faces`). Mos yuz yo'q — eski o'lcham qoidasi O'ZGARISHSIZ
+(almashtirilgan talabgor "mos kelmadi" beradi). Eng katta yuzning
+`MIN_RELATIVE_WIDTH` (0.4) ulushidan kichik yuz tanlanmaydi — orqada
+turgan haqiqiy talabgor joyidagi boshqa odamni yashirmasligi uchun.
+Kirish sahifasida etalon BERILMAYDI.
+
 * Urinish yopilishi uchun IKKALA shart: `faceid_fail_streak` ketma-ket
   mos kelmagan kadr VA `faceid_fail_min_seconds`. Yuz ko'rinmay qolsa
   seriya UZILADI ("solishtirib bo'lmadi", "mos kelmadi" emas).
@@ -464,6 +478,13 @@ talqin qilinadi.
   shifrlab yoziladi (`external_test_link_enc`), faqat `exam/access/` da,
   shaxs tasdiqlangach qaytadi.
 * **WebView allowlist'i `test_link` domenidan**, `site_url` dan emas.
+* **Savol rasmlari (CDN) — `Exam.resource_domains`**, `webview_policy`
+  da ALOHIDA kalit (`resource_domains`), `allowed_domains` ga QO'SHILMAYDI:
+  client uni faqat rasm/shrift/CSS/media'ga ochadi
+  (`exam_webview_page._RESOURCE_TYPES`); navigatsiya, iframe, skript, XHR
+  bloklanadi. Qoida (host, ≥ 2 qism, loopback yo'q) bitta joyda —
+  `apps/exams/domains.py` (serializer + `Exam.clean`). Bloklangan
+  sub-resurs host bo'yicha bir marta xabar qilinadi, `main_frame` bilan.
 * `image_base64` FaceID etaloniga aylanadi (`data:` prefiksi olinadi).
 * **F.I.Sh. va `duration_time` ixtiyoriy**: yo'q bo'lsa oqim to'liq
   ishlaydi (ism o'rniga niqoblangan JSHSHIR — `Candidate.display_name`;
@@ -913,7 +934,19 @@ thread'i `device_watch._PeripheralScanner` (`WM_DEVICECHANGE` →
   (veb-kamerada mikrofon bor). Jiddiylik: disk/telefon 3, tarmoq/kamera/
   audio/BT 2, sichqoncha/boshqa 1; uzilish 0–1.
 * Boshida ulanganlar ham (`at_start`), lekin sichqoncha/klaviatura,
-  kamera, BT adapter emas; ichki qattiq disklar emas.
+  kamera, BT adapter emas; ichki qattiq disklar emas. Boshida O'QILMAGAN
+  manba keyin o'qilganda ham `at_start` (`_present_events`) — jim
+  boshlang'ich QAYTARMANG: dastur ochilishidan oldin ulangan fleshka
+  butun imtihon davomida ko'rinmay qolardi. Boshdagi disk harfi faqat
+  OLINADIGAN (2) bo'lsa va yagona `storage` qurilma bo'lsa unga
+  biriktiriladi (tarmoq diski, CD — alohida; MTP telefon harf olmaydi).
+* **«Davom etish» da operatorga OGOHLANTIRISH** (to'siq emas):
+  ulangan fleshka/tashqi disk/telefon (`peripherals.attached_storage` —
+  `PeripheralTracker.start` bilan BITTA qoida, `STORAGE_KINDS`;
+  `policy._check_peripherals`). Tahdid skaneri bilan bitta fon
+  chaqiruvida, bir-biridan mustaqil (`exam_select_page._scan_machine`);
+  audio o'qilmaydi (`snapshot(sources=)`). `device.detect_peripherals`
+  o'chiq bo'lsa tekshirilmaydi.
 * Yangi narsa 2-ko'rinishda tasdiqlanadi; disk/telefon disk harfini
   kutadi (bitta hodisa, `drives` bilan); o'qilmagan manba "uzildi" EMAS.
 * Server ballni faqat jiddiylik ≥ 2 da qo'shadi

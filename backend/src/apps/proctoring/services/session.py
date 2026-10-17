@@ -1031,6 +1031,11 @@ def issue_exam_access(session: ExamSession, *, ip_address: str = "") -> dict:
         # esa boshqa domenda ochilishi mumkin (`test.uz`). Eski
         # manbani qoldirish WebView'da butun sahifani bloklardi.
         "allowed_domains": _link_domains(test_link, session.exam),
+        # FAQAT sub-resurslar (rasm, shrift, CSS, media) uchun: savol
+        # rasmlari boshqa serverdan (CDN) keladi. `allowed_domains` ga
+        # QO'SHILMAYDI - aks holda talabgor shu domenga sahifa sifatida
+        # o'tib keta olardi (`apps/exams/domains.py`).
+        "resource_domains": session.exam.get_resource_domains(),
         # `site_header` client'ga BERILMAYDI. U platforma API'sining
         # kredensiali va serverda qoladi: 500 mashinaga tarqalgan
         # token bekor ham qilinmaydi, kuzatilmaydi ham. Platformaga

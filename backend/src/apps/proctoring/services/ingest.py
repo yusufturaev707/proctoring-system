@@ -374,6 +374,7 @@ _BROADCAST_DETAIL_KEYS = (
     "reason",      # client_anomaly / camera_lost — sabab
     "kind",        # client_anomaly — turi
     "host",        # navigation_blocked — qaysi domen
+    "main_frame",  # navigation_blocked — sahifaga o'tishmi yoki sahifadagi resurs
     "score",       # face_* — ball
     "threshold",   # face_* — chegara
     "faces",       # face_* — nechta yuz

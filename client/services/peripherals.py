@@ -68,6 +68,10 @@ KIND_SEVERITY = {
     "input": 1,      # sichqoncha, klaviatura, boshqa HID
     "other": 1,      # USB hub, kartaridar, printer...
 }
+#: Ma'lumot olib chiqsa bo'ladigan turlar: tayyorlik ogohlantirishi
+#: (`attached_storage`) va disk harfini kutish (`PeripheralTracker`).
+STORAGE_KINDS = frozenset({"storage", "phone"})
+
 #: Bir konteynerda bir necha tur bo'lsa - birinchisi (fleshkada WPD
 #: tugun ham bor, lekin u "telefon" emas).
 _KIND_PRIORITY = tuple(KIND_SEVERITY)
@@ -290,36 +294,52 @@ class PeripheralTracker:
         self._pending.clear()
         self._recent_storage.clear()
         self._baselined = set(SOURCES) - set(snapshot.failed)
-        items = snapshot.items
+        return self._present_events(snapshot.items.values())
 
-        devices = [item for item in items.values() if item.source == "device"]
-        self._claim_children(devices, items.values())
+    def _present_events(self, fresh) -> list:
+        """
+        BOSHIDAN ULANGANLAR (`at_start`); `fresh` allaqachon `_known` da.
 
-        # Imtihon boshidagi disklar: qattiq disk (`C:`, `D:`) - ichki,
-        # hodisa emas. Olinadigan disk yagona disk-qurilmaga tegishli
-        # bo'lsa - o'shanga; aks holda alohida.
-        storage = [item for item in devices if item.kind in ("storage", "phone")]
+        Ikki joydan: `start` (hamma manba) va `update` (boshida o'qilmagan
+        manba birinchi marta o'qilganda). Ikkinchisi ilgari JIM edi: imtihon
+        boshida SetupAPI javob bermasa, dastur ochilishidan oldin ulangan
+        fleshka butun imtihon davomida hech qayerda ko'rinmasdi. "Imtihon
+        davomida ulandi" deb ham yozilmaydi - u boshidan bor edi.
+        """
+        fresh = list(fresh)
+        devices = [item for item in self._known.values() if item.source == "device"]
+        self._claim_children(devices, fresh)
+
+        # Disklar: qattiq disk (`C:`, `D:`) - ichki, hodisa emas. OLINADIGAN
+        # disk (2) yagona disk-qurilmaga tegishli bo'lsa - o'shanga. Tarmoq
+        # diski, CD, RAM disk fleshkaning harfi emas: ilgari bitta fleshka
+        # ulangan bo'lsa `Z:` tarmoq diski ham uning `drives` iga tushib,
+        # alohida ko'rinmasdi. Egasi faqat DISK turidagi qurilma: MTP
+        # telefon disk harfi olmaydi, ya'ni fleshka + telefon ulangan
+        # bo'lsa `E:` - fleshkaniki (ilgari ikkalasi "noaniq" bo'lib,
+        # harf alohida qator chiqardi).
+        storage = [item for item in devices if item.kind == "storage"]
         loose_drives = []
-        for item in items.values():
+        for item in fresh:
             if item.source != "drive" or item.drive_type == 3:
                 continue
-            if len(storage) == 1:
+            if len(storage) == 1 and item.drive_type == 2:
                 self._parent[item.key] = storage[0].key
             else:
                 loose_drives.append(item)
 
         events = []
-        for item in devices:
-            if item.kind in _QUIET_AT_START:
+        for item in fresh:
+            if item.source != "device" or item.kind in _QUIET_AT_START:
                 continue
             drives = [
-                d.label for d in items.values()
+                d.label for d in self._known.values()
                 if d.source == "drive" and self._parent.get(d.key) == item.key
             ]
             events.append(self._event("connected", item, at_start=True, drives=drives))
         for item in loose_drives:
             events.append(self._event("connected", item, at_start=True))
-        for item in items.values():
+        for item in fresh:
             if item.source == "audio" and item.key not in self._parent:
                 events.append(self._event("connected", item, at_start=True))
         return events
@@ -341,16 +361,16 @@ class PeripheralTracker:
             else:
                 log.info("Qurilma qismi uzildi: %s (%s)", item.label, parent)
 
-        # Boshida o'qilmagan manba - endi jim boshlang'ich (`_baselined`).
+        # Boshida o'qilmagan manba - endi boshlang'ich (`_baselined`): undagi
+        # narsa "imtihon davomida ulandi" EMAS, "boshidan bor edi" (`at_start`).
         late = (set(SOURCES) - set(snapshot.failed)) - self._baselined
         if late:
             fresh = [item for item in items.values() if item.source in late]
             for item in fresh:
                 self._known[item.key] = item
-            devices = [item for item in self._known.values() if item.source == "device"]
-            self._claim_children(devices, fresh)
             self._baselined |= late
             log.info("Qurilma manbai kechikib o'qildi (boshlang'ich): %s", ", ".join(sorted(late)))
+            events.extend(self._present_events(fresh))
 
         # 2. Yangilar - kutish ro'yxatiga; yo'qolgan kutayotgan - tashlanadi.
         for key in list(self._pending):
@@ -369,7 +389,7 @@ class PeripheralTracker:
         for key, (item, seen) in list(self._pending.items()):
             if item.source != "device" or seen < self._CONFIRM:
                 continue
-            is_storage = item.kind in ("storage", "phone")
+            is_storage = item.kind in STORAGE_KINDS
             if is_storage and not new_drives and seen < self._STORAGE_WAIT:
                 continue
             drives = []
@@ -417,7 +437,7 @@ class PeripheralTracker:
 
     def _storage_pending(self) -> bool:
         return any(
-            item.source == "device" and item.kind in ("storage", "phone")
+            item.source == "device" and item.kind in STORAGE_KINDS
             for item, _seen in self._pending.values()
         )
 
@@ -454,13 +474,22 @@ class PeripheralTracker:
 # --------------------------------------------------------------------------
 # Windows manbalari
 # --------------------------------------------------------------------------
-def snapshot() -> Snapshot:
-    """Uchala manba. Biri yiqilsa qolganlari baribir o'qiladi (`failed`)."""
+def snapshot(sources=SOURCES) -> Snapshot:
+    """
+    Manbalar holati. Biri yiqilsa qolganlari baribir o'qiladi (`failed`).
+
+    `sources` - faqat shular o'qiladi, qolganlari `failed` ("o'qilmadi",
+    "yo'q" EMAS). Tayyorlik tekshiruviga audio (COM) kerak emas.
+    """
     result = Snapshot()
+    wanted = set(sources)
+    result.failed.update(set(SOURCES) - wanted)
     if not _IS_WINDOWS:
         result.failed.update(SOURCES)
         return result
     for source, reader in (("device", _device_items), ("drive", _drive_items), ("audio", _audio_items)):
+        if source not in wanted:
+            continue
         try:
             items = reader()
         except Exception:  # noqa: BLE001 - kuzatuv to'xtamasin
@@ -471,6 +500,41 @@ def snapshot() -> Snapshot:
         else:
             result.items.update(items)
     return result
+
+
+def attached_storage(snap: Snapshot) -> list:
+    """
+    Hozir ulangan TASHQI XOTIRA va telefonlar: `[PeripheralEvent]`.
+
+    Qoida imtihon boshidagi hisobot bilan BITTA (`PeripheralTracker.start`):
+    tayyorlik oynasi operatorga nimani aytsa, imtihon boshida proktorga
+    ham aynan o'sha ketadi. Ichki qattiq disk kirmaydi.
+    """
+    return [
+        event for event in PeripheralTracker().start(snap)
+        if event.item.kind in STORAGE_KINDS
+    ]
+
+
+def scan_attached_storage() -> Optional[list]:
+    """
+    Tayyorlik tekshiruvi uchun (FON THREAD'IDA): ulanganlarning payload'i.
+
+    `None` - aniqlab bo'lmadi (ikkala manba o'qilmadi yoki Windows emas);
+    bo'sh ro'yxat - hech narsa ulanmagan. ISTISNO TASHLAMAYDI. Audio
+    o'qilmaydi: naushnik xotira emas, COM esa sekin.
+    """
+    # Har thread o'zi: aks holda bo'sh kartaridar kiosk ustida
+    # "Diskni qo'ying" oynasini ochardi.
+    suppress_error_dialogs()
+    try:
+        snap = snapshot(sources=("device", "drive"))
+        if {"device", "drive"} <= snap.failed:
+            return None
+        return [event.payload for event in attached_storage(snap)]
+    except Exception:  # noqa: BLE001 - tekshiruv imtihonni to'xtatmasin
+        log.warning("Ulangan tashqi xotirani aniqlab bo'lmadi", exc_info=True)
+        return None
 
 
 def suppress_error_dialogs() -> None:

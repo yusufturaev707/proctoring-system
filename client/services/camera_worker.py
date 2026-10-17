@@ -32,6 +32,7 @@ from PyQt6.QtCore import QThread, pyqtSignal
 from config import CAMERA_INDEX, DETECT_EVERY_NTH_FRAME, MIN_FACE_WIDTH_PX
 from proctoring.camera.liveness import DEAD_STREAM_MESSAGE, FrameLiveness
 from proctoring.camera.liveness import applies as liveness_applies
+from proctoring.identity.candidate import match_reference, normalize_reference, selection_score
 
 log = logging.getLogger(__name__)
 
@@ -130,11 +131,16 @@ def _face_width(face: dict) -> int:
     return int(bbox[2] - bbox[0])
 
 
-def select_candidate_face(faces: list) -> tuple:
+def select_candidate_face(faces: list, reference=None, min_score=None) -> tuple:
     """
     Kadrdagi yuzlardan TALABGORNIKINI tanlaydi.
 
     Qaytaradi: `(holat, asosiy yuz | None, e'tiborsiz qoldirilganlar)`.
+
+    `reference` — TEST DAVOMIDA etalon (`normalize_reference` natijasi,
+    `AppState.face_reference`), `min_score` — tanlov bali
+    (`candidate.selection_score`). Kirishda (FaceID sahifasi) berilmaydi:
+    u yerda talabgor hali tasdiqlanmagan.
 
     MUAMMO. Imtihon zalida kadrga talabgordan boshqa odamlar ham
     tushadi: orqa qatordagi talabgorlar, o'tib ketayotgan operator,
@@ -168,6 +174,17 @@ def select_candidate_face(faces: list) -> tuple:
     suriladi, suflyor kameraga yaqinroq egiladi va tizim AYNAN
     SUFLYORNI "talabgor" deb solishtirib, uni ham rad etardi —
     lekin sababi "mos kelmadi" bo'lib ko'rinardi.
+
+    ETALON BILAN (test davomida) ikkinchi qadam aniqlanadi: yaqin
+    yuzlar orasida etalonga mos keladigani bo'lsa
+    (`candidate.match_reference`), talabgor — o'sha, o'lchamidan qat'i
+    nazar. Undan KATTA yuz bor bo'lsa, u fon bo'la olmaydi (fon
+    talabgordan kichik bo'ladi) — kameraga egilgan begona odam: holat
+    `multiple`, ya'ni solishtirilmaydi va `multiple_faces` epizodi
+    yoziladi. Ilgari aynan shu holatda talabgor "fon" bo'lib tushib
+    qolar, begona odam esa solishtirilib "mos kelmadi" berardi. Mos yuz
+    bo'lmasa (talabgor kadrda yo'q yoki almashtirilgan) — yuqoridagi
+    qoida o'zgarishsiz.
     """
     if not faces:
         return "none", None, []
@@ -182,6 +199,17 @@ def select_candidate_face(faces: list) -> tuple:
         # Yuz bor, lekin hammasi juda uzoqda. Bu "yuz yo'q" emas:
         # operatorga aytiladigan gap boshqa — "yaqinroq keling".
         return "far", None, ordered
+
+    if reference is not None:
+        matched, _score = match_reference(
+            near, reference,
+            min_score=selection_score(min_score),
+            min_width=0,  # `near` allaqachon `MIN_FACE_WIDTH_PX` dan o'tgan
+            width_of=_face_width,
+            embedding_of=lambda face: face.get("embedding"),
+        )
+        if matched is not None and matched is not near[0]:
+            return "multiple", None, []
 
     main = near[0]
     limit = _face_width(main) * _DOMINANCE_RATIO
@@ -286,6 +314,12 @@ class CameraWorker(QThread):
         # Oddiy `bool`: yozish ham, o'qish ham GIL ostida atomik va
         # sikl uni har kadrda qayta o'qiydi.
         self._detect = bool(detect)
+        #: Test davomidagi etalon: `(birlik vektor, imtihon chegarasi)`
+        #: yoki `None` (`set_reference`). BITTA kortej - UI thread uni
+        #: almashtiradi, ishchi har kadrda bir marta o'qiydi; ikki alohida
+        #: maydon bo'lsa oraliqda yangi vektor eski chegara bilan
+        #: o'qilishi mumkin edi.
+        self._reference: Optional[tuple] = None
         #: Hozir uzilish bormi va oxirgi aytilgan sabab — xabar
         #: uzilish boshida BIR MARTA chiqadi (va sabab o'zgarganda).
         #: Har urinishda chiqarish imtihon sahifasida bir xil
@@ -356,6 +390,18 @@ class CameraWorker(QThread):
     @property
     def detection_enabled(self) -> bool:
         return self._detect
+
+    def set_reference(self, embedding, min_score=None) -> None:
+        """
+        Talabgorni ETALON bo'yicha tanlash (`select_candidate_face`).
+
+        Faqat imtihon sahifasi chaqiradi - talabgor FaceID'dan o'tgach
+        (`AppState.face_reference`). `None` - o'chirish: ishchi kirish
+        sahifasiga qaytsa yoki boshqa talabgorga o'tsa, eski etalon
+        keyingisining yuzini tanlashga ta'sir qilmasligi kerak.
+        """
+        vector = normalize_reference(embedding)
+        self._reference = None if vector is None else (vector, min_score)
 
     def stop(self) -> None:
         """
@@ -547,7 +593,13 @@ class CameraWorker(QThread):
             return
         self._detect_errors = 0
 
-        state, main, ignored = select_candidate_face(faces)
+        reference = self._reference
+        if reference is None:
+            state, main, ignored = select_candidate_face(faces)
+        else:
+            state, main, ignored = select_candidate_face(
+                faces, reference=reference[0], min_score=reference[1]
+            )
 
         # KOORDINATALAR EKRANGA CHIZILMAYDI: FaceID sahifasida yuz
         # ramkasi yo'q, holatni oval rangi ko'rsatadi

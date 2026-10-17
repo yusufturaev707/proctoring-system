@@ -167,7 +167,16 @@ export function eventDetail(eventType: string, detail: ApiRecord | null | undefi
     parts.push(ANOMALY_KIND[detail.kind] || PERIPHERAL_KIND[detail.kind] || String(detail.kind))
   }
   if (detail.reason) parts.push(ANOMALY_KIND[detail.reason] || String(detail.reason))
-  if (detail.host) parts.push(String(detail.host))
+  if (detail.host) {
+    // `main_frame` (yangi client): talabgor boshqa saytga o'tmoqchi
+    // bo'ldimi yoki platformaning o'zi begona serverdan rasm/shrift
+    // so'radimi — ikkinchisi odatda imtihonning «Resurs domenlari»
+    // sozlanmaganini bildiradi. Eski client yubormaydi — faqat host.
+    const where = detail.main_frame === true
+      ? ' (sahifaga o‘tish)'
+      : detail.main_frame === false ? ' (sahifadagi resurs)' : ''
+    parts.push(`${String(detail.host)}${where}`)
+  }
 
   // --- Masofaviy boshqaruv / virtualizatsiya tozalash ---
   //

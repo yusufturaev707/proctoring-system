@@ -1,5 +1,7 @@
 import { Chip, Typography } from '@mui/material'
 import ResourcePage from '../../components/data/ResourcePage'
+import ChipListInput from '../../components/controls/ChipListInput'
+import type { CustomFieldProps } from '../../components/data/types'
 import { countCell, useExamTypeOptions, useSettingOptions } from './shared'
 import { exams as examsApi } from '../../api/endpoints'
 
@@ -22,6 +24,7 @@ export default function ExamsPage() {
       defaults={{
         is_active: true,
         site_url: 'https://ntest.uzbmb.uz/login',
+        resource_domains: [],
         duration_minutes: 180,
       }}
       getRowLabel={(row) => row?.name}
@@ -138,6 +141,30 @@ export default function ExamsPage() {
             }
             return null
           },
+        },
+        {
+          // Savol rasmlari, shrift va CSS boshqa serverdan (CDN) kelsa,
+          // client ularni bloklaydi — test sahifasi va API domenigina
+          // ochiq. Bu ro'yxat FAQAT shunday resurslarga ochiladi:
+          // talabgor bu domenga sahifa sifatida o'ta olmaydi, skript va
+          // so'rovlar ham bloklanadi. Kanonik shakl va qoida serverda
+          // (`apps/exams/domains.py`) — butun URL yozilsa host olinadi.
+          name: 'resource_domains', type: 'custom', colSpan: 12, section: 'Test platformasi',
+          render: ({ value, onChange, disabled, error }: CustomFieldProps) => (
+            <ChipListInput
+              value={value}
+              onChange={onChange}
+              disabled={disabled}
+              error={error}
+              label="Resurs domenlari (rasm, shrift)"
+              placeholder="Masalan: cdn.uzbmb.uz — Enter bilan qo‘shing"
+              helperText={
+                'Savol rasmlari boshqa serverdan kelsa — shu domen. Faqat rasm, shrift, CSS va ' +
+                'media uchun ochiladi; sahifa, skript va so‘rovlar bloklanadi. Qaysi domen ' +
+                'bloklangani sessiya hodisalarida («URL bloklandi») ko‘rinadi'
+              }
+            />
+          ),
         },
         {
           name: 'duration_minutes', label: 'Davomiyligi (daqiqa)', type: 'number',
