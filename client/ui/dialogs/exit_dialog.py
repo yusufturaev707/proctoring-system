@@ -40,7 +40,7 @@ from PyQt6.QtWidgets import (
 from services.repositories import ProctoringRepository
 from services.workers import ApiWorker, WorkerHolder
 from ui.dialogs.base import CardDialog, apply_font as _apply_font
-from ui.styles import COLORS, outlined_button_style, tonal_button_style
+from ui.styles import COLORS, outlined_button_style, primary_button_style, tonal_button_style
 from ui.widgets.indicators import StateBadge
 from ui.widgets.notice import Notice
 
@@ -70,9 +70,16 @@ class ExitDialog(CardDialog):
     Server qaysi amal ekanini biladi (`purpose`) va auditga alohida
     yozadi (`client_back` / `client_exit`).
 
-    ENTER — XAVFSIZ AMAL: orqaga qaytish bo'lsa o'sha, aks holda
-    chiqish. Imtihon sahifasida chiqish sessiyani yakunlaydi va uni
-    Enter bilan tasodifan qilish mumkin bo'lmasligi kerak.
+    ENTER — CHIQISH (oyna Ctrl+Q bilan, ya'ni chiqish niyatida
+    ochilgan). Ilgari Enter "xavfsiz amal" — orqaga qaytish edi va
+    operator parolni yozib Enter bosganda dastur yopilmay, imtihon
+    tanlash sahifasiga o'tib qolardi; chiqish uchun Ctrl+Q va parol
+    ikkinchi marta kerak bo'lardi. Orqaga qaytish — faqat o'z tugmasi
+    bilan, ongli tanlov.
+
+    Istisno — OCHIQ IMTIHON (`warning` berilgan): chiqish talabgorning
+    sessiyasini yakunlaydi, shuning uchun Enter hech narsa qilmaydi va
+    faqat «Chiqish» tugmasini bosish so'raladi.
     """
 
     #: `exec()` qaytaradigan uchinchi natija.
@@ -198,12 +205,21 @@ class ExitDialog(CardDialog):
         self.cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.cancel_btn.setStyleSheet(outlined_button_style(44, "neutral"))
         self.cancel_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        # Enter'ni FAQAT `_on_enter` hal qiladi: aks holda QDialog uni
+        # birinchi `autoDefault` tugmaga ham berardi va ochiq imtihonda
+        # (Enter hech narsa qilmasligi kerak) oyna jimgina yopilardi.
+        self.cancel_btn.setAutoDefault(False)
         self.cancel_btn.clicked.connect(self.reject)
         buttons.addWidget(self.cancel_btn, 1)
 
         self.confirm_btn = QPushButton("Chiqish")
         self.confirm_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.confirm_btn.setStyleSheet(outlined_button_style(44, "primary"))
+        # To'ldirilgan tugma = Enter bajaradigan amal. Ochiq imtihonda
+        # Enter chiqmaydi — tugma ham "asosiy" ko'rinmaydi.
+        self.confirm_btn.setStyleSheet(
+            outlined_button_style(44, "primary") if self._warning
+            else primary_button_style(44)
+        )
         self.confirm_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.confirm_btn.setAutoDefault(False)
         self.confirm_btn.clicked.connect(
@@ -216,8 +232,15 @@ class ExitDialog(CardDialog):
 
     # ------------------------------------------------------------------
     def _on_enter(self) -> None:
-        """Enter — xavfsiz amal (sinf docstring'iga qarang)."""
-        self._on_confirm(self.BACK if self.back_btn is not None else QDialog.DialogCode.Accepted)
+        """Enter — chiqish; ochiq imtihonda hech narsa (sinf docstring'i)."""
+        if self._warning and not self._busy:
+            self.message.show_message(
+                "Imtihon davom etmoqda. Chiqish uchun «Chiqish» tugmasini bosing.",
+                "warning",
+            )
+            self.refit()
+            return
+        self._on_confirm(QDialog.DialogCode.Accepted)
 
     def _on_confirm(self, action) -> None:
         """`action` — `QDialog.DialogCode.Accepted` (chiqish) yoki `BACK`."""

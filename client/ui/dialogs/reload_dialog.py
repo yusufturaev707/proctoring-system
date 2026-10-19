@@ -70,7 +70,7 @@ class ReloadDialog(CardDialog):
 
         subtitle = QLabel(
             "Sahifa qotib qolgan yoki to‘liq ochilmagan bo‘lsa. Imtihon "
-            "davom etadi — kuzatuv va vaqt to‘xtamaydi."
+            "vaqti to‘xtamaydi."
         )
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subtitle.setWordWrap(True)

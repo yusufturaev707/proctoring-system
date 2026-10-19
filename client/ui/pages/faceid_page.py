@@ -282,8 +282,7 @@ class FaceIDPage(QWidget):
         # qaytish" ni taklif qiladi (`MainWindow._back_action`) va u
         # parol bilan himoyalangan.
         self.header = PageHeader(
-            "Yuzni tekshirish",
-            "3-qadam · Talabgor kameraga qarasin",
+            "3-qadam · Yuzni tekshirish",
             step=3,
             show_back=False,
             show_logout=False,
@@ -625,10 +624,8 @@ class FaceIDPage(QWidget):
         if candidate is None:
             return
 
-        exam = self._state.selected_exam
         device = self._state.device
         tooltips, captions = ip_chip_hints(self._state.machine.get("ips"))
-        self.header.set_title(exam.name if exam else "Test tanlanmagan")
         self.header.set_seat(device)
         self.header.set_chips(
             region=staff.region_name if staff else "",
@@ -873,7 +870,7 @@ class FaceIDPage(QWidget):
             self.state_badge.setStyleSheet(badge_style("error"))
         else:
             self.message.show_message(
-                "Yuz aniqlash modeli yuklanmoqda. Bir necha soniya kuting.",
+                "Yuz tekshiruvi tayyorlanmoqda. Bir necha soniya kuting.",
                 "warning",
             )
             self.model_retry_btn.setVisible(False)
@@ -905,7 +902,7 @@ class FaceIDPage(QWidget):
             log.exception("Modelni qayta yuklashni boshlab bo'lmadi")
         self.model_retry_btn.setVisible(False)
         self.message.show_message(
-            "Yuz aniqlash modeli qayta yuklanmoqda. Bir necha soniya kuting.",
+            "Yuz tekshiruvi qayta tayyorlanmoqda. Bir necha soniya kuting.",
             "warning",
         )
         self._model_message = True
@@ -915,13 +912,13 @@ class FaceIDPage(QWidget):
         # Matn QISQA: nishon tor ustunda turadi va uzun matn
         # kesilib qolardi ("Hujjat rasmi bilan solishtirila...").
         if has_reference is None:
-            self.mode_badge.setText("Etalon tayyorlanmoqda…")
+            self.mode_badge.setText("Hujjat rasmi tayyorlanmoqda…")
             self.mode_badge.setStyleSheet(badge_style("muted"))
         elif has_reference:
             self.mode_badge.setText("Hujjat rasmi bilan solishtiriladi")
             self.mode_badge.setStyleSheet(badge_style("info"))
         elif _ENROLLMENT_ENABLED:
-            self.mode_badge.setText("Etalonsiz — yuz qayd etiladi")
+            self.mode_badge.setText("Hujjat rasmisiz — yuz qayd etiladi")
             self.mode_badge.setStyleSheet(badge_style("warning"))
         else:
             self.mode_badge.setText("Hujjat rasmi yo'q — tekshirib bo'lmaydi")
@@ -1168,7 +1165,7 @@ class FaceIDPage(QWidget):
             "enroll": (
                 "Yuz qayd etilmoqda ({}/{})".format(self._streak, self._match_streak), "info"
             ),
-            "waiting_reference": ("Etalon kutilmoqda", "muted"),
+            "waiting_reference": ("Hujjat rasmi tayyorlanmoqda", "muted"),
             "no_reference": ("Hujjat rasmi yo'q", "error"),
             "failed": ("Mos kelmadi", "error"),
             "guide": ("Yuzni oval ichiga joylang", "info"),

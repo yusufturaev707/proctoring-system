@@ -7,13 +7,16 @@ Qo'riqlanadigan narsalar:
   2. har amal serverga o'z `purpose` i bilan ketadi va oyna o'sha
      amalning natijasini qaytaradi (`BACK` / `Accepted`);
   3. noto'g'ri parol oynani yopmaydi;
-  4. Enter — xavfsiz amal (orqaga, bo'lsa);
+  4. Enter — CHIQISH (bitta Ctrl+Q bilan chiqiladi), ochiq imtihonda
+     esa hech narsa (faqat tugma);
   5. parol sozlanmagan viloyatda ikkala amal ham tasdiq bilan o'tadi.
 """
 
 import unittest
 from unittest import mock
 
+from PyQt6.QtCore import Qt
+from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QDialog
 
 from core.errors import ClientError
@@ -61,8 +64,9 @@ class ExitDialogTests(unittest.TestCase):
         self.repo = mock.Mock()
         self.repo.verify_exit.return_value = {"method": "region"}
 
-    def _dialog(self, back=True):
-        dialog = ExitDialog(None, repo=self.repo, back_label="Orqaga" if back else "")
+    def _dialog(self, back=True, warning=""):
+        dialog = ExitDialog(None, repo=self.repo, back_label="Orqaga" if back else "",
+                            warning=warning)
         dialog._workers = _Holder()
         self.results = []
         dialog.finished.connect(self.results.append)
@@ -96,16 +100,36 @@ class ExitDialogTests(unittest.TestCase):
         self.assertEqual(self.results, [])
         self.assertEqual(dialog.password_input.text(), "")
 
-    def test_enter_is_the_safe_action(self):
+    def test_enter_exits(self):
+        """Parol + Enter = chiqish, orqaga qaytish tugmasi bo'lsa ham."""
+        for back in (True, False):
+            with self.subTest(back=back):
+                self.repo.verify_exit.reset_mock()
+                dialog = self._dialog(back=back)
+                dialog.password_input.setText("parol")
+                dialog.password_input.returnPressed.emit()
+                self.repo.verify_exit.assert_called_once_with(password="parol", purpose="exit")
+                self.assertEqual(self.results, [int(QDialog.DialogCode.Accepted.value)])
+
+    def test_real_enter_key_exits(self):
+        """Haqiqiy tugma bosilishi: QDialog Enter'ni boshqa tugmaga bermaydi."""
         dialog = self._dialog()
         dialog.password_input.setText("parol")
-        dialog.password_input.returnPressed.emit()
-        self.repo.verify_exit.assert_called_once_with(password="parol", purpose="back")
+        QTest.keyClick(dialog.password_input, Qt.Key.Key_Return)
+        self.repo.verify_exit.assert_called_once_with(password="parol", purpose="exit")
+        self.assertEqual(self.results, [int(QDialog.DialogCode.Accepted.value)])
 
-        dialog = self._dialog(back=False)
+    def test_enter_does_not_end_open_exam(self):
+        dialog = self._dialog(back=False, warning="Imtihon davom etmoqda.")
         dialog.password_input.setText("parol")
-        dialog.password_input.returnPressed.emit()
-        self.assertEqual(self.repo.verify_exit.call_args.kwargs["purpose"], "exit")
+        QTest.keyClick(dialog.password_input, Qt.Key.Key_Return)
+        self.repo.verify_exit.assert_not_called()
+        self.assertEqual(self.results, [])          # oyna ham yopilmadi
+        self.assertIn("«Chiqish»", dialog.message.text())
+
+        dialog.confirm_btn.click()                  # ongli tanlov — o'tadi
+        self.repo.verify_exit.assert_called_once_with(password="parol", purpose="exit")
+        self.assertEqual(self.results, [int(QDialog.DialogCode.Accepted.value)])
 
     def test_unconfigured_password_allows_both(self):
         self.repo.verify_exit.side_effect = ClientError(

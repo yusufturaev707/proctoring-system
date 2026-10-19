@@ -292,13 +292,9 @@ class ExamSelectPage(QWidget):
     # ------------------------------------------------------------------
     def refresh(self) -> None:
         """Handshake'dan keyin chaqiriladi - ro'yxatlarni to'ldiradi."""
-        staff = self._state.staff
         device = self._state.device
 
-        self.header.set_staff(
-            staff.full_name if staff else "",
-            "1-qadam · Imtihonni tanlang",
-        )
+        self.header.set_subtitle("1-qadam · Imtihonni tanlang")
         self._render_context()
         if not self._identity:
             self._resolve_identity()

@@ -1,12 +1,13 @@
 """
 Sahifa sarlavhasi - login'dan keyingi barcha sahifalarda bir xil.
 
-Operator har doim uchta narsani ko'rib turishi kerak: qaysi bosqichda
-turgani, qaysi binoda ishlayotgani va kim sifatida kirgani. Bu blok
-sahifalar orasida ko'chirilmasligi uchun alohida vidjet.
+Operator har doim ikki narsani ko'rib turishi kerak: qaysi bosqichda
+turgani va qaysi binoda/kompyuterda ishlayotgani. Bu blok sahifalar
+orasida ko'chirilmasligi uchun alohida vidjet.
 
-IKKALA SARLAVHADA HAM chap yuqori burchakda LOGOTIP va o'ngda
-KOMPYUTER RAQAMI (`brand.SeatBadge`) turadi. Ular sarlavha vidjetida,
+IKKALA SARLAVHADA HAM chap yuqori burchakda LOGOTIP va TASHKILOT NOMI
+(`_brand_block`; test nomi va xodim F.I.Sh. emas), o'ngda KOMPYUTER
+RAQAMI (`brand.SeatBadge`) turadi. Ular sarlavha vidjetida,
 sahifalarda emas: logotip uch sahifada bir xil joyda turishi kerak va
 nusxa ko'chirilgan joylashuv vaqt o'tib albatta siljib ketardi. Imtihon
 (test platformasi) sahifasida sarlavha yo'q — u yerda butun ekran
@@ -21,6 +22,7 @@ from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayou
 from ui.styles import COLORS, badge_style, surface_container_style
 from ui.widgets.brand import BrandLogo, SeatBadge
 from ui.widgets.icons import RefreshButton
+from version import COMPANY_NAME
 
 
 class StepBadge(QLabel):
@@ -39,8 +41,17 @@ class StepBadge(QLabel):
 HEADER_LOGO_HEIGHT = 44
 
 
-def _brand_block(top: QHBoxLayout) -> None:
-    """Chap burchak: logotip + ingichka ajratgich (ikkala sarlavhada bir xil)."""
+def _brand_block(top: QHBoxLayout) -> tuple:
+    """
+    Chap burchak: logotip | tashkilot nomi, ostida bosqich (ikkala sarlavhada bir xil).
+
+    SARLAVHA — TASHKILOT NOMI, test nomi yoki xodim F.I.Sh. EMAS. Ekran
+    oldida talabgor turadi: unga "qaysi tashkilot imtihoni" ko'rinadi,
+    xodim ismi esa unga ham, operatorga ham kerak emas (u kimligini
+    biladi). Test nomi imtihon tanlash sahifasida tanlanadi.
+
+    `(nom, bosqich)` yorliqlarini qaytaradi; bosqich bo'sh bo'lsa yashirin.
+    """
     logo = BrandLogo(HEADER_LOGO_HEIGHT)
     top.addWidget(logo, 0, Qt.AlignmentFlag.AlignVCenter)
     # Ajratgich faqat logotip bilan: fayl yo'q bo'lsa sarlavha chap
@@ -51,6 +62,25 @@ def _brand_block(top: QHBoxLayout) -> None:
         line.setFixedSize(1, 36)
         line.setStyleSheet("background-color: {}; border: none;".format(COLORS["border"]))
         top.addWidget(line, 0, Qt.AlignmentFlag.AlignVCenter)
+
+    box = QVBoxLayout()
+    box.setSpacing(2)
+    # MD3 "title large" (22 px): sarlavha qatori 44 px logotipdan
+    # baland bo'lmasligi kerak (`HEADER_LOGO_HEIGHT` izohi).
+    name = QLabel(COMPANY_NAME)
+    name.setStyleSheet(
+        "font-size: 22px; font-weight: 700; color: {};".format(COLORS["text"])
+    )
+    box.addWidget(name)
+    # Yorliq bo'sh bo'lsa ham yaratiladi: u keyin to'ldiriladi
+    # (`set_subtitle`) va sarlavha balandligi o'zgarib, ostidagi butun
+    # sahifa siljib ketmasligi kerak.
+    subtitle = QLabel("")
+    subtitle.setProperty("role", "subtitle")
+    subtitle.hide()
+    box.addWidget(subtitle)
+    top.addLayout(box)
+    return name, subtitle
 
 
 class PageHeader(QWidget):
@@ -74,7 +104,6 @@ class PageHeader(QWidget):
 
     def __init__(
         self,
-        title: str,
         subtitle: str = "",
         *,
         step: int = 0,
@@ -92,7 +121,8 @@ class PageHeader(QWidget):
         top = QHBoxLayout()
         top.setSpacing(12)
 
-        _brand_block(top)
+        self.title_label, self.subtitle_label = _brand_block(top)
+        self.set_subtitle(subtitle)
 
         if show_back:
             self.back_btn = QPushButton("< Orqaga")
@@ -103,20 +133,6 @@ class PageHeader(QWidget):
             top.addWidget(self.back_btn)
         else:
             self.back_btn = None
-
-        title_box = QVBoxLayout()
-        title_box.setSpacing(2)
-        self.title_label = QLabel(title)
-        self.title_label.setProperty("role", "title")
-        title_box.addWidget(self.title_label)
-        # Yorliq sarlavha BO'SH bo'lsa ham yaratiladi: u keyinchalik
-        # to'ldirilishi mumkin (`set_subtitle`) va o'shanda sarlavha
-        # balandligi o'zgarib, ostidagi butun sahifa siljib ketardi.
-        self.subtitle_label = QLabel(subtitle)
-        self.subtitle_label.setProperty("role", "subtitle")
-        self.subtitle_label.setVisible(bool(subtitle))
-        title_box.addWidget(self.subtitle_label)
-        top.addLayout(title_box)
 
         top.addStretch()
 
@@ -155,16 +171,6 @@ class PageHeader(QWidget):
         divider.setFixedHeight(1)
         divider.setStyleSheet("background-color: {};".format(COLORS["border"]))
         root.addWidget(divider)
-
-    def set_title(self, text: str) -> None:
-        """
-        Sarlavhani almashtiradi.
-
-        Talabgor ekranlarida sarlavha — TANLANGAN TEST nomi va u
-        konstruktor paytida hali ma'lum emas: sahifa oqim boshida
-        yaratiladi, test esa undan oldingi qadamda tanlanadi.
-        """
-        self.title_label.setText(text)
 
     def set_subtitle(self, text: str) -> None:
         self.subtitle_label.setText(text)
@@ -353,7 +359,7 @@ class ContextChips(QFrame):
 
 class WorkstationHeader(QWidget):
     """
-    Ish o'rni sarlavhasi: xodim | kontekst | yangilash.
+    Ish o'rni sarlavhasi: tashkilot | kontekst | yangilash.
 
     `PageHeader` dan ALOHIDA va uni almashtirmaydi. Ikkalasi boshqa
     savolga javob beradi:
@@ -387,25 +393,9 @@ class WorkstationHeader(QWidget):
         top = QHBoxLayout()
         top.setSpacing(20)
 
-        _brand_block(top)
-
-        # --- Chap: xodim ---
-        staff_box = QVBoxLayout()
-        staff_box.setSpacing(2)
-
-        self.staff_label = QLabel("—")
-        self.staff_label.setStyleSheet(
-            "font-size: 25px; font-weight: 700; color: {};".format(COLORS["text"])
-        )
-        staff_box.addWidget(self.staff_label)
-
-        # Bosqich yorlig'i FIO ostida qoladi. Sarlavha o'rnini
-        # egallamaydi, lekin operator oqimning qayeridaligini
-        # yo'qotmaydi - ekranda boshqa yo'naltiruvchi matn yo'q.
-        self.subtitle_label = QLabel("")
-        self.subtitle_label.setProperty("role", "subtitle")
-        staff_box.addWidget(self.subtitle_label)
-        top.addLayout(staff_box)
+        # --- Chap: tashkilot nomi va bosqich (xodim F.I.Sh. YO'Q —
+        # `_brand_block` izohi) ---
+        self.title_label, self.subtitle_label = _brand_block(top)
 
         top.addStretch(1)
 
@@ -435,10 +425,9 @@ class WorkstationHeader(QWidget):
         root.addWidget(divider)
 
     # ------------------------------------------------------------------
-    def set_staff(self, full_name: str, subtitle: str = "") -> None:
-        self.staff_label.setText(full_name or "Xodim aniqlanmadi")
-        self.subtitle_label.setText(subtitle)
-        self.subtitle_label.setVisible(bool(subtitle))
+    def set_subtitle(self, text: str) -> None:
+        self.subtitle_label.setText(text)
+        self.subtitle_label.setVisible(bool(text))
 
     def set_context(self, **values) -> None:
         self.context.set_values(**values)

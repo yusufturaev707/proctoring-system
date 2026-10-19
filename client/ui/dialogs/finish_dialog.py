@@ -109,8 +109,8 @@ class FinishDialog(CardDialog):
         layout.addSpacing(6)
 
         subtitle = QLabel(
-            "Test sahifasi yopiladi, kuzatuv va ekran yozuvi to‘xtaydi. "
-            "Kompyuter keyingi talabgor uchun bo‘shatiladi."
+            "Test sahifasi yopiladi va kompyuter keyingi talabgor "
+            "uchun bo‘shatiladi."
         )
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subtitle.setWordWrap(True)

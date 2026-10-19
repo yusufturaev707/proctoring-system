@@ -1,20 +1,55 @@
-import { Chip, Typography } from '@mui/material'
+import { useState } from 'react'
+import { Box, Chip, Stack, Typography } from '@mui/material'
+import SchoolIcon from '@mui/icons-material/SchoolOutlined'
+import LabelIcon from '@mui/icons-material/LabelOutlined'
+import LinkIcon from '@mui/icons-material/LinkOutlined'
+import TuneIcon from '@mui/icons-material/TuneOutlined'
+import KeyIcon from '@mui/icons-material/VpnKeyOutlined'
+
 import ResourcePage from '../../components/data/ResourcePage'
 import ChipListInput from '../../components/controls/ChipListInput'
-import type { CustomFieldProps } from '../../components/data/types'
+import type { CellParams, CustomFieldProps, RowDetail } from '../../components/data/types'
+import ExamDetailDialog from '../../components/exams/ExamDetailDialog'
+import { durationText } from '../../components/exams/examText'
 import { countCell, useExamTypeOptions, useSettingOptions } from './shared'
 import { exams as examsApi } from '../../api/endpoints'
+import { useAuth } from '../../context/AuthContext'
+
+// Maxsus `renderCell` DataGrid'ning oddiy kataklaridek o'zi tekislanmaydi.
+const cell = { height: '100%', display: 'flex', alignItems: 'center', minWidth: 0 }
+// Nom + tur, kalit + tashqi kod — ikki qator. Modul doimiysi: `DataGrid`
+// props barqaror bo'lishi kerak.
+const examRowHeight = () => 52
+// `countCell` o'zi tekislanmaydi — o'ngga va vertikal markazga (`ZonesPage` bilan bir xil).
+const rightCount = (params: CellParams<number | null>) => (
+  <Box sx={{ ...cell, justifyContent: 'flex-end' }}>{countCell(params)}</Box>
+)
+
+const FORM_SECTIONS = {
+  'Asosiy': { icon: LabelIcon, description: 'Nom va tur ro‘yxatlarda ko‘rinadi, kodlar hisobot va integratsiyada ishlatiladi' },
+  'Test platformasi': {
+    icon: LinkIcon,
+    description: 'Server JSHSHIR’ni shu manzil orqali tekshiradi — client platformaga o‘zi murojaat qilmaydi',
+  },
+  'Sozlamalar': { icon: TuneIcon, description: 'Test vaqti va proktorlik profili (FaceID, skrinshot, bron rejimi)' },
+}
 
 export default function ExamsPage() {
   const { options: settingOptions } = useSettingOptions()
   const { options: examTypeOptions } = useExamTypeOptions()
+  const { canShared } = useAuth()
+  const canManage = canShared('exams.manage')
+  // Qator bosilganda — imtihonning to'liq kartasi; «Tahrirlash» sahifaning
+  // o'z formasini ochadi (`openEdit`), ikkinchi forma yasalmaydi.
+  const [detail, setDetail] = useState<RowDetail | null>(null)
 
   return (
+    <>
     <ResourcePage
       // Barcha viloyatlar uchun bitta yozuv — o'zgartirish respublika darajasida.
       shared
       title="Imtihonlar"
-      subtitle="Tashqi test platformasidagi testlar bilan bog‘lanish"
+      subtitle="Tashqi test platformasidagi testlar bilan bog‘lanish. Qatorni bosing, to‘liq karta ochiladi"
       queryKey="exams"
       restorable
       api={examsApi}
@@ -31,25 +66,52 @@ export default function ExamsPage() {
       deleteConfirmPhrase
       deleteDescription="Imtihonga bog‘langan sessiyalar mavjud bo‘lsa, server o‘chirishga ruxsat bermaydi."
       formMaxWidth="md"
+      getRowHeight={examRowHeight}
+      formIcon={<SchoolIcon />}
+      formTitle={(isEdit, row) => (isEdit ? `${row?.name} — tahrirlash` : 'Yangi imtihon')}
+      formSections={FORM_SECTIONS}
+      onRowClick={(params, { openEdit }) => setDetail({ row: params.row, openEdit })}
       columns={[
-        { field: 'name', headerName: 'Nomi', flex: 1.5, minWidth: 190 },
         {
-          field: 'exam_type_name', headerName: 'Turi', width: 155, sortable: false,
+          // Tur nom ostida (ikkinchi qator): alohida ustun bilan jadval
+          // 1440 px ekranda gorizontal surilardi.
+          field: 'name', headerName: 'Nomi', flex: 1.5, minWidth: 190,
+          exportValue: (value, row) => (row.exam_type_name ? `${value} (${row.exam_type_name})` : value),
           renderCell: (params) => (
-            params.value
-              ? <Typography variant="body2">{params.value}</Typography>
-              : <Typography variant="body2" color="text.disabled">Belgilanmagan</Typography>
+            <Stack sx={{ height: '100%', justifyContent: 'center', minWidth: 0 }}>
+              <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0 }}>
+                <Typography variant="body2" fontWeight={600} noWrap sx={{ lineHeight: 1.35 }}>{params.value}</Typography>
+                {params.row.deleted_at && <Chip size="small" color="error" variant="outlined" label="O‘chirilgan" />}
+              </Stack>
+              <Typography
+                variant="caption"
+                color={params.row.exam_type_name ? 'text.secondary' : 'text.disabled'}
+                noWrap
+                sx={{ lineHeight: 1.35 }}
+              >
+                {params.row.exam_type_name || 'Turi belgilanmagan'}
+              </Typography>
+            </Stack>
           ),
         },
-        { field: 'key', headerName: 'Kalit', width: 140 },
-        { field: 'external_code', headerName: 'Tashqi kod', width: 150 },
         {
-          field: 'duration_minutes', headerName: 'Davomiylik', width: 125,
+          field: 'key', headerName: 'Kalit / tashqi kod', width: 140,
+          exportValue: (value, row) => [value, row.external_code].filter(Boolean).join(' / '),
           renderCell: (params) => (
-            <Typography variant="body2">
-              {Math.floor(params.value / 60)}s {params.value % 60 ? `${params.value % 60}d` : ''}
-            </Typography>
+            <Stack sx={{ height: '100%', justifyContent: 'center', minWidth: 0 }}>
+              <Typography variant="body2" noWrap sx={{ fontFamily: 'monospace', fontSize: 12.5, lineHeight: 1.4 }}>
+                {params.value || '—'}
+              </Typography>
+              <Typography variant="caption" color="text.secondary" noWrap sx={{ fontFamily: 'monospace', lineHeight: 1.4 }}>
+                {params.row.external_code || '—'}
+              </Typography>
+            </Stack>
           ),
+        },
+        {
+          field: 'duration_minutes', headerName: 'Davomiylik', width: 105,
+          exportValue: (value) => durationText(value),
+          renderCell: (params) => <Typography variant="body2" sx={cell}>{durationText(params.value)}</Typography>,
         },
         {
           // Sarlavhaning O'ZI hech qachon serverdan kelmaydi — faqat
@@ -57,34 +119,32 @@ export default function ExamsPage() {
           // bitta savolga javob berish: shu imtihonda platforma tokeni
           // sozlanganmi? Sozlanmagan bo'lsa WebView 401 bilan ochiladi
           // va sabab faqat shu yerdan ko'rinadi.
-          field: 'site_header_masked', headerName: 'Platforma sarlavhasi', flex: 1.2,
-          minWidth: 210, sortable: false,
+          field: 'site_header_masked', headerName: 'Platforma tokeni', flex: 1,
+          minWidth: 150, sortable: false,
           exportValue: (value) => value || 'O‘rnatilmagan',
           renderCell: (params) => (
             params.value
               ? (
-                <Typography
-                  variant="body2"
-                  sx={{ fontFamily: 'monospace', fontSize: 12.5 }}
-                  noWrap
-                  title={params.value}
-                >
-                  {params.value}
-                </Typography>
+                <Stack direction="row" spacing={0.75} alignItems="center" sx={cell} title={params.value}>
+                  <KeyIcon sx={{ fontSize: 16, color: 'success.main' }} />
+                  <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: 12.5 }} noWrap>
+                    {params.value}
+                  </Typography>
+                </Stack>
               )
-              : <Chip size="small" variant="outlined" color="warning" label="O‘rnatilmagan" />
+              : <Chip size="small" variant="outlined" color="warning" icon={<KeyIcon />} label="O‘rnatilmagan" />
           ),
         },
         {
-          field: 'sessions_count', headerName: 'Sessiya', width: 105, sortable: false,
-          align: 'right', headerAlign: 'right', renderCell: countCell,
+          field: 'sessions_count', headerName: 'Sessiya', width: 85, sortable: false,
+          align: 'right', headerAlign: 'right', renderCell: rightCount,
         },
         {
-          field: 'setting_name', headerName: 'Sozlama', width: 160, sortable: false,
+          field: 'setting_name', headerName: 'Profil', width: 115, sortable: false,
           renderCell: (params) => (
             params.value
-              ? <Typography variant="body2">{params.value}</Typography>
-              : <Typography variant="body2" color="text.disabled">Global standart</Typography>
+              ? <Typography variant="body2" sx={cell} noWrap>{params.value}</Typography>
+              : <Typography variant="body2" color="text.disabled" sx={cell}>Global standart</Typography>
           ),
         },
       ]}
@@ -98,15 +158,15 @@ export default function ExamsPage() {
         },
       ]}
       fields={[
-        { name: 'name', label: 'Nomi', required: true, maxLength: 255, colSpan: 12 },
+        { name: 'name', label: 'Nomi', required: true, maxLength: 255, colSpan: 12, section: 'Asosiy' },
         {
           name: 'exam_type', label: 'Imtihon turi', type: 'select',
-          options: examTypeOptions, colSpan: 12,
+          options: examTypeOptions, colSpan: 12, section: 'Asosiy',
           helperText: 'Bo‘sh qoldirilsa — tur belgilanmagan holida qoladi',
         },
-        { name: 'key', label: 'Ichki kalit', maxLength: 100, colSpan: 6 },
+        { name: 'key', label: 'Ichki kalit', maxLength: 100, colSpan: 6, section: 'Asosiy' },
         {
-          name: 'external_code', label: 'Tashqi platforma kodi', maxLength: 100, colSpan: 6,
+          name: 'external_code', label: 'Tashqi platforma kodi', maxLength: 100, colSpan: 6, section: 'Asosiy',
           helperText: 'ntest tizimidagi imtihon identifikatori',
         },
         {
@@ -126,9 +186,9 @@ export default function ExamsPage() {
           // Server sarlavhani HECH QACHON qaytarmaydi — faqat niqob
           // (`site_header_masked`). Bo'sh qoldirilsa mavjud qiymat
           // o'zgarmaydi (`clearable: false`).
-          helperText: (isEdit) =>
+          helperText: (isEdit, form) =>
             isEdit
-              ? 'Bo‘sh qoldirilsa — sarlavha o‘zgarmaydi. Namuna: Authorization: Bearer <token>'
+              ? `Hozirgisi: ${form._meta?.row?.site_header_masked || 'o‘rnatilmagan'}. Bo‘sh qoldirilsa — o‘zgarmaydi. Namuna: Authorization: Bearer <token>`
               : 'To‘liq ko‘rinishda: Authorization: Bearer <token>. Shifrlangan saqlanadi va faqat serverda ishlatiladi',
           clearable: false,
           validate: (value) => {
@@ -169,16 +229,27 @@ export default function ExamsPage() {
         {
           name: 'duration_minutes', label: 'Davomiyligi (daqiqa)', type: 'number',
           required: true, min: 5, max: 600, integer: true, colSpan: 6, section: 'Sozlamalar',
+          // Platforma javobida `duration_time` kelmasa shu qiymat ishlatiladi.
+          helperText: (_isEdit, form) => `${durationText(form.duration_minutes)} · platforma vaqt bermasa ishlatiladi`,
         },
-        { name: 'is_active', label: 'Faol', type: 'boolean', colSpan: 6, section: 'Sozlamalar' },
         {
           name: 'setting', label: 'Proktorlik profili', type: 'select',
-          options: settingOptions, colSpan: 12, section: 'Sozlamalar',
-          helperText:
-            'Shu imtihon uchun FaceID chegaralari, skrinshot intervali va taqiqlangan ' +
-            'obyektlar. Bo‘sh qoldirilsa global standart qo‘llanadi.',
+          options: settingOptions, colSpan: 6, section: 'Sozlamalar',
+          helperText: 'Bo‘sh qoldirilsa — global standart',
+        },
+        {
+          name: 'is_active', label: 'Faol', type: 'boolean', colSpan: 12, section: 'Sozlamalar',
+          helperText: 'Nofaol imtihonni operator client dasturda tanlay olmaydi',
         },
       ]}
     />
+    {detail && (
+      <ExamDetailDialog
+        row={detail.row}
+        onClose={() => setDetail(null)}
+        onEdit={canManage ? () => { setDetail(null); detail.openEdit(detail.row) } : undefined}
+      />
+    )}
+    </>
   )
 }

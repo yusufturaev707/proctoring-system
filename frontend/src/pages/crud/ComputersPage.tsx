@@ -2,6 +2,10 @@ import { useState } from 'react'
 import { Button, Chip, Stack, Tooltip, Typography } from '@mui/material'
 import UploadFileOutlinedIcon from '@mui/icons-material/UploadFileOutlined'
 import DeleteIcon from '@mui/icons-material/DeleteOutline'
+import ComputerIcon from '@mui/icons-material/DesktopWindowsOutlined'
+import PlaceIcon from '@mui/icons-material/PlaceOutlined'
+import FingerprintIcon from '@mui/icons-material/FingerprintOutlined'
+import VideocamIcon from '@mui/icons-material/VideocamOutlined'
 
 import ResourcePage from '../../components/data/ResourcePage'
 import type { CellParams, RowDetail } from '../../components/data/types'
@@ -38,6 +42,15 @@ function MachineUuidCell({ value }: CellParams<string | null>) {
   )
 }
 
+const FORM_SECTIONS = {
+  'Joylashuv': { icon: PlaceIcon, description: 'Qaysi binoda va qaysi stolda — operator mashinani raqamidan topadi' },
+  'Identifikator': {
+    icon: FingerprintIcon,
+    description: 'Mashinani UUID va MAC JUFTLIGI belgilaydi — client faqat shu juftlik bilan tanilanadi',
+  },
+  'Kuzatuv': { icon: VideocamIcon, description: 'IP kameralar va kompyuterning holati' },
+}
+
 export default function ComputersPage() {
   const { options: regionOptions } = useRegionOptions()
   const { options: zoneOptions } = useZoneOptions()
@@ -52,7 +65,7 @@ export default function ComputersPage() {
     <>
     <ResourcePage
       title="Kompyuterlar"
-      subtitle="Imtihon ish stantsiyalari — client faqat ro‘yxatdagi kompyuterdan ulanadi"
+      subtitle="Imtihon ish stantsiyalari — client faqat ro‘yxatdagi kompyuterdan ulanadi. Qatorni bosing, to‘liq karta ochiladi"
       queryKey="computers"
       restorable
       api={computersApi}
@@ -173,6 +186,9 @@ export default function ComputersPage() {
         </Button>
       )}
       formMaxWidth="md"
+      formIcon={<ComputerIcon />}
+      formTitle={(isEdit, row) => (isEdit ? `${row?.label || row?.inventory_code} — tahrirlash` : 'Yangi kompyuter')}
+      formSections={FORM_SECTIONS}
       filters={[
         ...regionZoneFilters({ regionOptions, zoneOptions }),
         {
@@ -194,14 +210,14 @@ export default function ComputersPage() {
         // tanlaydi va 15 tadan birini tanlaydi.
         {
           name: 'region', label: 'Viloyat', type: 'select', required: true,
-          transient: true, options: regionOptions, colSpan: 6,
+          transient: true, options: regionOptions, colSpan: 6, section: 'Joylashuv',
           resets: ['zone', 'cameras'],
           helperText: 'Binolar ro‘yxatini toraytirish uchun',
         },
         {
           name: 'zone', label: 'Bino', type: 'select', required: true,
           options: (form) => zonesOfRegion(zoneOptions, form.region),
-          colSpan: 6, dependsOn: 'region', resets: ['cameras'],
+          colSpan: 6, dependsOn: 'region', resets: ['cameras'], section: 'Joylashuv',
           blockedText: 'Avval viloyatni tanlang',
           emptyOptionsText: 'Bu viloyatda bino yo‘q — avval bino qo‘shing',
         },
@@ -211,12 +227,12 @@ export default function ComputersPage() {
           // to'ldirishga majbur qilardi - to'g'ri javobni esa
           // faqat o'sha markaz biladi.
           name: 'number', label: 'Kompyuter raqami', type: 'number',
-          min: 1, max: 32767, colSpan: 6,
+          min: 1, max: 32767, colSpan: 6, section: 'Joylashuv',
           helperText: 'Xonadagi tartib raqami. Bino ichida unikal bo‘lishi kerak',
         },
         {
           name: 'inventory_code', label: 'Inventar kodi', required: true,
-          maxLength: 50, pattern: 'slug', colSpan: 6,
+          maxLength: 50, pattern: 'slug', colSpan: 6, section: 'Joylashuv',
           helperText: 'Faqat harf, raqam, `-` va `_`. Tizim bo‘ylab unikal.',
         },
         {
@@ -225,7 +241,7 @@ export default function ComputersPage() {
           // tahrirlashda bo'sh qolishi mumkin (client uni MAC orqali o'zi
           // bog'laydi). O'zi unikal EMAS - bir partiyadagi platalarda bir xil.
           name: 'machine_uuid', label: 'Machine UUID',
-          pattern: 'uuid', colSpan: 12, maxLength: 38,
+          pattern: 'uuid', colSpan: 12, maxLength: 38, section: 'Identifikator',
           transform: normalizeMachineUuid,
           validate: (value, form) => (
             !value && !form._meta?.isEdit ? 'Machine UUID kiritilishi shart' : null
@@ -236,19 +252,19 @@ export default function ComputersPage() {
             'takrorlanishi mumkin — mashinani UUID va MAC birga belgilaydi.',
         },
         {
-          name: 'ip_address', label: 'IP manzil',
-          pattern: 'ipv4', colSpan: 6,
-          helperText: 'Ixtiyoriy (DHCP tarmog‘ida o‘zgaradi). Berilsa — bino ichida unikal',
-        },
-        {
           // MAJBURIY (tahrirlashda ham): UUID takrorlanadi va MAC'siz
           // yozuvni bir partiyadagi boshqa mashinalardan ajratib bo'lmaydi.
           name: 'mac_address', label: 'MAC manzil', required: true,
-          pattern: 'mac', colSpan: 6,
+          pattern: 'mac', colSpan: 6, section: 'Identifikator',
           helperText: 'Imtihon mashinasidagi yagona faol adapter (Wi-Fi o‘chiq). Tarmoq kartasi almashsa — shu yerda yangilang',
           // MAC serverda ham normalizatsiya qilinadi, lekin bu yerda
           // kiritishni yagona shaklga keltirish dublikat xatolarini kamaytiradi.
           transform: (value) => String(value || '').replace(/-/g, ':').toUpperCase(),
+        },
+        {
+          name: 'ip_address', label: 'IP manzil',
+          pattern: 'ipv4', colSpan: 6, section: 'Identifikator',
+          helperText: 'Ixtiyoriy (DHCP tarmog‘ida o‘zgaradi). Berilsa — bino ichida unikal',
         },
         {
           name: 'cameras', label: 'Biriktirilgan kameralar', type: 'multiselect',
@@ -262,7 +278,10 @@ export default function ComputersPage() {
             'Shu ish stantsiyasini kuzatuvchi IP kameralar. Bo‘sh qoldirilsa, ' +
             'sessiya faqat ekran va veb-kamera bo‘yicha kuzatiladi.',
         },
-        { name: 'is_active', label: 'Faol', type: 'boolean', colSpan: 12, section: 'Kuzatuv' },
+        {
+          name: 'is_active', label: 'Faol', type: 'boolean', colSpan: 12, section: 'Kuzatuv',
+          helperText: 'O‘chirilsa — mashina hisobdan chiqarilgan: client unga ulana olmaydi',
+        },
       ]}
     />
     <ComputerImportDialog open={importOpen} onClose={() => setImportOpen(false)} />

@@ -33,11 +33,8 @@ sakrardi va ekranning yarmi talabgor topilmaguncha bo'sh turardi.
 Markaziy ustunda natija formaning OSTIDA ochiladi, ya'ni o'qish
 tartibi harakat tartibi bilan bir xil.
 
-SARLAVHADA XODIM ISMI YO'Q va bu ataylab. Operator kim ekanini
-o'zi biladi; ekranda esa har doim ko'rinishi kerak bo'lgan narsa
-boshqa - QAYSI TEST topshirilyapti. Noto'g'ri testni tanlab qo'yish
-bu oqimdagi eng qimmat xato (talabgor boshqa imtihonga kiritiladi)
-va uni faqat sarlavhadagi nom ushlaydi.
+SARLAVHADA TASHKILOT NOMI — xodim ismi ham, test nomi ham yo'q
+(`header._brand_block`): ekran oldida talabgor turadi.
 
 "ORQAGA" VA "CHIQISH" TUGMALARI HAM YO'Q. Bu yerda ekran oldida
 talabgor turadi va sahifada faqat bitta yo'l bo'lishi kerak.
@@ -168,11 +165,8 @@ class CandidatePage(QWidget):
         root.setContentsMargins(48, 28, 48, 32)
         root.setSpacing(18)
 
-        # Sarlavha: test nomi konstruktorda hali ma'lum emas -
-        # u `refresh()` da qo'yiladi.
         self.header = PageHeader(
-            "Talabgorni tekshirish",
-            "2-qadam · JSHSHIR bo'yicha qidirish",
+            "2-qadam · Talabgorni JSHSHIR bo'yicha tekshirish",
             step=2,
             show_back=False,
             show_logout=False,
@@ -262,9 +256,13 @@ class CandidatePage(QWidget):
         # karta ichidagi markazlashgan qatorda chiqardi - operator bir xil
         # savolga ("nega o'tmadi?") ikki xil joyga qarardi. Ikkalasi hech
         # qachon birga ko'rinmaydi.
-        self.message = Notice()
+        #
+        # IXCHAM shakl (`compact=True`): to'liq bloklar qidiruv kartasini
+        # ikki baravar cho'zib, 768 px ekranda natija kartasini pastga
+        # surardi; server matni tooltip'ga o'tadi.
+        self.message = Notice(compact=True)
         card.body.addWidget(self.message)
-        self.seat_notice = SeatNotice()
+        self.seat_notice = SeatNotice(compact=True)
         card.body.addWidget(self.seat_notice)
 
         self._update_pinfl_state("")
@@ -488,13 +486,9 @@ class CandidatePage(QWidget):
     # ------------------------------------------------------------------
     def refresh(self) -> None:
         """Yangi talabgor uchun sahifani tozalaydi."""
-        exam = self._state.selected_exam
         staff = self._state.staff
         device = self._state.device
 
-        # Sarlavha - TEST nomi. Xodim ismi ataylab yo'q (modul
-        # izohiga qarang).
-        self.header.set_title(exam.name if exam else "Test tanlanmagan")
         self.header.set_seat(device)
         tooltips, captions = ip_chip_hints(self._state.machine.get("ips"))
         self.header.set_chips(
@@ -535,8 +529,7 @@ class CandidatePage(QWidget):
         if result.get("error"):
             self._show_with_check(
                 "Yakun serverga yetmadi",
-                "Kompyuter band bo‘lib qolgan bo‘lishi mumkin. Keyingi talabgor kira "
-                "olmasa, administratorga murojaat qiling.",
+                "Keyingi talabgor kira olmasa, administratorga murojaat qiling.",
                 "warning",
                 problem,
             )
@@ -555,7 +548,7 @@ class CandidatePage(QWidget):
 
     def _show_with_check(self, title: str, text: str, kind: str, problem: str) -> None:
         self.message.show_message(
-            "{}\n\n{}".format(text, problem) if problem else text,
+            "{}\n{}".format(text, problem) if problem else text,
             "warning" if problem else kind,
             title=title,
         )
@@ -585,13 +578,11 @@ class CandidatePage(QWidget):
             return ""
         # Yo'l parol bilan (Ctrl+Q): sahifada "Orqaga" tugmasi ataylab
         # yo'q (modul docstring'i), ekran oldida talabgor turadi.
-        how = ("Ctrl+Q → «Imtihon tanlashga qaytish» orqali kamerani "
-               "qayta tekshiring.")
+        how = "Ctrl+Q → «Imtihon tanlashga qaytish»."
         if left <= 0:
-            return ("Kamera tekshiruvi muddati tugagan — talabgor yuzdan o'tgach "
-                    "imtihon ochilmaydi. " + how)
-        return ("Kamera tekshiruvi muddati {} daqiqadan keyin tugaydi — talabgor "
-                "yuzdan o'tguncha eskirishi mumkin. ".format(max(1, round(left / 60))) + how)
+            return "Kamera tekshiruvi muddati tugagan — test ochilmaydi. " + how
+        return "Kamera tekshiruvi muddati {} daqiqadan keyin tugaydi. ".format(
+            max(1, round(left / 60))) + how
 
     def _warn_camera_check(self) -> bool:
         """Ogohlantirishni ko'rsatadi. `True` - muammo bor."""

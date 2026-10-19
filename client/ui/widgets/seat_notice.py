@@ -48,47 +48,47 @@ from ui.widgets.notice import TONES, Notice
 
 #: Kod -> (sarlavha, keyingi qadam, ohang).
 _STATES = {
+    # Matnlar QISQA: blok JSHSHIR tugmasi ostida turadi va ekran oldida
+    # talabgor bor. Qaysi panel sahifasida tuzatilishi — administratorning
+    # ishi (u buni biladi); server matni tooltip'da (`Notice` ixcham shakli).
     "wrong_computer": (
         "Talabgor boshqa kompyuterga biriktirilgan",
-        "Talabgorni ko‘rsatilgan kompyuterga yo‘naltiring va JSHSHIR’ni o‘sha yerda kiriting.",
+        "Talabgorni ko‘rsatilgan kompyuterga yo‘naltiring.",
         "error",
     ),
     "seat_out_of_service": (
-        "Talabgorning kompyuteri buzilgan deb belgilangan",
-        "Administrator talabgorni «Kompyuter bronlari» sahifasida boshqa kompyuterga ko‘chirishi kerak.",
+        "Talabgorning kompyuteri nosoz",
+        "Administrator talabgorni boshqa kompyuterga ko‘chirsin.",
         "error",
     ),
     "seat_not_booked": (
-        "Talabgor hech qaysi kompyuterga biriktirilmagan",
-        "Administrator uni «Kompyuter bronlari» sahifasida shu test sessiyasiga biriktirishi kerak.",
+        "Talabgor kompyuterga biriktirilmagan",
+        "Administrator talabgorni shu test sessiyasiga biriktirsin.",
         "warning",
     ),
     "device_binding_mismatch": (
-        "Talabgor to‘g‘ri kompyuterda, lekin dastur boshqa kompyuterga biriktirilgan",
-        "Administrator «Qurilma tokenlari» sahifasida qurilmani shu kompyuterga qayta biriktirishi kerak.",
+        "Dastur boshqa kompyuterga biriktirilgan",
+        "Talabgor to‘g‘ri joyda. Administrator dasturni shu kompyuterga qayta biriktirsin.",
         "warning",
     ),
     "computer_not_in_schedule": (
-        "Bu kompyuter test sessiyasiga kiritilmagan",
-        "Talabgorni sessiyaga kiritilgan boshqa kompyuterga o‘tkazing yoki administrator "
-        "bu kompyuterni «Kompyuter bronlari» sahifasida sessiyaga qo‘shsin.",
+        "Bu kompyuter test sessiyasida yo‘q",
+        "Talabgorni boshqa kompyuterga o‘tkazing yoki administratorga murojaat qiling.",
         "warning",
     ),
     "computer_out_of_service": (
-        "Bu kompyuter buzilgan deb belgilangan",
+        "Bu kompyuter nosoz deb belgilangan",
         "Talabgorni boshqa bo‘sh kompyuterga o‘tkazing.",
         "error",
     ),
     "computer_busy": (
         "Bu kompyuter boshqa talabgorga biriktirilgan",
-        "Talabgorni boshqa bo‘sh kompyuterga o‘tkazing. Kompyuter egasi imtihonni "
-        "yakunlagach yoki administrator joyni bo‘shatgach bo‘shaydi.",
+        "Talabgorni boshqa bo‘sh kompyuterga o‘tkazing.",
         "warning",
     ),
     "candidate_already_finished": (
-        "Talabgor bu test sessiyasida imtihonni yakunlagan",
-        "Qayta kirish faqat administrator qarori bilan: u talabgorni «Kompyuter bronlari» "
-        "sahifasida kompyuterga biriktiradi.",
+        "Talabgor imtihonni yakunlagan",
+        "Qayta kirishga faqat administrator ruxsat beradi.",
         "warning",
     ),
 }
@@ -117,7 +117,7 @@ class _SeatTile(QFrame):
     qatori yo'q edi va uning raqami qo'shni katakdagidan pastroq tushardi.
     """
 
-    def __init__(self, name: str, *, primary: bool) -> None:
+    def __init__(self, name: str, *, primary: bool, compact: bool = False) -> None:
         super().__init__()
         self.setObjectName(name)
         # Tonal fon ustida: maqsad — "primary container" (ko'z birinchi
@@ -129,7 +129,9 @@ class _SeatTile(QFrame):
             )
         )
         box = QVBoxLayout(self)
-        box.setContentsMargins(14, 10, 14, 10)
+        # Ixcham shaklda raqam 24/20 px: stol raqami baribir xabarning eng
+        # yirik elementi bo'lib qoladi, blok esa ikki baravar pasayadi.
+        box.setContentsMargins(*((10, 5, 10, 6) if compact else (14, 10, 14, 10)))
         box.setSpacing(0)
 
         accent = COLORS["primary_dark"] if primary else COLORS["text_muted"]
@@ -141,7 +143,7 @@ class _SeatTile(QFrame):
         self.number.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.number.setStyleSheet(
             "font-size: {}px; font-weight: 800; background: transparent; color: {};".format(
-                36 if primary else 30,
+                (24 if primary else 20) if compact else (36 if primary else 30),
                 COLORS["primary_deep"] if primary else COLORS["text_secondary"],
             )
         )
@@ -151,8 +153,9 @@ class _SeatTile(QFrame):
         self.place.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.place.setWordWrap(True)
         self.place.setStyleSheet(
-            "font-size: 12px; font-weight: 600; background: transparent; color: {};".format(
-                COLORS["primary_deep"] if primary else COLORS["text_secondary"]
+            "font-size: {}px; font-weight: 600; background: transparent; color: {};".format(
+                11 if compact else 12,
+                COLORS["primary_deep"] if primary else COLORS["text_secondary"],
             )
         )
         retain = self.place.sizePolicy()
@@ -178,22 +181,23 @@ class _SeatTile(QFrame):
 class SeatNotice(Notice):
     """Bron bo'yicha rad javobi — JSHSHIR tugmasi ostidagi MD3 blok."""
 
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
+    def __init__(self, parent=None, *, compact: bool = False) -> None:
+        super().__init__(parent, compact=compact)
+        self._tile_compact = compact
         # Kataklar o'z konteynerida: hech biri ko'rinmaydigan kodda
         # (`seat_not_booked`) konteyner yashirinadi va bo'shliq qolmaydi.
         self.tiles = QWidget()
         self.tiles.setStyleSheet("background: transparent;")
         row = QHBoxLayout(self.tiles)
-        row.setContentsMargins(0, 8, 0, 2)
-        row.setSpacing(10)
-        self.current = _SeatTile("seatCurrent", primary=False)
+        row.setContentsMargins(0, 6 if compact else 8, 0, 2)
+        row.setSpacing(8 if compact else 10)
+        self.current = _SeatTile("seatCurrent", primary=False, compact=compact)
         row.addWidget(self.current, 1)
         self.arrow = QLabel("→")
         self.arrow.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.arrow.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
         row.addWidget(self.arrow)
-        self.target = _SeatTile("seatTarget", primary=True)
+        self.target = _SeatTile("seatTarget", primary=True, compact=compact)
         row.addWidget(self.target, 1)
         self.extra.addWidget(self.tiles)
         self.hide()
@@ -204,7 +208,8 @@ class SeatNotice(Notice):
         self.show_notice(tone, title, hint, "" if title == message else (message or ""))
         on_color = TONES.get(tone, TONES["error"])[1]
         self.arrow.setStyleSheet(
-            "font-size: 26px; font-weight: 700; background: transparent; color: {};".format(on_color)
+            "font-size: {}px; font-weight: 700; background: transparent; color: {};".format(
+                20 if self._tile_compact else 26, on_color)
         )
 
         details = details if isinstance(details, dict) else {}
@@ -231,7 +236,12 @@ class SeatNotice(Notice):
         if seat is not None:
             caption = {
                 "wrong_computer": "BORISHI KERAK",
-                "seat_out_of_service": "BIRIKTIRILGAN (BUZILGAN)",
+                "seat_out_of_service": "BIRIKTIRILGAN (NOSOZ)",
                 "device_binding_mismatch": "TALABGOR JOYI",
             }.get(code, "JOY")
             self.target.set_seat(caption, seat)
+        # Balandlik QAYTA o'lchanadi: `show_notice` uni kataklar
+        # ko'rinishi o'zgarishidan OLDIN o'lchagan. Usiz kataklar bilan
+        # xabardan keyin katakSIZ xabar oldingi balandlikda, ichida bo'sh
+        # joy bilan qolardi.
+        self._fit()

@@ -22,6 +22,13 @@ MD3 qoidasi bo'yicha bitta komponent:
 
 `show_message` / `clear_message` / `text` — `MessageBar` bilan bir xil
 imzo: sahifa kodi va testlar o'zgarmaydi.
+
+IXCHAM SHAKL (`compact=True`) — forma ichidagi javob uchun (JSHSHIR
+sahifasi): to'liq shakl 28 px ikonka va keng chetlari bilan bir qatorli
+xabarni ham ~76 px blokka aylantirib, natijani ekrandan pastga surardi.
+Ixchamda ikonka 20 px, chetlar va shrift bir pog'ona kichik, server
+matni (`detail`) esa blok ostida emas, TOOLTIP'da — u administrator
+uchun dalil, operator har safar o'qiydigan matn emas.
 """
 
 from __future__ import annotations
@@ -42,6 +49,14 @@ TONES = {
 
 _ICON_SIZE = 28
 
+#: Shakl o'lchamlari: (chetlar, oraliq, ikonka, ustun tepasi, ustun
+#: oralig'i, sarlavha / matn / tafsilot shrifti, radius). Ustun tepasi
+#: birinchi qatorni ikonka o'qiga tushiradi.
+_METRICS = {
+    False: ((16, 14, 18, 16), 14, _ICON_SIZE, 4, 4, 15, 14, 12, 16),
+    True: ((12, 9, 14, 10), 10, 20, 1, 1, 14, 13, 12, 12),
+}
+
 
 class NoticeIcon(QWidget):
     """
@@ -51,21 +66,24 @@ class NoticeIcon(QWidget):
     operator ham shakldan farqlaydi (MD3 "warning" / "error" / "info").
     """
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent=None, *, size: int = _ICON_SIZE) -> None:
         super().__init__(parent)
         self._kind = "error"
-        self.setFixedSize(_ICON_SIZE, _ICON_SIZE)
+        self._size = size
+        self.setFixedSize(size, size)
 
     def set_kind(self, kind: str) -> None:
         self._kind = kind if kind in TONES else "error"
         self.update()
 
     def sizeHint(self) -> QSize:  # noqa: N802 - Qt API
-        return QSize(_ICON_SIZE, _ICON_SIZE)
+        return QSize(self._size, self._size)
 
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt API
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        # Belgi 28 px to'r uchun chizilgan — boshqa o'lchamda miqyoslanadi.
+        painter.scale(self._size / _ICON_SIZE, self._size / _ICON_SIZE)
         accent = QColor(TONES[self._kind][2])
         size = float(_ICON_SIZE)
         c = size / 2
@@ -117,6 +135,14 @@ class NoticeIcon(QWidget):
         painter.end()
 
 
+def _invalidate_tree(layout) -> None:
+    layout.invalidate()
+    for index in range(layout.count()):
+        child = layout.itemAt(index).layout()
+        if child is not None:
+            _invalidate_tree(child)
+
+
 def _wrapped(style: str) -> QLabel:
     label = QLabel("")
     label.setWordWrap(True)
@@ -138,24 +164,27 @@ def _wrapped(style: str) -> QLabel:
 class Notice(QFrame):
     """Bitta MD3 xabar bloki (modul izohiga qarang). Bo'sh bo'lsa yashirin."""
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent=None, *, compact: bool = False) -> None:
         super().__init__(parent)
         self.setObjectName("notice")
         self._kind = "error"
+        self._compact = bool(compact)
+        (margins, gap, icon, column_top, column_gap,
+         self._title_px, self._body_px, self._detail_px, self._radius) = _METRICS[self._compact]
 
         row = QHBoxLayout(self)
-        row.setContentsMargins(16, 14, 18, 16)
-        row.setSpacing(14)
+        row.setContentsMargins(*margins)
+        row.setSpacing(gap)
 
-        self.icon = NoticeIcon()
+        self.icon = NoticeIcon(size=icon)
         row.addWidget(self.icon, 0, Qt.AlignmentFlag.AlignTop)
 
         column = QVBoxLayout()
-        # Birinchi qator (sarlavha yoki bitta jumlali matn, ~20 px) 28 px
-        # ikonka bilan bir o'qda turishi uchun: usiz bir qatorli xabar
-        # ikonkadan yuqorida "osilib" qolardi.
-        column.setContentsMargins(0, 4, 0, 0)
-        column.setSpacing(4)
+        # Birinchi qator (sarlavha yoki bitta jumlali matn) ikonka bilan
+        # bir o'qda turishi uchun: usiz bir qatorli xabar ikonkadan
+        # yuqorida "osilib" qolardi.
+        column.setContentsMargins(0, column_top, 0, 0)
+        column.setSpacing(column_gap)
         self.title = _wrapped("")
         column.addWidget(self.title)
         self.body = _wrapped("")
@@ -180,22 +209,27 @@ class Notice(QFrame):
         self._kind = kind if kind in TONES else "error"
         background, on_color, _accent = TONES[self._kind]
         self.setStyleSheet(
-            "QFrame#notice {{ background-color: {}; border: none; border-radius: 16px; }}".format(
-                background
+            "QFrame#notice {{ background-color: {}; border: none; border-radius: {}px; }}".format(
+                background, self._radius
             )
         )
         self.icon.set_kind(self._kind)
         self.title.setStyleSheet(
-            "font-size: 15px; font-weight: 700; background: transparent; color: {};".format(on_color)
+            "font-size: {}px; font-weight: 700; background: transparent; color: {};".format(
+                self._title_px, on_color)
         )
         self.body.setStyleSheet(
-            "font-size: 14px; font-weight: 500; background: transparent; color: {};".format(on_color)
+            "font-size: {}px; font-weight: 500; background: transparent; color: {};".format(
+                self._body_px, on_color)
         )
         # Server matni — o'sha rangda, lekin kichik va yengil: dalil,
-        # asosiy o'qiladigan narsa emas.
+        # asosiy o'qiladigan narsa emas. Ixcham shaklda — tooltip'da.
         self.detail.setStyleSheet(
-            "font-size: 12px; background: transparent; color: {};".format(on_color)
+            "font-size: {}px; background: transparent; color: {};".format(self._detail_px, on_color)
         )
+        if self._compact:
+            self.setToolTip(detail or "")
+            detail = ""
         for label, value in ((self.title, title), (self.body, text), (self.detail, detail)):
             label.setText(value or "")
             label.setVisible(bool(value))
@@ -212,6 +246,7 @@ class Notice(QFrame):
     def clear_message(self) -> None:
         for label in (self.title, self.body, self.detail):
             label.setText("")
+        self.setToolTip("")
         self.setMinimumHeight(0)
         self.hide()
 
@@ -237,7 +272,10 @@ class Notice(QFrame):
         # ortiqcha bo'sh chiqardi. Avval polish, keyin keshni tozalash.
         for label in (self.title, self.body, self.detail):
             label.ensurePolished()
-        self.layout().invalidate()
+        # ICHKI layout'lar ham: `invalidate()` faqat o'z keshini tozalaydi,
+        # ustun/`extra` esa eski `heightForWidth` ni qaytarardi — kataklar
+        # yashirilgandan keyin blok oldingi balandlikda, ichi bo'sh qolardi.
+        _invalidate_tree(self.layout())
         width = self.width()
         if width <= 1 and self.parentWidget() is not None:
             # Hali joylashtirilmagan: ota kenglikdan (chetlarsiz) taxmin.
@@ -251,7 +289,8 @@ class Notice(QFrame):
         return self._kind
 
     def text(self) -> str:
-        """Ko'rinayotgan matn (sarlavha, matn, tafsilot) — testlar va log uchun."""
-        return "\n".join(
-            label.text() for label in (self.title, self.body, self.detail) if label.text()
-        )
+        """Xabar matni (sarlavha, matn, tafsilot) — testlar va log uchun."""
+        parts = [label.text() for label in (self.title, self.body, self.detail) if label.text()]
+        if self._compact and self.toolTip():
+            parts.append(self.toolTip())
+        return "\n".join(parts)

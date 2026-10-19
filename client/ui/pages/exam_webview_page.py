@@ -126,7 +126,7 @@ def describe_session_lost(reason: str, outage_s: float = 0.0) -> tuple:
 
     if reason == "terminated":
         return (
-            "Sessiya proktor tomonidan to'xtatildi",
+            "Imtihon nazoratchi tomonidan to'xtatildi",
             "Talabgor imtihondan chetlashtirildi. Keyingi talabgorga o'tishingiz mumkin.",
             "warning",
         )
@@ -367,14 +367,10 @@ class ExamWebViewPage(QWidget):
         self._supervisor.status_changed.connect(self._on_proctoring_status)
         self._supervisor.risk_changed.connect(self._on_risk_changed)
 
-        #: Suzuvchi paneldagi nuqtaning tooltip'i uchun holat.
+        #: Ichki holat (aloqa, yuz tekshiruvi, skrinshot, yozuv, kuzatuv).
         #
-        # Ilgari bu qiymatlar sarlavhadagi to'rtta nishonda turardi.
-        # Sarlavha olib tashlandi, lekin MA'LUMOT yo'qolmadi: u
-        # operator so'raganda (sichqonchani nuqta ustiga olib
-        # borganda) ko'rinadi. Doimiy ko'rsatib turish esa talabgor
-        # ekranida keraksiz shovqin edi - u bu raqamlarga hech
-        # qachon qaramaydi.
+        # EKRANGA faqat aloqa chiqadi (`_update_status_tooltip`): qolganlari
+        # kuzatuv qanday ishlashini talabgorga ochib berardi.
         self._status = {
             "network": "Aloqa bor",
             "face": "FaceID: kutilmoqda",
@@ -587,22 +583,16 @@ class ExamWebViewPage(QWidget):
 
     def _update_status_tooltip(self) -> None:
         """
-        Nuqtaning tooltip'i: barcha holatlar bitta joyda.
+        Nuqtaning tooltip'i — FAQAT aloqa holati.
 
-        Tartib ahamiyat bo'yicha: avval aloqa (usiz qolganlari
-        ma'nosiz), keyin nazorat qatlamlari.
+        Ilgari bu yerda yuz tekshiruvi, skrinshot, ekran yozuvi va xavf
+        balli ham turardi. Sichqonchani nuqtaga olib boradigan odam —
+        TALABGOR (u kompyuter oldida o'tiradi): u kuzatuv qanday
+        ishlashini, qachon kadr olinishini va balini bilmasligi kerak.
+        Qolgan holatlar `_status` da (log va testlar uchun) qoladi,
+        ekranga chiqmaydi; proktor ularni panelda ko'radi.
         """
-        lines = [
-            self._status.get("network", ""),
-            self._status.get("face", ""),
-            self._status.get("shots", ""),
-            self._status.get("record", ""),
-            self._status.get("risk", ""),
-        ]
-        candidate = self._status.get("candidate")
-        if candidate:
-            lines.insert(0, "{} — {}".format(candidate, self._status.get("exam", "")))
-        tooltip = "\n".join(line for line in lines if line)
+        tooltip = self._status.get("network", "")
         self.status_dot.setToolTip(tooltip)
         self._bar.setToolTip(tooltip)
 
@@ -1168,16 +1158,17 @@ class ExamWebViewPage(QWidget):
 
         if not login_url:
             self._launch.dismiss()
-            self.message.show_message("Test havolasi berilmadi", "error")
+            log.error("Server test havolasini bermadi")
+            self.message.show_message(
+                "Testni ochib bo'lmadi. Administratorga murojaat qiling.", "error"
+            )
             return
 
         if delivery != "url":
             log.error("Kutilmagan `delivery` qiymati: %s", delivery)
             self._launch.dismiss()
             self.message.show_message(
-                "Server test havolasini kutilmagan shaklda yubordi — "
-                "administratorga murojaat qiling",
-                "error",
+                "Testni ochib bo'lmadi. Administratorga murojaat qiling.", "error"
             )
             return
 
@@ -1199,8 +1190,8 @@ class ExamWebViewPage(QWidget):
             # qadar u yoza olmagan (har harf Alt+harf edi) va buni
             # "dastur qotdi" deb o'ylashi mumkin.
             self.message.show_message(
-                "«{}» tugmasi yopishib qolgan edi - dastur uni qo'yib yubordi. "
-                "Yozish davom etadi; klaviaturani operatorga ko'rsating.".format(
+                "«{}» tugmasi yopishib qolgan edi — endi bemalol yozishingiz "
+                "mumkin. Takrorlansa, operatorga ayting.".format(
                     str(payload.get("key") or "").title()
                 ),
                 "warning",
@@ -1291,8 +1282,13 @@ class ExamWebViewPage(QWidget):
             "camera_lost", severity=3, payload={"reason": message[:300]}
         )
         # Ishchi o'zi qayta ulanadi; talabgor esa kabelni tekshirishi
-        # mumkin - xabar suzadi, test sahifasini to'smaydi.
-        self.message.show_message(message, "warning")
+        # mumkin - xabar suzadi, test sahifasini to'smaydi. Ekranda ODDIY
+        # matn: ishchi xabari texnik (drayver, oqim, istisno matni) va u
+        # yuqorida log'ga, `payload` orqali proktorga ketdi.
+        self.message.show_message(
+            "Kamera uzildi. Kabel ulanganini tekshiring; kamera o'zi qayta ulanadi.",
+            "warning",
+        )
 
     def _on_camera_restored(self) -> None:
         """
@@ -1730,7 +1726,7 @@ class ExamWebViewPage(QWidget):
         """
         log.warning("Proktor sessiyani to'xtatdi: %s", reason or "-")
         self._warning_dialog().show_warning(
-            reason or "Sessiya proktor tomonidan to'xtatildi", 4, timeout_s=0
+            reason or "Imtihoningiz nazoratchi tomonidan to'xtatildi.", 4, timeout_s=0
         )
         self._session_closed = True
         self.stop()
@@ -1803,7 +1799,7 @@ class ExamWebViewPage(QWidget):
                 self._opened_at = time.monotonic()
             self._error_panel.show_error(
                 "Test sahifasi ochilmadi",
-                "Brauzerni ishga tushirib bo'lmadi. «Qayta yuklash» ni bosing; "
+                "Test oynasini ochib bo'lmadi. «Qayta yuklash» ni bosing; "
                 "takrorlansa administratorga murojaat qiling.",
             )
             self._retry_url = QUrl()
@@ -1855,13 +1851,15 @@ class ExamWebViewPage(QWidget):
             current = self.web_view.url()
             self._retry_url = current if self._usable(current) else QUrl()
             if delay is None:
+                # Texnik sabab LOG'DA, ekranda oddiy matn (oldida talabgor).
+                log.error(
+                    "QtWebEngineProcess %s marta to'xtadi — antivirus bloklayotgan "
+                    "bo'lishi mumkin", self._crash_guard.count,
+                )
                 self._error_panel.show_error(
                     "Test sahifasi qayta-qayta yopilmoqda",
-                    "Brauzer jarayoni (QtWebEngineProcess) {} marta to'xtadi. Antivirus "
-                    "uni bloklayotgan bo'lishi mumkin. «Qayta yuklash» ni bosing; "
-                    "takrorlansa administratorga murojaat qiling.".format(
-                        self._crash_guard.count
-                    ),
+                    "«Qayta yuklash» ni bosing; takrorlansa administratorga "
+                    "murojaat qiling.",
                 )
             else:
                 self._error_panel.show_error(

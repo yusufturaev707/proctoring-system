@@ -38,9 +38,9 @@ STEP_BROWSER = 1
 STEP_PLATFORM = 2
 #: (jarayonda, bajarildi) - bajarilgan qadam o'tgan zamonda o'qiladi.
 STEPS = (
-    ("Kuzatuv ishga tushirilmoqda", "Kuzatuv ishga tushirildi"),
-    ("Xavfsiz brauzer tayyorlanmoqda", "Xavfsiz brauzer tayyor"),
-    ("Test platformasi yuklanmoqda", "Test platformasi ochildi"),
+    ("Imtihon tayyorlanmoqda", "Imtihon tayyor"),
+    ("Test oynasi tayyorlanmoqda", "Test oynasi tayyor"),
+    ("Test yuklanmoqda", "Test ochildi"),
 )
 
 _CARD_MAX_W = 520

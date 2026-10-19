@@ -1,0 +1,299 @@
+- generic [ref=f3e1]:
+  - generic [ref=f3e3]:
+    - navigation [ref=f3e4]:
+      - generic [ref=f3e6]:
+        - generic [ref=f3e7]:
+          - generic [ref=f3e11]:
+            - paragraph [ref=f3e12]: Proctoring
+            - generic [ref=f3e13]: Imtihon nazorati tizimi
+          - button [ref=f3e14] [cursor=pointer]
+        - button [ref=f3e18] [cursor=pointer]:
+          - paragraph [ref=f3e21]: Sahifa qidirish
+          - generic [ref=f3e22]: Ctrl K
+        - generic [ref=f3e23]:
+          - region [ref=f3e24]:
+            - heading [level=2] [ref=f3e25]: Monitoring
+            - link [ref=f3e26] [cursor=pointer]:
+              - /url: /
+              - paragraph [ref=f3e29]: Boshqaruv paneli
+            - link [ref=f3e30] [cursor=pointer]:
+              - /url: /live
+              - paragraph [ref=f3e34]: Jonli kuzatuv
+            - link [ref=f3e35] [cursor=pointer]:
+              - /url: /sessions
+              - paragraph [ref=f3e38]: Sessiyalar
+            - link [ref=f3e39] [cursor=pointer]:
+              - /url: /technical-problems
+              - paragraph [ref=f3e44]: Texnik muammolar
+          - region [ref=f3e45]:
+            - heading [level=2] [ref=f3e46]: Imtihonlar
+            - link [ref=f3e47] [cursor=pointer]:
+              - /url: /exams
+              - paragraph [ref=f3e50]: Imtihonlar
+            - link [ref=f3e51] [cursor=pointer]:
+              - /url: /exam-schedules
+              - paragraph [ref=f3e54]: Imtihon jadvali
+            - link [ref=f3e55] [cursor=pointer]:
+              - /url: /computer-bookings
+              - paragraph [ref=f3e58]: Kompyuter bronlari
+            - link [ref=f3e59] [cursor=pointer]:
+              - /url: /exam-types
+              - paragraph [ref=f3e62]: Imtihon turlari
+          - region [ref=f3e63]:
+            - heading [level=2] [ref=f3e64]: Infratuzilma
+            - link [ref=f3e65] [cursor=pointer]:
+              - /url: /regions
+              - paragraph [ref=f3e68]: Viloyatlar
+            - link [ref=f3e69] [cursor=pointer]:
+              - /url: /zones
+              - paragraph [ref=f3e72]: Binolar
+            - link [ref=f3e73] [cursor=pointer]:
+              - /url: /computers
+              - paragraph [ref=f3e76]: Kompyuterlar
+            - link [ref=f3e77] [cursor=pointer]:
+              - /url: /cameras
+              - paragraph [ref=f3e80]: Kameralar
+            - link [ref=f3e81] [cursor=pointer]:
+              - /url: /device-tokens
+              - paragraph [ref=f3e84]: Client qurilmalari
+          - region [ref=f3e85]:
+            - heading [level=2] [ref=f3e86]: Client nazorati
+            - link [ref=f3e87] [cursor=pointer]:
+              - /url: /settings
+              - paragraph [ref=f3e90]: Client sozlamalari
+            - link [ref=f3e91] [cursor=pointer]:
+              - /url: /allowed-ips
+              - paragraph [ref=f3e94]: Ruxsat etilgan IP'lar
+            - link [ref=f3e95] [cursor=pointer]:
+              - /url: /exit-passwords
+              - paragraph [ref=f3e98]: Chiqish parollari
+            - link [ref=f3e99] [cursor=pointer]:
+              - /url: /rdp-objects
+              - paragraph [ref=f3e103]: Taqiqlangan dasturlar
+            - link [ref=f3e104] [cursor=pointer]:
+              - /url: /hotkeys
+              - paragraph [ref=f3e107]: Tezkor tugmalar
+          - region [ref=f3e108]:
+            - heading [level=2] [ref=f3e109]: AI kuzatuv
+            - link [ref=f3e110] [cursor=pointer]:
+              - /url: /proctoring-policies
+              - paragraph [ref=f3e113]: Kuzatuv siyosati
+            - link [ref=f3e114] [cursor=pointer]:
+              - /url: /risk-weights
+              - paragraph [ref=f3e118]: Hodisa og‘irliklari
+            - link [ref=f3e119] [cursor=pointer]:
+              - /url: /coco-objects
+              - paragraph [ref=f3e122]: Taqiqlangan obyektlar
+            - link [ref=f3e123] [cursor=pointer]:
+              - /url: /coco-groups
+              - paragraph [ref=f3e126]: Obyekt guruhlari
+            - link [ref=f3e127] [cursor=pointer]:
+              - /url: /model-versions
+              - paragraph [ref=f3e130]: Model versiyalari
+          - region [ref=f3e131]:
+            - heading [level=2] [ref=f3e132]: Tizim
+            - link [ref=f3e133] [cursor=pointer]:
+              - /url: /users
+              - paragraph [ref=f3e136]: Foydalanuvchilar
+            - link [ref=f3e137] [cursor=pointer]:
+              - /url: /roles
+              - paragraph [ref=f3e143]: Rollar
+            - link [ref=f3e144] [cursor=pointer]:
+              - /url: /audit
+              - paragraph [ref=f3e147]: Audit jurnali
+            - link [ref=f3e148] [cursor=pointer]:
+              - /url: /system
+              - paragraph [ref=f3e151]: Server holati
+        - button [ref=f3e153] [cursor=pointer]:
+          - generic [ref=f3e154]: T
+          - generic [ref=f3e155]:
+            - paragraph [ref=f3e156]: To'rayev Yusuf Jumma o'g'li
+            - generic [ref=f3e157]: Superadmin · Barcha viloyatlar
+    - main [ref=f3e160]:
+      - generic [ref=f3e162]:
+        - generic [ref=f3e163]:
+          - generic [ref=f3e164]:
+            - generic [ref=f3e165]: Imtihonlar
+            - heading [level=1] [ref=f3e168]: Imtihonlar
+            - paragraph [ref=f3e171]: Tashqi test platformasidagi testlar bilan bog‘lanish. Qatorni bosing, to‘liq karta ochiladi
+          - button [ref=f3e174] [cursor=pointer]: Qo‘shish
+        - generic [ref=f3e178]:
+          - generic [ref=f3e179]:
+            - generic [ref=f3e180]:
+              - generic [ref=f3e182]:
+                - textbox [ref=f3e186]:
+                  - /placeholder: Nomi, kalit yoki tashqi kod…
+                - generic [ref=f3e187]: /
+                - group [aria-hidden]
+              - button [ref=f3e190] [cursor=pointer]: Filtr
+              - button [ref=f3e195] [cursor=pointer]
+              - button [ref=f3e198] [cursor=pointer]
+            - generic: Turi
+            - generic: Holat
+            - generic: Savat
+          - grid [ref=f3e204]:
+            - row [ref=f3e205]:
+              - columnheader [ref=f3e206]:
+                - generic [ref=f3e207]: №
+              - columnheader [ref=f3e210] [cursor=pointer]:
+                - generic [ref=f3e211]: Nomi
+                - button [ref=f3e214]
+              - columnheader [ref=f3e218]:
+                - generic [ref=f3e219]: Turi
+              - columnheader [ref=f3e222] [cursor=pointer]:
+                - generic [ref=f3e223]: Kalit
+              - columnheader [ref=f3e226] [cursor=pointer]:
+                - generic [ref=f3e227]: Tashqi kod
+              - columnheader [ref=f3e230] [cursor=pointer]:
+                - generic [ref=f3e231]: Davomiylik
+              - columnheader [ref=f3e234]:
+                - generic [ref=f3e235]: Platforma sarlavhasi
+              - columnheader [ref=f3e238]:
+                - generic [ref=f3e239]: Sessiya
+              - columnheader [ref=f3e242]:
+                - generic [ref=f3e243]: Sozlama
+            - rowgroup [ref=f3e246]:
+              - row [ref=f3e247] [cursor=pointer]:
+                - gridcell [ref=f3e248]: "1"
+                - gridcell [ref=f3e249]:
+                  - paragraph [ref=f3e251]: Chet tilini bilish darajasini aniqlash
+                - gridcell [ref=f3e252]:
+                  - generic [ref=f3e253]: NTEST
+                - gridcell [ref=f3e255]:
+                  - paragraph [ref=f3e256]: cefr
+                - gridcell [ref=f3e257]:
+                  - paragraph [ref=f3e258]: test-2026
+                - gridcell [ref=f3e259]:
+                  - paragraph [ref=f3e260]: 3 soat
+                - gridcell [ref=f3e261]:
+                  - paragraph [ref=f3e265]: "Authorization: Bear••••••1Pb8"
+                - gridcell [ref=f3e266]:
+                  - paragraph [ref=f3e267]: "1"
+                - gridcell [ref=f3e268]:
+                  - paragraph [ref=f3e269]: Standart — 1156
+              - row [ref=f3e270] [cursor=pointer]:
+                - gridcell [ref=f3e271]: "2"
+                - gridcell [ref=f3e272]:
+                  - paragraph [ref=f3e274]: Matematika va fizika
+                - gridcell [ref=f3e275]:
+                  - generic [ref=f3e276]: ATEST
+                - gridcell [ref=f3e278]:
+                  - paragraph [ref=f3e279]: ms-1
+                - gridcell [ref=f3e280]:
+                  - paragraph [ref=f3e281]: test-2
+                - gridcell [ref=f3e282]:
+                  - paragraph [ref=f3e283]: 3 soat
+                - gridcell [ref=f3e284]:
+                  - generic [ref=f3e285]: O‘rnatilmagan
+                - gridcell [ref=f3e289]:
+                  - paragraph [ref=f3e290]: —
+                - gridcell [ref=f3e291]:
+                  - paragraph [ref=f3e292]: Standart
+          - generic [ref=f3e296]:
+            - generic [ref=f3e297]:
+              - generic [ref=f3e298]: Sahifada
+              - generic [ref=f3e299]:
+                - combobox [ref=f3e300] [cursor=pointer]: "25"
+                - textbox [aria-hidden]: "25"
+                - group [aria-hidden]:
+                  - generic: Sahifada
+            - paragraph [ref=f3e301]: 1–2 / 2 ta
+  - dialog [ref=f3e462]:
+    - generic [ref=f3e463]:
+      - generic [ref=f3e464]:
+        - heading "Matematika va fizika — tahrirlash" [level=2] [ref=f3e470]
+        - button "Yopish" [ref=f3e471] [cursor=pointer]
+      - generic [ref=f3e474]:
+        - generic [ref=f3e475]:
+          - generic [ref=f3e480]:
+            - heading "Asosiy" [level=6] [ref=f3e481]
+            - generic [ref=f3e482]: Nom va tur ro‘yxatlarda ko‘rinadi, kodlar hisobot va integratsiyada ishlatiladi
+          - generic [ref=f3e483]:
+            - generic [ref=f3e485]:
+              - generic [ref=f3e486]:
+                - text: Nomi
+                - generic [aria-hidden] [ref=f3e487]: "*"
+              - generic [ref=f3e488]:
+                - textbox "Nomi" [ref=f3e489]: Matematika va fizika
+                - group [aria-hidden]:
+                  - generic: Nomi *
+            - generic [ref=f3e491]:
+              - generic [ref=f3e492]: Imtihon turi
+              - generic [ref=f3e493]:
+                - combobox "Imtihon turi ATEST" [ref=f3e494] [cursor=pointer]: ATEST
+                - textbox [aria-hidden]: "4"
+                - group [aria-hidden]:
+                  - generic: Imtihon turi
+              - paragraph [ref=f3e495]: Bo‘sh qoldirilsa — tur belgilanmagan holida qoladi
+            - generic [ref=f3e497]:
+              - generic [ref=f3e498]: Ichki kalit
+              - generic [ref=f3e499]:
+                - textbox "Ichki kalit" [ref=f3e500]: ms-1
+                - group [aria-hidden]:
+                  - generic: Ichki kalit
+            - generic [ref=f3e502]:
+              - generic [ref=f3e503]: Tashqi platforma kodi
+              - generic [ref=f3e504]:
+                - textbox "Tashqi platforma kodi" [ref=f3e505]: test-2
+                - group [aria-hidden]:
+                  - generic: Tashqi platforma kodi
+              - paragraph [ref=f3e506]: ntest tizimidagi imtihon identifikatori
+        - generic [ref=f3e507]:
+          - generic [ref=f3e512]:
+            - heading "Test platformasi" [level=6] [ref=f3e513]
+            - generic [ref=f3e514]: Server JSHSHIR’ni shu manzil orqali tekshiradi — client platformaga o‘zi murojaat qilmaydi
+          - generic [ref=f3e515]:
+            - generic [ref=f3e517]:
+              - generic [ref=f3e518]:
+                - text: Tekshiruv API manzili
+                - generic [aria-hidden] [ref=f3e519]: "*"
+              - generic [ref=f3e520]:
+                - textbox "Tekshiruv API manzili" [ref=f3e521]: https://ntest.uzbmb.uz/login
+                - group [aria-hidden]:
+                  - generic: Tekshiruv API manzili *
+              - paragraph [ref=f3e522]: Server shu manzilga ?imie=<JSHSHIR> bilan GET yuboradi. Test sahifasi javobdagi test_link’dan ochiladi
+            - generic [ref=f3e524]:
+              - generic: Platforma sarlavhasi
+              - generic [ref=f3e525]:
+                - textbox "Platforma sarlavhasi" [ref=f3e526]
+                - button "Ko‘rsatish" [ref=f3e528] [cursor=pointer]
+                - group [aria-hidden]:
+                  - generic: Platforma sarlavhasi
+              - paragraph [ref=f3e531]: "Hozirgisi: o‘rnatilmagan. Bo‘sh qoldirilsa — o‘zgarmaydi. Namuna: Authorization: Bearer <token>"
+            - generic [ref=f3e535]:
+              - generic: Resurs domenlari (rasm, shrift)
+              - generic [ref=f3e536]:
+                - combobox "Resurs domenlari (rasm, shrift)" [ref=f3e537]
+                - group [aria-hidden]:
+                  - generic: Resurs domenlari (rasm, shrift)
+              - paragraph [ref=f3e538]: Savol rasmlari boshqa serverdan kelsa — shu domen. Faqat rasm, shrift, CSS va media uchun ochiladi; sahifa, skript va so‘rovlar bloklanadi. Qaysi domen bloklangani sessiya hodisalarida («URL bloklandi») ko‘rinadi
+        - generic [ref=f3e539]:
+          - generic [ref=f3e544]:
+            - heading "Sozlamalar" [level=6] [ref=f3e545]
+            - generic [ref=f3e546]: Test vaqti va proktorlik profili (FaceID, skrinshot, bron rejimi)
+          - generic [ref=f3e547]:
+            - generic [ref=f3e549]:
+              - generic [ref=f3e550]:
+                - text: Davomiyligi (daqiqa)
+                - generic [aria-hidden] [ref=f3e551]: "*"
+              - generic [ref=f3e552]:
+                - spinbutton "Davomiyligi (daqiqa)" [ref=f3e553]: "180"
+                - group [aria-hidden]:
+                  - generic: Davomiyligi (daqiqa) *
+              - paragraph [ref=f3e554]: 3 soat · platforma vaqt bermasa ishlatiladi
+            - generic [ref=f3e556]:
+              - generic [ref=f3e557]: Proktorlik profili
+              - generic [ref=f3e558]:
+                - combobox "Proktorlik profili Standart (global standart)" [ref=f3e559] [cursor=pointer]: Standart (global standart)
+                - textbox [aria-hidden]: "1"
+                - group [aria-hidden]:
+                  - generic: Proktorlik profili
+              - paragraph [ref=f3e560]: Bo‘sh qoldirilsa — global standart
+            - generic [ref=f3e562] [cursor=pointer]:
+              - generic [ref=f3e563]:
+                - paragraph [ref=f3e564]: Faol
+                - generic [ref=f3e565]: Nofaol imtihonni operator client dasturda tanlay olmaydi
+              - checkbox "Faol Nofaol imtihonni operator client dasturda tanlay olmaydi" [ref=f3e568]
+      - generic [ref=f3e571]:
+        - button "Bekor qilish" [ref=f3e572] [cursor=pointer]
+        - button "Saqlash" [disabled]

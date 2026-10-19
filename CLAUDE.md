@@ -548,7 +548,9 @@ Kompyuter jadvalidagi unikallik (hammasi shartli — tirik yozuvlar orasida):
   faqat raqam (raqamsizda inventar kodi), to'liq nom tooltip'da,
   biriktirilmagan bo'lsa yashirin. Kataklarda `pc` YO'Q
   (`WorkstationHeader` — `fields=("region", "zone", "mac", "ip")`).
-  Imtihon sahifasida sarlavha yo'q.
+  Imtihon sahifasida sarlavha yo'q. Logotipdan keyin — TASHKILOT NOMI
+  (`version.COMPANY_NAME`) va ostida bosqich; test nomi va xodim F.I.Sh.
+  sarlavhada YO'Q (ekran oldida talabgor).
 * **Logotip — fayl** (`client/resources/images/logo.png`; PyInstaller'da
   `--add-data "resources;resources"`). Topilmasa vidjet yashirinadi.
   Login/tarmoq sahifalarida oq rangda, `BrandBackdrop.make_logo`.
@@ -1392,7 +1394,14 @@ Qobiq bitta — `base.py:CardDialog` (ramkasiz, shaffof fon, 28 px karta, soya).
   va dialoglarda BITTA komponent; bron rad javobi ham shu (`SeatNotice(Notice)`).
   `MessageBar` (markazlashgan bitta yorliq) olib tashlangan — qaytarmang.
   Balandlik `_fit` da: o'lchashdan oldin `ensurePolished` (aks holda
-  uslubdagi shrift hisobga olinmay oxirgi qator kesiladi).
+  uslubdagi shrift hisobga olinmay oxirgi qator kesiladi) va ICHKI
+  layout'lar ham tozalanadi (`_invalidate_tree`). JSHSHIR sahifasida —
+  `compact=True` (20 px ikonka, kichik chet/shrift, server matni tooltip'da).
+* **Talabgor ko'radigan matnda kuzatuv tafsiloti YO'Q**: skrinshot, ekran
+  yozuvi, FaceID foizi, xavf balli, "kuzatuv ishga tushdi", texnik nomlar
+  (QtWebEngineProcess, DNS). Imtihon paneli nuqtasining tooltip'i — faqat
+  aloqa (`_update_status_tooltip`; qolgani `_status` da, ekranga chiqmaydi).
+  "Proktor" o'rniga "nazoratchi". Texnik sabab — log'ga.
 
 ### Klaviatura tili — faqat Alt+Shift
 
@@ -1714,8 +1723,11 @@ biznes-mantiq) / `api/v1/{serializers,views,urls}.py`. View'lar yupqa.
   ham ("Chiqish" tugmasi ataylab yo'q). IP rad etilgan mashinada — viloyat
   chiqish paroli (viloyat noma'lum bo'lsa istalgan viloyatniki).
   **Ctrl+Q oynasidagi «orqaga qaytish» ham PAROL bilan** (bitta maydon,
-  `exit/verify/` `purpose: back`, auditda `client_back`; Enter — xavfsiz
-  amal): Ctrl+Q ni talabgor ham bosa oladi.
+  `exit/verify/` `purpose: back`, auditda `client_back`): Ctrl+Q ni
+  talabgor ham bosa oladi. **Enter — CHIQISH** (`ExitDialog._on_enter`;
+  orqaga — faqat o'z tugmasi): Enter "orqaga" bo'lganda parol + Enter
+  dasturni yopmay imtihon tanlashga o'tkazardi. Ochiq imtihonda
+  (`warning`) Enter hech narsa qilmaydi — faqat «Chiqish» tugmasi.
 * **Chiqish paroli** — `client/exit/verify/`: xodimning o'z paroli (JWT
   bo'lsa) yoki `controls.ClientExitPassword` (har viloyat uchun, hash;
   API qaytarmaydi). Endpoint autentifikatsiyasiz (`ExitVerifyThrottle`).
@@ -1823,7 +1835,11 @@ deploy'ni (`deploy.sh`) yangi `dist` almashtirilishidan OLDIN to'xtatadi.
   `components/data/DetailDialog.tsx` (qobiq, `StatTiles`, `InfoNote`) va
   `DetailFields` (`Section`/`Field`). Muammo (nima uchun ishlamaydi)
   karta TEPASIDA `problems` bilan. Ro'yxat qiymatlari — JSON matn emas,
-  `components/controls/ChipListInput.tsx`.
+  `components/controls/ChipListInput.tsx`. Tahrirlash formasi — MD3
+  bo'limlar (`formIcon`/`formTitle`/`formSections`, har maydonda `section`).
+  Imtihon kartalari `components/exams/`; seans bosqichi
+  (`examText.schedulePhase`) — «ochiq» FAQAT serverning `is_open` i
+  (brauzer soati emas).
 * **Ommaviy amal — `ResourcePage bulkActions`** (+ `isRowSelectable`).
   Backend `common.mixins.BulkSelectionMixin`: `{"ids": [...]}` yoki
   `{"all": true}` + ro'yxat query parametrlari (`useResource.scopeParams`),

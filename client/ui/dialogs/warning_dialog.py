@@ -128,7 +128,7 @@ class WarningDialog(CardDialog):
         apply_font(
             self.title_label, 22, bold=True, extra="color: {};".format(COLORS[color])
         )
-        self.text_label.setText(text or "Proktor ogohlantirdi")
+        self.text_label.setText(text or "Imtihon nazoratchisi sizni ogohlantirdi.")
 
         self._timer.stop()
         self._tick.stop()

@@ -94,10 +94,11 @@ def webengine_process_problem() -> Optional[str]:
         if path and os.path.isfile(path):
             return None
     log.error("QtWebEngineProcess topilmadi. Qidirilgan joylar: %s", candidates)
+    # Ekranda ODDIY matn (oldida talabgor bo'lishi mumkin); texnik sabab —
+    # fayl nomi, antivirus karantini — yuqoridagi log yozuvida.
     return (
-        "Brauzer komponenti (QtWebEngineProcess.exe) topilmadi. Antivirus uni "
-        "karantinga olgan bo'lishi mumkin — istisnoga qo'shing yoki dasturni "
-        "qayta o'rnating. Administratorga murojaat qiling."
+        "Test oynasini ochib bo'lmadi: dastur fayllari to'liq emas. "
+        "Administratorga murojaat qiling."
     )
 
 
@@ -117,8 +118,9 @@ def describe_load_error(domain: str, code: int, error_string: str = "") -> Optio
         if code >= 500:
             return (
                 "Test sayti vaqtincha ishlamayapti",
-                "Test platformasi xato qaytardi (HTTP {}). Sahifa avtomatik qayta "
-                "yuklanadi; takrorlansa administratorga murojaat qiling.".format(code),
+                # Kod qoladi: operator administratorga aynan shuni aytadi.
+                "Sahifa avtomatik qayta yuklanadi; takrorlansa administratorga "
+                "murojaat qiling (xato kodi {}).".format(code),
                 True,
             )
         return None
@@ -129,15 +131,15 @@ def describe_load_error(domain: str, code: int, error_string: str = "") -> Optio
         # xatosi — tarmoqda kimdir aloqani to'xtatayotgan bo'lishi mumkin.
         return (
             "Xavfsiz ulanish o'rnatilmadi",
-            "Test saytining sertifikati tekshiruvdan o'tmadi (kompyuter soati "
-            "noto'g'ri yoki tarmoqda proksi bor). Administratorga murojaat qiling.",
+            "Test saytiga xavfsiz ulanib bo'lmadi. Kompyuter soati to'g'riligini "
+            "tekshiring va administratorga murojaat qiling.",
             False,
         )
     if domain == "DnsErrorDomain" or code in (-105, -137):
         return (
             "Test sayti topilmadi",
-            "Test saytining manzili aniqlanmadi (DNS). Internet ulanishini "
-            "tekshiring — aloqa tiklangach sahifa o'zi qayta yuklanadi.",
+            "Internet ulanishini tekshiring — aloqa tiklangach sahifa o'zi "
+            "qayta yuklanadi.",
             True,
         )
     if code in (-106, -21):  # INTERNET_DISCONNECTED, NETWORK_CHANGED
@@ -156,8 +158,7 @@ def describe_load_error(domain: str, code: int, error_string: str = "") -> Optio
         )
     return (
         "Test sahifasi ochilmadi",
-        "Test saytiga ulanib bo'lmadi ({}). Sahifa avtomatik qayta "
-        "yuklanadi.".format(error_string or code),
+        "Test saytiga ulanib bo'lmadi. Sahifa avtomatik qayta yuklanadi.",
         True,
     )
 

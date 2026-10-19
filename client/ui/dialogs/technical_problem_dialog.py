@@ -110,7 +110,8 @@ class TechnicalProblemDialog(CardDialog):
         layout.addSpacing(6)
 
         subtitle = QLabel(
-            "Turini tanlang va qisqacha yozing — proktor xabarni darhol ko'radi."
+            "Turini tanlang va qisqacha yozing — xabar imtihon nazoratchisiga "
+            "darhol yetadi."
         )
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subtitle.setWordWrap(True)

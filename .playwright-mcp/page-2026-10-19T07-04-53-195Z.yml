@@ -1,0 +1,281 @@
+- generic [ref=f6e1]:
+  - generic [ref=f6e7]:
+    - navigation [ref=f6e8]:
+      - generic [ref=f6e10]:
+        - generic [ref=f6e11]:
+          - generic [ref=f6e15]:
+            - paragraph [ref=f6e16]: Proctoring
+            - generic [ref=f6e17]: Imtihon nazorati tizimi
+          - button [ref=f6e18] [cursor=pointer]
+        - button [ref=f6e22] [cursor=pointer]:
+          - paragraph [ref=f6e25]: Sahifa qidirish
+          - generic [ref=f6e26]: Ctrl K
+        - generic [ref=f6e27]:
+          - region [ref=f6e28]:
+            - heading [level=2] [ref=f6e29]: Monitoring
+            - link [ref=f6e30] [cursor=pointer]:
+              - /url: /
+              - paragraph [ref=f6e33]: Boshqaruv paneli
+            - link [ref=f6e34] [cursor=pointer]:
+              - /url: /live
+              - paragraph [ref=f6e38]: Jonli kuzatuv
+            - link [ref=f6e39] [cursor=pointer]:
+              - /url: /sessions
+              - paragraph [ref=f6e42]: Sessiyalar
+            - link [ref=f6e43] [cursor=pointer]:
+              - /url: /technical-problems
+              - paragraph [ref=f6e48]: Texnik muammolar
+          - region [ref=f6e49]:
+            - heading [level=2] [ref=f6e50]: Imtihonlar
+            - link [ref=f6e51] [cursor=pointer]:
+              - /url: /exams
+              - paragraph [ref=f6e54]: Imtihonlar
+            - link [ref=f6e55] [cursor=pointer]:
+              - /url: /exam-schedules
+              - paragraph [ref=f6e58]: Imtihon jadvali
+            - link [ref=f6e59] [cursor=pointer]:
+              - /url: /computer-bookings
+              - paragraph [ref=f6e62]: Kompyuter bronlari
+            - link [ref=f6e63] [cursor=pointer]:
+              - /url: /exam-types
+              - paragraph [ref=f6e66]: Imtihon turlari
+          - region [ref=f6e67]:
+            - heading [level=2] [ref=f6e68]: Infratuzilma
+            - link [ref=f6e69] [cursor=pointer]:
+              - /url: /regions
+              - paragraph [ref=f6e72]: Viloyatlar
+            - link [ref=f6e73] [cursor=pointer]:
+              - /url: /zones
+              - paragraph [ref=f6e76]: Binolar
+            - link [ref=f6e77] [cursor=pointer]:
+              - /url: /computers
+              - paragraph [ref=f6e80]: Kompyuterlar
+            - link [ref=f6e81] [cursor=pointer]:
+              - /url: /cameras
+              - paragraph [ref=f6e84]: Kameralar
+            - link [ref=f6e85] [cursor=pointer]:
+              - /url: /device-tokens
+              - paragraph [ref=f6e88]: Client qurilmalari
+          - region [ref=f6e89]:
+            - heading [level=2] [ref=f6e90]: Client nazorati
+            - link [ref=f6e91] [cursor=pointer]:
+              - /url: /settings
+              - paragraph [ref=f6e94]: Client sozlamalari
+            - link [ref=f6e95] [cursor=pointer]:
+              - /url: /allowed-ips
+              - paragraph [ref=f6e98]: Ruxsat etilgan IP'lar
+            - link [ref=f6e99] [cursor=pointer]:
+              - /url: /exit-passwords
+              - paragraph [ref=f6e102]: Chiqish parollari
+            - link [ref=f6e103] [cursor=pointer]:
+              - /url: /rdp-objects
+              - paragraph [ref=f6e107]: Taqiqlangan dasturlar
+            - link [ref=f6e108] [cursor=pointer]:
+              - /url: /hotkeys
+              - paragraph [ref=f6e111]: Tezkor tugmalar
+          - region [ref=f6e112]:
+            - heading [level=2] [ref=f6e113]: AI kuzatuv
+            - link [ref=f6e114] [cursor=pointer]:
+              - /url: /proctoring-policies
+              - paragraph [ref=f6e117]: Kuzatuv siyosati
+            - link [ref=f6e118] [cursor=pointer]:
+              - /url: /risk-weights
+              - paragraph [ref=f6e122]: Hodisa og‘irliklari
+            - link [ref=f6e123] [cursor=pointer]:
+              - /url: /coco-objects
+              - paragraph [ref=f6e126]: Taqiqlangan obyektlar
+            - link [ref=f6e127] [cursor=pointer]:
+              - /url: /coco-groups
+              - paragraph [ref=f6e130]: Obyekt guruhlari
+            - link [ref=f6e131] [cursor=pointer]:
+              - /url: /model-versions
+              - paragraph [ref=f6e134]: Model versiyalari
+          - region [ref=f6e135]:
+            - heading [level=2] [ref=f6e136]: Tizim
+            - link [ref=f6e137] [cursor=pointer]:
+              - /url: /users
+              - paragraph [ref=f6e140]: Foydalanuvchilar
+            - link [ref=f6e141] [cursor=pointer]:
+              - /url: /roles
+              - paragraph [ref=f6e147]: Rollar
+            - link [ref=f6e148] [cursor=pointer]:
+              - /url: /audit
+              - paragraph [ref=f6e151]: Audit jurnali
+            - link [ref=f6e152] [cursor=pointer]:
+              - /url: /system
+              - paragraph [ref=f6e155]: Server holati
+        - button [ref=f6e157] [cursor=pointer]:
+          - generic [ref=f6e158]: T
+          - generic [ref=f6e159]:
+            - paragraph [ref=f6e160]: To'rayev Yusuf Jumma o'g'li
+            - generic [ref=f6e161]: Superadmin · Barcha viloyatlar
+    - main [ref=f6e164]:
+      - generic [ref=f6e166]:
+        - generic [ref=f6e167]:
+          - generic [ref=f6e168]:
+            - generic [ref=f6e169]: Imtihonlar
+            - heading [level=1] [ref=f6e172]: Imtihon jadvali
+            - paragraph [ref=f6e175]: Talabgor faqat ochiq kirish oynasida JSHSHIR kirita oladi. Qatorni bosing, to‘liq karta ochiladi
+          - button [ref=f6e178] [cursor=pointer]: Qo‘shish
+        - generic [ref=f6e182]:
+          - generic [ref=f6e183]:
+            - generic [ref=f6e184]:
+              - button [ref=f6e186] [cursor=pointer]: Filtr
+              - button [ref=f6e191] [cursor=pointer]
+              - button [ref=f6e194] [cursor=pointer]
+            - generic: Imtihon
+            - generic: Viloyat
+            - generic: Bino
+            - generic: Sana
+            - generic: Savat
+          - grid [ref=f6e200]:
+            - row [ref=f6e201]:
+              - columnheader [ref=f6e202]:
+                - generic [ref=f6e203]: №
+              - columnheader [ref=f6e206]:
+                - generic [ref=f6e207]: Imtihon
+              - columnheader [ref=f6e210]:
+                - generic [ref=f6e211]: Joy
+              - columnheader [ref=f6e214] [cursor=pointer]:
+                - generic [ref=f6e215]: Sana
+                - button [ref=f6e218]
+              - columnheader [ref=f6e222] [cursor=pointer]:
+                - generic [ref=f6e223]: Vaqt
+              - columnheader [ref=f6e226]:
+                - generic [ref=f6e227]: Kirish oynasi
+              - columnheader [ref=f6e230]:
+                - generic [ref=f6e231]: Holat
+              - columnheader [ref=f6e234]:
+                - generic [ref=f6e235]: Faol
+              - columnheader [ref=f6e238]
+            - rowgroup [ref=f6e240]:
+              - row [ref=f6e241] [cursor=pointer]:
+                - gridcell [ref=f6e242]: "1"
+                - gridcell [ref=f6e243]:
+                  - paragraph [ref=f6e245]: Chet tilini bilish darajasini aniqlash
+                - gridcell [ref=f6e246]:
+                  - generic [ref=f6e247]: Barcha binolar
+                - gridcell [ref=f6e249]: 19.10.2026
+                - gridcell [ref=f6e250]:
+                  - paragraph [ref=f6e251]: 00:05–23:55
+                - gridcell [ref=f6e252]: 60 daq oldin
+                - gridcell [ref=f6e253]:
+                  - generic [ref=f6e254]: Kirish ochiq
+                - gridcell [ref=f6e256]:
+                  - checkbox [checked] [ref=f6e260]
+                - gridcell [ref=f6e263]:
+                  - generic [ref=f6e264]:
+                    - button [ref=f6e265]
+                    - button [ref=f6e268]
+              - row [ref=f6e271] [cursor=pointer]:
+                - gridcell [ref=f6e272]: "2"
+                - gridcell [ref=f6e273]:
+                  - paragraph [ref=f6e275]: Chet tilini bilish darajasini aniqlash
+                - gridcell [ref=f6e276]:
+                  - generic [ref=f6e277]: Barcha binolar
+                - gridcell [ref=f6e279]: 09.10.2026
+                - gridcell [ref=f6e280]:
+                  - paragraph [ref=f6e281]: 00:05–23:55
+                - gridcell [ref=f6e282]: 60 daq oldin
+                - gridcell [ref=f6e283]:
+                  - generic [ref=f6e284]: Tugagan
+                - gridcell [ref=f6e286]:
+                  - checkbox [checked] [ref=f6e290]
+                - gridcell [ref=f6e293]:
+                  - generic [ref=f6e294]:
+                    - button [ref=f6e295]
+                    - button [ref=f6e298]
+          - generic [ref=f6e304]:
+            - generic [ref=f6e305]:
+              - generic [ref=f6e306]: Sahifada
+              - generic [ref=f6e307]:
+                - combobox [ref=f6e308] [cursor=pointer]: "25"
+                - textbox [aria-hidden]: "25"
+                - group [aria-hidden]:
+                  - generic: Sahifada
+            - paragraph [ref=f6e309]: 1–2 / 2 ta
+  - dialog [ref=f6e312]:
+    - generic [ref=f6e313]:
+      - generic [ref=f6e317]:
+        - heading "Chet tilini bilish darajasini aniqlash" [level=6] [ref=f6e318]
+        - generic [ref=f6e319]: 19.10.2026 · Barcha binolar
+        - generic [ref=f6e320]:
+          - generic [ref=f6e321]: Kirish ochiq
+          - generic [ref=f6e323]: Bron rejimi
+          - generic [ref=f6e325]: Umumiy seans
+      - button "Yopish" [ref=f6e327] [cursor=pointer]
+    - generic [ref=f6e330]:
+      - generic [ref=f6e332]:
+        - generic [ref=f6e333]:
+          - generic [ref=f6e337]: Kirish ochiladi
+          - paragraph [ref=f6e338]: 23:05
+        - generic [ref=f6e339]:
+          - generic [ref=f6e343]: Boshlanadi
+          - paragraph [ref=f6e344]: 00:05
+        - generic [ref=f6e345]:
+          - generic [ref=f6e349]: Tugaydi
+          - paragraph [ref=f6e350]: 23:55
+      - generic [ref=f6e351]:
+        - generic [ref=f6e352]:
+          - heading "2" [level=5] [ref=f6e353]
+          - generic [ref=f6e354]: Joylar
+        - generic [ref=f6e355]:
+          - heading "1" [level=5] [ref=f6e356]
+          - generic [ref=f6e357]: Band
+        - generic [ref=f6e358]:
+          - heading "1" [level=5] [ref=f6e359]
+          - generic [ref=f6e360]: Bo‘sh
+        - generic [ref=f6e361]:
+          - heading "0" [level=5] [ref=f6e362]
+          - generic [ref=f6e363]: Nosoz
+        - generic [ref=f6e364]:
+          - heading "3" [level=5] [ref=f6e365]
+          - generic [ref=f6e366]: Yakunlagan
+      - generic [ref=f6e367]:
+        - generic [ref=f6e369]:
+          - generic [ref=f6e370]: Imtihon va joy
+          - generic [ref=f6e372]:
+            - generic [ref=f6e377]:
+              - generic [ref=f6e378]: Imtihon
+              - generic [ref=f6e379]: Chet tilini bilish darajasini aniqlash
+            - generic [ref=f6e384]:
+              - generic [ref=f6e385]: Viloyat
+              - generic [ref=f6e386]: Barcha viloyatlar
+            - generic [ref=f6e388]:
+              - generic [ref=f6e389]: Bino
+              - generic [ref=f6e390]: Barcha binolar (umumiy seans)
+            - generic [ref=f6e392]:
+              - generic [ref=f6e393]: Joylashuv rejimi (imtihon profilidan)
+              - generic [ref=f6e394]: Bron — talabgor faqat oldindan biriktirilgan kompyuterda
+        - generic [ref=f6e396]:
+          - generic [ref=f6e397]: Vaqt
+          - generic [ref=f6e399]:
+            - generic [ref=f6e401]:
+              - generic [ref=f6e402]: Sana
+              - generic [ref=f6e403]: 19.10.2026
+            - generic [ref=f6e405]:
+              - generic [ref=f6e406]: Boshlanishi
+              - generic [ref=f6e407]: 19.10.2026 00:05:00
+            - generic [ref=f6e409]:
+              - generic [ref=f6e410]: Tugashi
+              - generic [ref=f6e411]: 20.10.2026 23:55:00
+            - generic [ref=f6e413]:
+              - generic [ref=f6e414]: Kirish oynasi
+              - generic [ref=f6e415]: Boshlanishdan 60 daq oldin · 18.10.2026 23:05
+            - generic [ref=f6e417]:
+              - generic [ref=f6e418]: Seans davomiyligi
+              - generic [ref=f6e419]: 47 soat 50 daq
+      - generic [ref=f6e420]:
+        - generic [ref=f6e421]: Yozuv
+        - generic [ref=f6e423]:
+          - generic [ref=f6e425]:
+            - generic [ref=f6e426]: Yaratilgan
+            - generic [ref=f6e427]: 17.10.2026 15:14:24 · 2 kun oldin
+          - generic [ref=f6e429]:
+            - generic [ref=f6e430]: ID
+            - generic [ref=f6e431]: "14"
+    - generic [ref=f6e432]:
+      - button [ref=f6e433] [cursor=pointer]
+      - button [ref=f6e437] [cursor=pointer]
+      - button "Yopish" [ref=f6e441] [cursor=pointer]
+      - button [ref=f6e442] [cursor=pointer]
