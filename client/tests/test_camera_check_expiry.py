@@ -116,6 +116,19 @@ class CandidatePageGuardTests(unittest.TestCase):
         self.state.note_camera_check({"expires_in": 4 * 3600})
         self._lookup().assert_called_once()
 
+    def test_lookup_locked_while_result_is_shown(self):
+        """Natija ko'rinib turganda «TEKSHIRISH» o'chiq; raqam o'zgarsa — natija yo'qoladi."""
+        self.state.note_camera_check({"expires_in": 4 * 3600})
+        self.page._on_found({"masked_pinfl": "1234******1234", "test_link_ready": True})
+        self.assertFalse(self.page.result_card.isHidden())
+        self.assertFalse(self.page.lookup_btn.isEnabled())
+        # Enter ham o'sha qoidada — takroriy so'rov ketmaydi.
+        self._lookup().assert_not_called()
+
+        self.page.pinfl_input.setText(PINFL[:-1] + "9")
+        self.assertTrue(self.page.result_card.isHidden())
+        self.assertTrue(self.page.lookup_btn.isEnabled())
+
     def test_unknown_expiry_is_not_blocked(self):
         self._lookup().assert_called_once()
 

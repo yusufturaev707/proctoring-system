@@ -50,6 +50,10 @@ class SettingAdmin(admin.ModelAdmin):
             {"fields": ("faceid_far_warn_s", "faceid_far_unverified_s")},
         ),
         (
+            "FaceID: yuz detektori",
+            {"fields": ("faceid_det_size", "faceid_det_thresh", "faceid_min_face_width")},
+        ),
+        (
             "Skrinshot",
             {
                 "fields": (
@@ -82,10 +86,11 @@ class SettingAdmin(admin.ModelAdmin):
             {
                 "fields": (
                     "is_enable_rdp_detect", "rdp_objects", "is_threat_block_exam",
-                    "hotkeys", "is_enable_check_tp",
+                    "hotkeys",
                 )
             },
         ),
+        ("Texnik muammolar", {"fields": ("is_enable_check_tp", "technical_problem_limit")}),
         ("Kompyuter broni", {"fields": ("is_booking",)}),
         (
             "Tarmoq",

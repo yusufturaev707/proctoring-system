@@ -36,7 +36,7 @@ from typing import Optional
 
 import numpy as np
 
-from config import MIN_FACE_WIDTH_PX
+from proctoring.identity import face_params
 from proctoring.identity.candidate import match_reference, normalize_reference, selection_score
 
 log = logging.getLogger(__name__)
@@ -172,7 +172,8 @@ class FaceIdentity:
             matched, _score = match_reference(
                 raw, self._reference,
                 min_score=self._select_score,
-                min_width=MIN_FACE_WIDTH_PX,
+                # FaceID ishchisi bilan BITTA joriy qiymat (`face_params`).
+                min_width=face_params.min_face_width(),
                 width_of=lambda item: item.width,
                 embedding_of=lambda item: item.embedding,
             )

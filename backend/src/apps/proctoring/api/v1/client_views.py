@@ -34,7 +34,12 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
-from apps.common.exceptions import IpNotAllowed, SessionNotFound
+from apps.common.exceptions import (
+    IpNotAllowed,
+    SessionNotFound,
+    TechnicalProblemDisabled,
+    TechnicalProblemLimit,
+)
 from apps.common.permissions import HasRolePermission
 from apps.common.utils.crypto import mask_pinfl
 from apps.common.storage import build_object_key, presign_put
@@ -1572,14 +1577,30 @@ class TechnicalProblemReportView(SessionRequiredView):
         serializer.is_valid(raise_exception=True)
 
         session = self.session
-        problem = TechnicalProblem.objects.create(
-            session=session,
-            kind=serializer.validated_data["kind"],
-            description=serializer.validated_data.get("description", ""),
-            started_at=timezone.now(),
-        )
-        session.status = ExamSession.Status.TECHNICAL_PROBLEM
-        session.save(update_fields=["status", "updated_at"])
+        # Imtihon profili (`Setting.is_enable_check_tp`,
+        # `technical_problem_limit`): client bandni yashiradi, lekin qaror
+        # shu yerda — eski client va ikki marta bosish ham chetlab o'tmasin.
+        rules = controls_services.get_client_config(session.exam).get("technical_problem") or {}
+        if not rules.get("enabled", True):
+            raise TechnicalProblemDisabled()
+        limit = int(rules.get("limit") or 0)
+
+        with transaction.atomic():
+            # Sessiya qatori QULFLANADI: ikki parallel so'rov ikkalasi ham
+            # "hali chegaraga yetmagan" sanog'ini ko'rib, chegaradan oshardi.
+            ExamSession.objects.select_for_update().filter(pk=session.pk).first()
+            used = TechnicalProblem.objects.filter(session=session).count()
+            if limit and used >= limit:
+                raise TechnicalProblemLimit(extra={"limit": limit, "used": used})
+            problem = TechnicalProblem.objects.create(
+                session=session,
+                kind=serializer.validated_data["kind"],
+                description=serializer.validated_data.get("description", ""),
+                started_at=timezone.now(),
+            )
+            session.status = ExamSession.Status.TECHNICAL_PROBLEM
+            session.save(update_fields=["status", "updated_at"])
+        used += 1
 
         ingest.push_event(
             session_id=session.pk,
@@ -1589,7 +1610,15 @@ class TechnicalProblemReportView(SessionRequiredView):
             occurred_at=timezone.now(),
             payload={"technical_problem_id": problem.pk, "kind": problem.kind},
         )
-        return Response({"id": problem.pk, "status": session.status}, status=status.HTTP_201_CREATED)
+        return Response(
+            {
+                "id": problem.pk,
+                "status": session.status,
+                # `None` — cheklanmagan; client 0 da bandni yashiradi.
+                "remaining": max(0, limit - used) if limit else None,
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
 
 # --------------------------------------------------------------------------

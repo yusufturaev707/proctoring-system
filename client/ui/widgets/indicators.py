@@ -342,6 +342,9 @@ class Snackbar(QFrame):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("snackbar")
+        #: Pastki chetdan qo'shimcha joy (px): imtihon sahifasida
+        #: chap pastda kompyuter raqami turadi (`FloatingSeatTag`).
+        self.bottom_inset = 0
         self._label = QLabel(self)
         self._label.setWordWrap(True)
         box = QVBoxLayout(self)
@@ -408,9 +411,8 @@ class Snackbar(QFrame):
         width = min(560, max(320, int(parent.width() * 0.5)))
         self.setFixedWidth(width)
         self.adjustSize()
-        self.move(
-            self.MARGIN, max(self.MARGIN, parent.height() - self.height() - self.MARGIN)
-        )
+        bottom = self.MARGIN + self.bottom_inset
+        self.move(self.MARGIN, max(self.MARGIN, parent.height() - self.height() - bottom))
 
 
 class Card(QFrame):

@@ -284,7 +284,9 @@ class WorkerDeadStreamTests(unittest.TestCase):
         fast = functools.partial(FrameLiveness, window_s=0.05, slow_read_s=0.0)
         with mock.patch.object(core.system_events, "system_events", return_value=mock.Mock()), \
                 mock.patch.object(camera_worker, "FrameLiveness", fast), \
-                mock.patch.object(camera_worker, "_BACKOFF_S", (0.01,)):
+                mock.patch.object(camera_worker, "_BACKOFF_S", (0.01,)),                 mock.patch.object(camera_worker, "_STARTUP_GRACE_S", 0.0):
+            # Oyna o'chiq: bu test UZILISH xabarini tekshiradi (ishga
+            # tushishdagi jim urinish - `test_camera_resilience`).
             worker.run()
 
         self.assertEqual(source.opens, 2)
@@ -308,6 +310,40 @@ class SettleTests(unittest.TestCase):
             self.assertFalse(source.open())
             sleep.assert_not_called()
             self.assertTrue(source.open())
+        sleep.assert_called_once_with(webcam._SETTLE_AFTER_RETURN_S)
+        source.close()
+
+
+    def test_present_device_failure_is_retried_without_settle(self):
+        """
+        Qurilma ro'yxatda (yo'qolmagan, faqat ochilmadi - odatda oldingi
+        egasi bo'shatayotgan): keyingi urinish 3 s tayyorlanishsiz.
+        Ilgari har muvaffaqiyatsiz ochilish ishlaydigan kamerani FaceID
+        ekranida 4+ s qora qoldirardi.
+        """
+        from proctoring.camera import webcam
+
+        source = WebcamSource(0, role="primary", label="USB Video Device", device_path=USB)
+        failing = mock.Mock(isOpened=mock.Mock(return_value=False))
+        working = mock.MagicMock(isOpened=mock.Mock(return_value=True))
+        working.get.return_value = 0
+        with mock.patch.object(dshow, "enumerate_devices", return_value=[_device(0, USB)]),                 mock.patch("cv2.VideoCapture", side_effect=[failing, working]),                 mock.patch.object(webcam.time, "sleep") as sleep:
+            self.assertFalse(source.open())
+            self.assertTrue(source.open())
+        sleep.assert_not_called()
+        source.close()
+
+    def test_returning_device_still_waits(self):
+        from proctoring.camera import webcam
+
+        source = WebcamSource(0, role="primary", label="USB Video Device", device_path=USB)
+        working = mock.MagicMock(isOpened=mock.Mock(return_value=True))
+        working.get.return_value = 0
+        listed = {"devices": [_device(0, BUILTIN)]}
+        with mock.patch.object(dshow, "enumerate_devices", side_effect=lambda: listed["devices"]),                 mock.patch("cv2.VideoCapture", return_value=working),                 mock.patch.object(webcam.time, "sleep") as sleep:
+            self.assertFalse(source.open())      # ro'yxatda yo'q
+            listed["devices"] = [_device(0, USB)]
+            self.assertTrue(source.open())       # qaytdi - tayyorlanish
         sleep.assert_called_once_with(webcam._SETTLE_AFTER_RETURN_S)
         source.close()
 

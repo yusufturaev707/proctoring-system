@@ -26,8 +26,6 @@ import numpy as np
 from PyQt6.QtCore import QCoreApplication, QThread, pyqtSignal
 
 from config import (
-    FACE_DET_SIZE,
-    FACE_DET_THRESH,
     FACE_MATCH_THRESHOLD,
     FACE_MODEL_NAME,
     FACE_MODEL_ROOT,
@@ -35,6 +33,7 @@ from config import (
 )
 from core.bundle_paths import is_frozen
 from core.singleton import SingletonMeta
+from proctoring.identity import face_params
 
 log = logging.getLogger(__name__)
 
@@ -301,6 +300,25 @@ class FaceEngineLoader(QThread):
                     continue
                 self.finished_loading.emit(False, "{}: {}".format(problem.title, problem.detail))
                 return
+
+
+def apply_detection_settings(config) -> None:
+    """
+    Profildagi yuz detektori qiymatlari (`config.face.det_size`,
+    `det_thresh`, `min_face_width`) -> `face_params` + yuklangan dvigatel.
+
+    Login'da (global profil) va «Davom etish» da (imtihon profili)
+    chaqiriladi. Qiymat o'zgarmagan bo'lsa hech narsa qilmaydi.
+    """
+    from services import runtime_settings
+
+    params = face_params.FaceParams(
+        det_size=runtime_settings.get(config, "face.det_size"),
+        det_thresh=runtime_settings.get(config, "face.det_thresh"),
+        min_face_width=runtime_settings.get(config, "face.min_face_width"),
+    )
+    if face_params.update(params):
+        FaceEngine().apply_detection()
 
 
 def start_model_loading() -> Optional[FaceEngineLoader]:
@@ -617,8 +635,54 @@ class FaceEngine(metaclass=SingletonMeta):
                     ", ".join(missing), FACE_MODEL_NAME
                 ),
             )
-        app.prepare(ctx_id=ctx_id, det_thresh=FACE_DET_THRESH, det_size=FACE_DET_SIZE)
+        # JORIY qiymat (`face_params`): qayta yuklash yoki CPU'ga o'tishda
+        # profil qiymati yo'qolmasin — dastlab bu `.env` zaxirasi.
+        params = face_params.current()
+        app.prepare(
+            ctx_id=ctx_id,
+            det_thresh=params.det_thresh,
+            det_size=(params.det_size, params.det_size),
+        )
         return app
+
+    def apply_detection(self) -> None:
+        """
+        Joriy `face_params` ni yuklangan detektorga qo'llaydi — QAYTA YUKLAMASDAN.
+
+        `FaceAnalysis.prepare` QAYTA CHAQIRILMAYDI: CPU'da u sessiya
+        provayderlarini qayta o'rnatadi (`set_providers`) va shu payt fon
+        thread'idagi inferensiya bilan to'qnashardi. SCRFD da o'lcham va
+        ishonch — oddiy atributlar, ular keyingi kadrdan amal qiladi.
+        Qat'iy (statik) kirishli modelda o'lcham o'zgarmaydi.
+        """
+        app = self._app
+        if not self._initialized or app is None:
+            return  # yuklanganda `_build_app` joriy qiymatni oladi
+        params = face_params.current()
+        size = (params.det_size, params.det_size)
+        detector = getattr(app, "det_model", None)
+        try:
+            app.det_thresh = params.det_thresh
+            app.det_size = size
+            if detector is not None:
+                detector.det_thresh = params.det_thresh
+                if getattr(detector, "static_input_size", None) is None:
+                    normalize = getattr(detector, "_normalize_input_sizes", None)
+                    if normalize is not None and hasattr(detector, "input_sizes"):
+                        detector.input_sizes = normalize(size)
+                    detector.input_size = size
+                else:
+                    log.warning(
+                        "Detektor kirishi qat'iy (%s) — o'lcham %s qo'llanmadi",
+                        detector.static_input_size, size,
+                    )
+        except Exception:
+            log.exception("Detektor sozlamasini qo'llab bo'lmadi")
+            return
+        log.info(
+            "Yuz detektori: o'lcham %s, ishonch %.2f, minimal yuz %s px",
+            size, params.det_thresh, params.min_face_width,
+        )
 
     def _session_providers(self) -> list:
         """

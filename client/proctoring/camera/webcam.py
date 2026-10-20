@@ -139,7 +139,15 @@ class WebcamSource(CameraSource):
                     capture.release()
                 except Exception:
                     pass
-            self._settle_pending = True
+            # Tayyorlanish vaqti faqat qurilma QAYTAYOTGAN bo'lsa. Yo'l
+            # ma'lum va qurilma ro'yxatda (`_current_index` topdi) —
+            # u yo'qolmagan, ochilmadi xolos (odatda oldingi egasi hali
+            # bo'shatayotgan bo'ladi): keyingi urinish oddiy kechikish
+            # (`CameraWorker._BACKOFF_S`) bilan. Har safar 3 s qo'shish
+            # ishlaydigan kamerani FaceID ekranida 4+ s qora qoldirardi.
+            # Yo'l noma'lum bo'lsa "bor-yo'q" ni bilib bo'lmaydi — eski
+            # ehtiyot qoladi.
+            self._settle_pending = not self._device_path
             return self._fail(self._explain(lost=False))
 
         if mode == "native":

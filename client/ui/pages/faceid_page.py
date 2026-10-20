@@ -150,6 +150,12 @@ _ENROLLMENT_ENABLED = False
 #: emas, JSHSHIR va talabgorning o'zini tekshirishi kerak.
 _FAR_MISS_GAP = 12
 
+#: Oldindan ochilgan kamera (`prewarm_camera`) FaceID sahifasiga
+#: o'tilmasa shuncha vaqtdan keyin yopiladi (ms): talabgor topilib,
+#: lekin operator boshqa ishga o'tib ketsa kamera chirog'i stol oldida
+#: soatlab yonib turmasin.
+_PREWARM_IDLE_MS = 90_000
+
 
 def _fallback_threshold() -> int:
     """
@@ -253,6 +259,15 @@ class FaceIDPage(QWidget):
         self._model_timer = QTimer(self)
         self._model_timer.setInterval(500)
         self._model_timer.timeout.connect(self._poll_model)
+        #: Kamera OLDINDAN ochilgan, sahifa hali ko'rsatilmagan
+        #: (`prewarm_camera`). Shu paytda kadr va xabarlar ekranga
+        #: chiqmaydi; kamera xatosi esa saqlanib, `start()` da ko'rsatiladi.
+        self._prewarmed = False
+        self._prewarm_error = ""
+        self._prewarm_timer = QTimer(self)
+        self._prewarm_timer.setSingleShot(True)
+        self._prewarm_timer.setInterval(_PREWARM_IDLE_MS)
+        self._prewarm_timer.timeout.connect(self._release_prewarm)
         #: Model tayyor bo'lgach tayyorlanadigan hujjat rasmi.
         self._pending_photo: Optional[str] = None
         #: Ekrandagi xabar KAMERA nosozligi haqidami — kadr qaytganda
@@ -685,12 +700,23 @@ class FaceIDPage(QWidget):
             self._show_model_state()
             self._model_timer.start()
 
+        # Oldindan ochilgan kamera (`prewarm_camera`) shu yerda sahifaga
+        # o'tadi. Ko'rinish "ishga tushmoqda" ga qaytadi: oldingi
+        # talabgordan qolgan "Kamera o'chirilgan" yozuvi (`cleanup`)
+        # ishlab turgan kamerani nosozdek ko'rsatardi; kamera allaqachon
+        # kadr berayotgan bo'lsa, keyingi kadr uni darhol almashtiradi.
+        pending_error = self._end_prewarm()
+        self.camera_view.show_starting()
+
         # Sanoq kamera ochilishidan OLDIN qo'yiladi: ishchi aniqlash
         # O'CHIQ holda yaratiladi va birinchi kadrdan boshlab hech
         # narsa tahlil qilinmaydi. Etalon esa shu vaqt ichida fonda
         # tayyorlanadi - sanoq uning kechikishini ham yashiradi.
         self._begin_guide()
         self._start_camera()
+        if pending_error:
+            # Oldindan ochishda aytilgan va hali tuzalmagan sabab.
+            self._on_camera_error(pending_error)
         self._prepare_reference(candidate.photo_base64)
         # Sahifa endi to'lgan: rasm qolgan joyga moslanadi. Faqat
         # `resizeEvent` ga tayanib bo'lmaydi — u sahifa ochilishidan
@@ -699,6 +725,7 @@ class FaceIDPage(QWidget):
 
     def cleanup(self) -> None:
         """Kamerani to'xtatadi. Sahifadan chiqishda MAJBURIY."""
+        self._end_prewarm()
         self._guide_timer.stop()
         self._model_timer.stop()
         self._pending_photo = None
@@ -730,10 +757,55 @@ class FaceIDPage(QWidget):
             # uzatilgan kamera test davomida jimgina "yuz yo'q" berardi.
             camera.set_detection_enabled(True)
         self._guide_timer.stop()
+        self._end_prewarm()
         self._camera = None
         return camera
 
-    def _start_camera(self) -> None:
+    def prewarm_camera(self) -> None:
+        """
+        Yuz kamerasini OLDINDAN ochadi — talabgor topilgan zahoti.
+
+        DirectShow'da kamera MJPG 1280x720 da ~2.8 s ochiladi (o'lchandi:
+        konstruktor ~0.7 s, o'lcham va format o'zgarishida graf ikki
+        marta qayta quriladi, ~1 s dan). Ilgari bu vaqt FaceID ekranida
+        o'tardi - talabgor bo'sh ekranga qarab turardi. Endi operator
+        talabgor kartasini ko'rib «Davom etish» ni bosguncha kamera
+        ochilib bo'ladi, vaqtinchalik xato ham shu oraliqda jimgina
+        tuzaladi.
+
+        Faqat qurilma BO'SH bo'lgan joydan chaqiriladi (talabgor sahifasi:
+        tekshiruv oqimi `stop_preview` bilan, oldingi imtihon kamerasi
+        `ExamWebViewPage.stop` da yopilgan). Aniqlash O'CHIQ - sanoq
+        qoidasi `start()` da odatdagidek.
+        """
+        if self._camera is not None:
+            if self._prewarmed:
+                # Yangi talabgor topildi - muddat yangilanadi.
+                self._prewarm_timer.start()
+            return
+        self._prewarmed = True
+        self._prewarm_error = ""
+        self._start_camera(detect=False)
+        self._prewarm_timer.start()
+        log.info("Yuz kamerasi oldindan ochilmoqda: %s", self._camera.label)
+
+    def _end_prewarm(self) -> str:
+        """Oldindan ochish rejimi tugadi. Qaytadi: saqlangan kamera xatosi."""
+        self._prewarm_timer.stop()
+        self._prewarmed = False
+        error, self._prewarm_error = self._prewarm_error, ""
+        return error
+
+    def _release_prewarm(self) -> None:
+        """Oldindan ochilgan kamera ishlatilmadi - yopiladi."""
+        if not self._prewarmed:
+            return
+        log.info("Oldindan ochilgan yuz kamerasi ishlatilmadi - yopildi")
+        self._end_prewarm()
+        retire_camera(self._camera)
+        self._camera = None
+
+    def _start_camera(self, *, detect: Optional[bool] = None) -> None:
         if self._camera is not None:
             return
         # PARENT BERILMAYDI: Qt ota-obyekt yo'q qilinganda bolalarini ham
@@ -755,7 +827,9 @@ class FaceIDPage(QWidget):
             log.warning(
                 "Taqsimotda yuz kamerasi yo'q — zaxira qurilma ochiladi"
             )
-        self._camera = CameraWorker(source=source, detect=self._guide_state == "done")
+        if detect is None:
+            detect = self._guide_state == "done"
+        self._camera = CameraWorker(source=source, detect=detect)
         self.camera_label.setText(self._camera.label)
         self._camera.frame_ready.connect(self._on_frame)
         self._camera.face_result.connect(self._on_face)
@@ -928,6 +1002,10 @@ class FaceIDPage(QWidget):
     # Kadr oqimi
     # ------------------------------------------------------------------
     def _on_frame(self, frame) -> None:
+        if self._prewarmed:
+            # Sahifa hali ko'rinmaydi: chizish ham, sanoq ham `start()`
+            # dan keyingi birinchi kadrda - talabgor o'zini ko'rgan paytdan.
+            return
         self._last_frame = frame
         if self._guide_state == "waiting":
             # Kamera haqiqatan ishladi - endi talabgor o'zini ko'radi.
@@ -982,6 +1060,11 @@ class FaceIDPage(QWidget):
         self._update_state_badge("checking")
 
     def _on_camera_error(self, message: str) -> None:
+        if self._prewarmed:
+            # Sahifa hali ko'rinmaydi - sabab `start()` da ko'rsatiladi
+            # (kadr qaytsa `_on_camera_restored` uni unutadi).
+            self._prewarm_error = message
+            return
         # Kamera to'xtadi - sanoq ham to'xtaydi. Aks holda taymer
         # "tekshiruv boshlandi" deb, kadrsiz ekranda holatni
         # almashtirib qo'yardi.
@@ -1004,6 +1087,9 @@ class FaceIDPage(QWidget):
 
     def _on_camera_restored(self) -> None:
         """Uzilishdan keyin kadrlar qaytdi — kamera xabari tozalanadi."""
+        if self._prewarmed:
+            self._prewarm_error = ""
+            return
         if self._camera_problem:
             self._camera_problem = False
             self.message.clear_message()
@@ -1020,7 +1106,7 @@ class FaceIDPage(QWidget):
             self._show_model_state()
 
     def _on_face(self, result: dict) -> None:
-        if self._guide_state != "done":
+        if self._prewarmed or self._guide_state != "done":
             # Sanoq paytida ishchi aniqlamaydi, lekin sanoq boshlanishidan
             # OLDIN navbatga tushgan natija (qayta urinishda ishchi hali
             # yoqiq edi) shu yerga yetib kelishi mumkin. U qarorga ham,
@@ -1523,7 +1609,7 @@ class FaceIDPage(QWidget):
         self._guide_state = "done"
         self.camera_view.end_guide()
         if self._camera is None:
-            self.camera_view.clear_view()
+            self.camera_view.show_starting()
             self._start_camera()
         self.start_btn.setFocus()
 
@@ -1604,7 +1690,7 @@ class FaceIDPage(QWidget):
                 self._prepare_reference(candidate.photo_base64)
         self._begin_guide()
         if self._camera is None:
-            self.camera_view.clear_view()
+            self.camera_view.show_starting()
             self._start_camera()
 
     def _reset_matching_state(self) -> None:

@@ -64,7 +64,7 @@ from services.app_state import AppState
 from services.auth_service import AuthService
 from services import system_info
 from services.camera_worker import await_retired_cameras
-from services.face_engine import FaceEngineLoader
+from services.face_engine import FaceEngineLoader, apply_detection_settings
 from services.local_service import LocalDeviceService, device_payload
 from services import runtime_settings
 from services.lockdown import kiosk_window_flags, lockdown, resolve_hotkeys
@@ -272,6 +272,9 @@ class MainWindow(QMainWindow):
 
         self._candidate_page = CandidatePage(self._state, self._repo)
         self._candidate_page.candidate_ready.connect(self._on_candidate_ready)
+        # Kamera talabgor kartasi ko'rinib turganda ochiladi - FaceID
+        # ekrani ochilganda tasvir tayyor (`FaceIDPage.prewarm_camera`).
+        self._candidate_page.candidate_found.connect(self._prewarm_face_camera)
         self._candidate_page.back_requested.connect(self._go_to_exam)
         self._candidate_page.logout_requested.connect(self._on_logout)
         self._stack.addWidget(self._candidate_page)
@@ -307,6 +310,9 @@ class MainWindow(QMainWindow):
         # mumkin (`config.hotkeys`), shuning uchun ro'yxat qayta
         # qo'llanadi. `lockdown.apply` almashtiradi, ustiga qo'shmaydi.
         self._apply_lockdown(self._state.config.get("hotkeys") or [])
+        # Yuz detektori ham profildan (`face.det_size` ...) — model
+        # allaqachon `.env` zaxirasi bilan yuklangan, qayta yuklanmaydi.
+        apply_detection_settings(self._state.config)
         self._ensure_pages()
         self._go_to_exam()
         self._offer_resume()
@@ -408,6 +414,8 @@ class MainWindow(QMainWindow):
         #
         # `lockdown.apply` almashtiradi, ustiga qo'shmaydi.
         self._apply_lockdown(self._state.config.get("hotkeys") or [])
+        # Yuz detektori IMTIHON profilidan: FaceID shu yerdan keyin ochiladi.
+        apply_detection_settings(self._state.config)
         held = self._state.session
         if held is not None and self._state.candidate is not None:
             if held.exam_id == getattr(_exam, "id", None):
@@ -456,6 +464,12 @@ class MainWindow(QMainWindow):
             self._exam_page.stop_preview()
         self._candidate_page.refresh()
         self._stack.setCurrentIndex(self.PAGE_CANDIDATE)
+
+    def _prewarm_face_camera(self) -> None:
+        # Faqat talabgor sahifasida: bu yerga kelishda tekshiruv oqimi
+        # (`stop_preview`) va oldingi imtihon kamerasi yopilgan bo'ladi.
+        if self._faceid_page is not None and self._stack.currentIndex() == self.PAGE_CANDIDATE:
+            self._faceid_page.prewarm_camera()
 
     def _on_candidate_ready(self, _candidate) -> None:
         self._faceid_page.start()

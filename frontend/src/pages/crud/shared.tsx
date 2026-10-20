@@ -1,6 +1,8 @@
+import { useMemo } from 'react'
 import { Chip, Stack, Tooltip, Typography } from '@mui/material'
 import CircleIcon from '@mui/icons-material/Circle'
 import { useOptions } from '../../components/data/useResource'
+import { useAuth } from '../../context/AuthContext'
 import {
   cameras as camerasApi, cocoGroups as cocoGroupsApi, computers as computersApi,
   examSchedules as examSchedulesApi, examTypes as examTypesApi,
@@ -82,14 +84,28 @@ export const useRegionOptions = () =>
  * keyin o'sha viloyatning binolari» zanjiri shu maydonga tayanadi va
  * har bir viloyat almashganda serverga qayta so'rov ketmaydi.
  */
-export const useZoneOptions = () =>
-  useOptions('zones', zonesApi, (item): Option => ({
+export const useZoneOptions = () => {
+  const { user } = useAuth()
+  const result = useOptions('zones', zonesApi, (item): Option => ({
     value: item.id,
     label: `${item.name} — ${item.region_name}`,
     // Zanjirda viloyat tanlangach yorliqda uni takrorlash ortiqcha.
     shortLabel: item.number ? `${item.name} (${item.number})` : item.name,
     region: item.region,
   }))
+  // Viloyat xodimi uchun ro'yxatni server allaqachon cheklaydi
+  // (`ZoneViewSet.get_queryset`); bu yerda ikkinchi qatlam: «Bino»
+  // filtrida faqat o'z viloyati binolari — boshqa viloyat filtri
+  // ko'rinmaydi, ya'ni zanjir (`regionZoneFilters`) ularni ajratmaydi.
+  const region = user?.is_region_scoped ? user.region : null
+  const options = useMemo(
+    () => (region == null
+      ? result.options
+      : result.options.filter((option) => String(option.region) === String(region))),
+    [result.options, region],
+  )
+  return { ...result, options }
+}
 
 export const useExamOptions = () =>
   useOptions('exams', examsApi, (item): Option => ({ value: item.id, label: item.name }))

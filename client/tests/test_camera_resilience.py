@@ -266,9 +266,14 @@ class CameraWorkerReconnectTest(unittest.TestCase):
         self.module = module
         self._backoff = module._BACKOFF_S
         module._BACKOFF_S = (0.05,)
+        # Bu testlar UZILISH xabarlarini tekshiradi - ishga tushish
+        # oynasi (`_STARTUP_GRACE_S`) alohida testlarda.
+        self._grace = module._STARTUP_GRACE_S
+        module._STARTUP_GRACE_S = 0.0
 
     def tearDown(self):
         self.module._BACKOFF_S = self._backoff
+        self.module._STARTUP_GRACE_S = self._grace
 
     def test_open_failure_retries_and_restores(self):
         inner = FakeSource(open_results=[False, False, True])
@@ -380,6 +385,76 @@ class CameraWorkerReconnectTest(unittest.TestCase):
         self.assertEqual(calls["n"], 2)
         self.assertTrue(errors and "kutilmagan" in errors[0])
         self.assertIsNotNone(original)
+
+
+class CameraWorkerStartupTest(CameraWorkerReconnectTest):
+    """Ishga tushish oynasi: birinchi kadrgacha vaqtinchalik xato ko'rsatilmaydi."""
+
+    # Meros olingan uzilish testlari bu sinfda qayta ishlamasin.
+    test_open_failure_retries_and_restores = None
+    test_lost_frames_reconnect_instead_of_exit = None
+    test_unplugged_camera_that_keeps_returning_frames_reconnects = None
+    test_unknown_presence_does_not_disconnect = None
+    test_unexpected_exception_does_not_kill_loop = None
+
+    def setUp(self):
+        super().setUp()
+        self.module._STARTUP_GRACE_S = 5.0
+
+    def _run(self, inner, *, frames_needed=3):
+        worker = self.module.CameraWorker(source=inner, detect=False)
+        errors, restored, frames = [], [], []
+        worker.camera_error.connect(errors.append)
+        worker.camera_restored.connect(lambda: restored.append(True))
+
+        def on_frame(_frame):
+            frames.append(1)
+            if len(frames) >= frames_needed:
+                worker.stop()
+
+        def on_error(_message):
+            worker.stop()
+
+        worker.frame_ready.connect(on_frame)
+        worker.camera_error.connect(on_error)
+        worker.run()
+        return errors, restored, frames
+
+    def test_busy_camera_at_start_is_retried_silently(self):
+        """Oldingi egasi bo'shatayotgan kamera: xabar ham, "tiklandi" ham yo'q."""
+        inner = FakeSource(open_results=[False, False, True])
+        inner.is_present = lambda: True
+        errors, restored, frames = self._run(inner)
+        self.assertEqual(inner.open_calls, 3)
+        self.assertEqual(errors, [])
+        self.assertEqual(restored, [])
+        self.assertGreaterEqual(len(frames), 3)
+
+    def test_absent_camera_is_reported_immediately(self):
+        """Qurilma ro'yxatda yo'q - kutishdan foyda yo'q, sabab darhol."""
+        inner = FakeSource(open_results=[False] * 50)
+        inner.is_present = lambda: False
+        started = time.monotonic()
+        errors, _restored, frames = self._run(inner)
+        self.assertEqual(errors, ["ochilmadi"])
+        self.assertEqual(frames, [])
+        self.assertLess(time.monotonic() - started, 1.0)
+
+    def test_failure_after_grace_is_reported(self):
+        self.module._STARTUP_GRACE_S = 0.2
+        inner = FakeSource(open_results=[False] * 50)
+        inner.is_present = lambda: True
+        errors, _restored, _frames = self._run(inner)
+        self.assertEqual(errors, ["ochilmadi"])
+        self.assertGreater(inner.open_calls, 1)
+
+    def test_outage_after_first_frame_is_reported(self):
+        """Oyna faqat ISHGA TUSHISHGA: kadr kelgandan keyingi uzilish darhol."""
+        inner = FakeSource(frames=[_frame()] + [None] * 40)
+        inner.is_present = lambda: True
+        errors, _restored, frames = self._run(inner, frames_needed=99)
+        self.assertEqual(len(frames), 1)
+        self.assertEqual(len(errors), 1)
 
 
 if __name__ == "__main__":

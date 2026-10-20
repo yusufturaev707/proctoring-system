@@ -121,6 +121,10 @@ def _serialize(setting) -> dict:
             # Test davomida yuz juda uzoq (`client/services/face_presence.py`).
             "far_warn_s": setting.faceid_far_warn_s,
             "far_unverified_s": setting.faceid_far_unverified_s,
+            # Yuz detektori (client `face_params`): model qayta yuklanmaydi.
+            "det_size": setting.faceid_det_size,
+            "det_thresh": setting.faceid_det_thresh,
+            "min_face_width": setting.faceid_min_face_width,
         },
         "capture": {
             "screen_record": setting.is_screen_record,
@@ -200,7 +204,11 @@ def _serialize(setting) -> dict:
         # `.env` standartini (`BLOCKED_HOTKEYS`) qoldiradi
         # (`client/services/lockdown.py:resolve_hotkeys`).
         "hotkeys": [obj.code for obj in setting.hotkeys.all() if obj.is_active],
-        "technical_problem": {"enabled": setting.is_enable_check_tp},
+        # `limit` 0 — cheklanmagan; chegara serverda ham majburlanadi.
+        "technical_problem": {
+            "enabled": setting.is_enable_check_tp,
+            "limit": setting.technical_problem_limit,
+        },
         # Server o'zi o'qiydi (`session.lookup_candidate`); client'ga
         # ham ketadi - qaror baribir serverda, client faqat ko'rsatadi.
         "booking": {"required": setting.is_booking},
@@ -467,6 +475,9 @@ def _default_config() -> dict:
             "fail_min_seconds": 8,
             "far_warn_s": 10,
             "far_unverified_s": 120,
+            "det_size": 640,
+            "det_thresh": 0.6,
+            "min_face_width": 110,
         },
         "capture": {
             # Modeldagi standart bilan bir xil (`True`): sozlamasi yo'q
@@ -490,7 +501,7 @@ def _default_config() -> dict:
         "rdp": {"enabled": True, "processes": [], "rules": [], "block_exam": True},
         # Bo'sh = client `.env` standartini qoldiradi (yuqoriga qarang).
         "hotkeys": [],
-        "technical_problem": {"enabled": True},
+        "technical_problem": {"enabled": True, "limit": 3},
         # Model standarti: sozlamasiz tizim avvalgi bron xulqida qoladi.
         "booking": {"required": True},
         "network": {

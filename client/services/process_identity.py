@@ -113,6 +113,20 @@ class BinaryIdentity:
 # --------------------------------------------------------------------------
 # PE resursi
 # --------------------------------------------------------------------------
+def _resource_text(raw: str) -> str:
+    """
+    `VerQueryValueW` qaytargan satr - BIRINCHI NUL belgigacha.
+
+    Ba'zi resurs kompilyatorlari uzunlikni belgida emas, BAYTDA yozadi
+    va u ikki baravar chiqadi: o'qilgan satrga keyingi yozuvlar ham
+    qo'shilib ketardi (amalda NVIDIA App: `NVIDIA Overlay.exe`, NUL,
+    keyin `LegalCopyright` yozuvining boshi). Shunda
+    `OriginalFilename` bo'yicha qoida (aniq tenglik) bunday dasturni
+    hech qachon tanimasdi.
+    """
+    return (raw or "").split("\x00", 1)[0].strip()
+
+
 def _version_strings(path: str) -> dict:
     """
     `VS_VERSION_INFO` dagi satrlar. Xato TASHLAMAYDI — bo'sh lug'at qaytadi.
@@ -186,7 +200,7 @@ def _version_strings(path: str) -> dict:
                 continue
             if not chars.value:
                 continue
-            text = ctypes.wstring_at(value, chars.value).strip("\x00 \t")
+            text = _resource_text(ctypes.wstring_at(value, chars.value))
             if text:
                 result[name] = text
         if len(result) == len(wanted):

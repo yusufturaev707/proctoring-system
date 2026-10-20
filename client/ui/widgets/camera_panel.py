@@ -61,6 +61,7 @@ from services.workers import ApiWorker, WorkerHolder
 from ui.styles import (
     badge_style,
     preview_surface_style,
+    primary_button_style,
     segmented_button_style,
     surface_container_style,
     text_button_style,
@@ -130,6 +131,11 @@ class CameraPreview(QLabel):
 
     def __init__(self, height: int, parent=None) -> None:
         super().__init__(parent)
+        #: Ko'zgu faqat YUZ kamerasida (`primary`): talabgor o'zini
+        #: ko'zgudagidek ko'radi. Stol/xona kamerasi va zaxira asl
+        #: holida - ag'darilgan xona operatorni chalg'itardi. Faqat
+        #: chizish: tekshiruv va kuzatuv asl kadrni oladi.
+        self.mirrored = False
         self.setFixedHeight(height)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setWordWrap(True)
@@ -146,7 +152,10 @@ class CameraPreview(QLabel):
         # buferga referens ushlaydi, nusxa olmaydi - massiv Python
         # tomonda yo'q qilinsa rasm buziladi yoki dastur qulaydi
         # (`widgets/camera_view.py` dagi bilan bir xil tuzoq).
-        rgb = frame[:, :, ::-1].copy()
+        # Yuz kamerasi FaceID sahifasidagidek ko'zgu bo'lib chiziladi
+        # (`mirrored`) - aks holda bitta kamera ikki ekranda ikki xil
+        # tomonga qarab turardi.
+        rgb = (frame[:, ::-1, ::-1] if self.mirrored else frame[:, :, ::-1]).copy()
         image = QImage(rgb.data, width, height, 3 * width, QImage.Format.Format_RGB888)
         self.setText("")
         self.setPixmap(
@@ -301,6 +310,9 @@ class CameraSlotView(QFrame):
         root.setSpacing(10)
 
         self.preview = CameraPreview(height)
+        # Rol almashsa karta qayta quriladi (`self.role` faqat shu yerda
+        # o'rnatiladi) - bayroq ham yangi rol bilan qaytadan qo'yiladi.
+        self.preview.mirrored = camera.role == "primary"
         self.preview.show_placeholder(
             "Kadr uchun pastdagi tugmani bosing" if camera.available else "Kamera ishlamaydi"
         )
@@ -358,7 +370,11 @@ class CameraSlotView(QFrame):
         bottom.setSpacing(8)
         self.check_btn = QPushButton("Tekshirish")
         self.check_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.check_btn.setStyleSheet(text_button_style(32))
+        # TO'LDIRILGAN tugma, matnli (text button) emas: kartadagi yagona
+        # amal shu, matnli tugma esa holat nishonlari va kamera nomi
+        # orasida oddiy yozuvdek ko'rinib, operator uni topolmasdi.
+        self.check_btn.setStyleSheet(primary_button_style(38))
+        self.check_btn.setMinimumWidth(150)
         self.check_btn.setToolTip("Faqat shu kamerani o'lchab, serverga baholatadi")
         # ZAXIRADAGI kamera tekshirilmaydi: server faqat vazifasi bor
         # kameralarni baholaydi va imtihonda faqat ular ishlaydi.

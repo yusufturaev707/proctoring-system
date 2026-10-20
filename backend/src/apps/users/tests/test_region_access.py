@@ -315,3 +315,69 @@ class SeatMapTests(_Base):
     def test_schedule_is_required(self):
         response = self.as_user(self.viewer).get("/api/v1/computer-bookings/zones/")
         self.assertEqual(response.status_code, 400)
+
+
+class PanelPagesScopeTests(_Base):
+    """
+    Viloyat xodimi panelning HAR sahifasida faqat o'z viloyatini ko'radi:
+    jonli kuzatuv, sessiyalar, texnik muammolar, kompyuterlar, kameralar,
+    client qurilmalari, kompyuter bronlari va filtrlardagi binolar ro'yxati.
+    """
+
+    def setUp(self):
+        super().setUp()
+        from apps.exams import bookings
+
+        self.home_pc = factories.make_computer(zone=self.home_zone, number=1)
+        self.away_pc = factories.make_computer(zone=self.away_zone, number=1)
+        self.home_device = factories.make_device(computer=self.home_pc)
+        self.away_device = factories.make_device(computer=self.away_pc)
+        self.home_session = factories.make_session(device=self.home_device, status="in_progress")
+        self.away_session = factories.make_session(device=self.away_device, status="in_progress")
+        self.home_camera = factories.make_camera(zone=self.home_zone)
+        factories.make_camera(zone=self.away_zone)
+        self.home_problem = TechnicalProblem.objects.create(
+            session=self.home_session, started_at=timezone.now()
+        )
+        TechnicalProblem.objects.create(session=self.away_session, started_at=timezone.now())
+        self.schedule = factories.make_schedule(zone=None)
+        bookings.generate_seats(self.schedule)
+
+        self.viewer = factories.make_user(
+            permissions=[
+                "sessions.view", "technical.view", "devices.view",
+                "bookings.view", "regions.view",
+            ],
+            region=self.home,
+        )
+        self.client = self.as_user(self.viewer)
+
+    def test_sessions_and_live_monitor(self):
+        self.assertEqual(self.ids(self.client.get("/api/v1/sessions/")), {self.home_session.pk})
+        live = self.client.get("/api/v1/sessions/live/")
+        self.assertEqual(self.ids(live), {self.home_session.pk})
+        # Viloyat filtri so'rovda boshqa viloyatni so'rasa ham — o'ziniki.
+        forced = self.client.get("/api/v1/sessions/live/", {"region": self.away.pk})
+        self.assertEqual(self.ids(forced), {self.home_session.pk})
+
+    def test_technical_problems(self):
+        self.assertEqual(
+            self.ids(self.client.get("/api/v1/technical-problems/")), {self.home_problem.pk}
+        )
+
+    def test_computers_cameras_and_devices(self):
+        self.assertEqual(self.ids(self.client.get("/api/v1/computers/")), {self.home_pc.pk})
+        self.assertEqual(self.ids(self.client.get("/api/v1/cameras/")), {self.home_camera.pk})
+        self.assertEqual(
+            self.ids(self.client.get("/api/v1/device-tokens/")), {self.home_device.pk}
+        )
+
+    def test_bookings(self):
+        rows = self.client.get(
+            "/api/v1/computer-bookings/", {"schedule": self.schedule.pk}
+        ).json()["data"]["results"]
+        self.assertEqual({row["computer"] for row in rows}, {self.home_pc.pk})
+
+    def test_zone_filter_lists_only_own_buildings(self):
+        self.assertEqual(self.ids(self.client.get("/api/v1/zones/")), {self.home_zone.pk})
+        self.assertEqual(self.ids(self.client.get("/api/v1/regions/")), {self.home.pk})

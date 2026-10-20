@@ -272,7 +272,7 @@ class WebErrorPanel(QFrame):
         layout.addWidget(self._countdown_label)
         layout.addSpacing(8)
 
-        self._button = QPushButton("Qayta yuklash", card)
+        self._button = QPushButton("Sahifani yangilash", card)
         self._button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._button.setMinimumWidth(240)
         self._button.setStyleSheet(primary_button_style(48))
@@ -286,7 +286,7 @@ class WebErrorPanel(QFrame):
         self.hide()
 
     def show_error(self, title: str, text: str, *, retry_in_s: Optional[float] = None,
-                   button_text: str = "Qayta yuklash") -> None:
+                   button_text: str = "Sahifani yangilash") -> None:
         """`retry_in_s` — avtomatik qayta urinishgacha (`None` — faqat qo'lda)."""
         self._title.setText(title)
         self._text.setText(text)

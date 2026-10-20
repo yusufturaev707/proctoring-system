@@ -76,7 +76,11 @@ export default function LiveMonitor() {
 
   // Viloyatga biriktirilgan xodim faqat o'z viloyatini ko'radi — bu
   // backendda majburlanadi, bu yerda esa tanlov shunchaki qulflanadi.
-  const lockedRegion = !user?.is_superuser && user?.region ? String(user.region) : ''
+  // Qoida server bilan BITTA (`User.is_region_scoped`): ilgari
+  // `is_superuser` ga qaralardi — viloyati bor respublika roli
+  // (Administrator) qulflanib, server bergan boshqa viloyatlarni
+  // tanlay olmasdi.
+  const lockedRegion = user?.is_region_scoped && user?.region ? String(user.region) : ''
 
   const [examFilter, setExamFilter] = useState('')
   const [dateFilter, setDateFilter] = useState(today)

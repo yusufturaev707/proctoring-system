@@ -450,6 +450,35 @@ _TOOLS = (
         products=("bandicam", "camtasia", "sharex", "screen recorder"),
         hint="Ekran yozish dasturi savollarni tashqariga chiqarishi mumkin.",
     ),
+    # NVIDIA overlay (NVIDIA App / GeForce Experience): Alt+F9 - yozish,
+    # Alt+F10 - Instant Replay (fonda jimgina yozib turadi), Alt+F1 -
+    # skrinshot. Test butun ekranda GPU bilan chizilgani uchun NVIDIA uni
+    # "o'yin" deb taniydi va "Alt+Z" eslatmasini ham chiqaradi.
+    #
+    # FAQAT ShadowPlay yordamchisi (`nvsphelper64.exe`) - o'lchangan
+    # (NVIDIA App 11.0.9): u yopilgach Alt+Z qulfsiz ham overlay'ni
+    # ochmay qoldi va yordamchi o'zi qayta ko'tarilmadi. `NVIDIA
+    # Overlay.exe` ATAYLAB YO'Q: `nvcontainer` uni 1 s ichida yangi PID
+    # bilan qaytaradi - yopish foydasiz, har imtihonda esa talabgor
+    # xavf baliga aybsiz hodisa qo'shilardi.
+    #
+    # IMZO EGASI BO'YICHA EMAS ("NVIDIA Corporation"): drayver jarayonlari
+    # (`NVDisplay.Container.exe`, `nvcontainer.exe`) ham shu imzoda va
+    # ular GPU (CUDA - FaceID, AI kuzatuv) uchun kerak. Mahsulot nomi
+    # ("NVIDIA App") ham emas. Tugmalar `DEFAULT_BLOCKED_HOTKEYS` da
+    # (ikkinchi qatlam). Asosiy yechim - mashinada overlay'ni o'chirish.
+    ThreatRule(
+        code="nvidia_overlay",
+        label="NVIDIA overlay (ekran yozish)",
+        category="tool",
+        blocking=False,
+        originals=("nvsphelper64.exe", "nvsphelper.exe"),
+        names=("nvsphelper64.exe", "nvsphelper.exe"),
+        hint=(
+            "NVIDIA overlay ekranni yozib olishi mumkin. NVIDIA App sozlamalarida "
+            "«Overlay» ni (GeForce Experience'da «In-Game Overlay» ni) o'chiring."
+        ),
+    ),
     ThreatRule(
         code="automation",
         label="Avtomatlashtirish vositasi",

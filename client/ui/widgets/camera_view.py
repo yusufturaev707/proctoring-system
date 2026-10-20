@@ -11,6 +11,14 @@ sakrab yurar va talabgorning e'tiborini ovalga emas, o'ziga tortardi;
 oval esa JOYIDA turadi va "qayerda bo'lishim kerak" degan savolga
 javob berishda davom etadi.
 
+KADR EKRANDA KO'ZGUDEK (gorizontal ag'darilgan) chiziladi: talabgor
+o'zini ko'zgudagidek ko'radi va ovalga joylashish oson (chapga
+surilsa, rasm ham chapga suriladi). Asl kadrda u teskari tomonga
+yurardi. Ag'darish FAQAT shu yerda, chizishda: yuz modeli, serverga
+ketadigan kadr va dalillar asl kadrni oladi (pasport rasmi
+ag'darilmagan, dalil haqiqiy tomonni ko'rsatishi shart). Oval
+simmetrik, yozuvlar esa ag'darilgan rasm USTIGA chiziladi.
+
 MUHIM: `QImage` ma'lumot buferiga referens ushlaydi, nusxa OLMAYDI.
 Massiv Python tomonda yo'q qilinsa, rasm buzilgan piksellar bilan
 chiziladi yoki dastur qulaydi - shuning uchun `.copy()` majburiy.
@@ -173,6 +181,19 @@ class CameraView(QLabel):
         self._guide = None
         self.setText("Kamera o'chirilgan")
 
+    def show_starting(self) -> None:
+        """
+        Kamera ochilmoqda - birinchi kadrgacha.
+
+        `clear_view` ning "Kamera o'chirilgan" yozuvi sahifadan
+        chiqishda qoladi va keyingi talabgorda kamera ochilayotgan
+        ~3 s davomida (DirectShow, MJPG 1280x720) ekranda turardi -
+        operator ishlab turgan kamerani nosoz deb o'ylardi.
+        """
+        self._frame = None
+        self._guide = None
+        self.setText("Kamera ishga tushmoqda...")
+
     def resizeEvent(self, event) -> None:
         """
         O'lcham o'zgarganda oxirgi kadr QAYTA chiziladi.
@@ -195,8 +216,9 @@ class CameraView(QLabel):
         frame = self._frame
         height, width = frame.shape[:2]
 
-        # BGR (OpenCV) -> RGB (Qt). `.copy()` haqida modul docstring'iga qarang.
-        rgb = frame[:, :, ::-1].copy()
+        # BGR (OpenCV) -> RGB (Qt) va ko'zgu (ustunlar teskari) — bitta
+        # nusxada. `.copy()` va ko'zgu haqida modul docstring'iga qarang.
+        rgb = frame[:, ::-1, ::-1].copy()
         image = QImage(rgb.data, width, height, 3 * width, QImage.Format.Format_RGB888)
         pixmap = QPixmap.fromImage(image).scaled(
             self.size(),

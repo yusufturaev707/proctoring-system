@@ -13,7 +13,7 @@ tushiradi.
 | `proctoring_client.iss` | Inno Setup 6 skripti |
 | `smoke_check.py` | yig'ilgan `.exe` ning tutun tekshiruvi (`ProctoringClientCheck.exe`) |
 | `make_models_manifest.py` | `models_manifest.json` — model yaxlitligi etaloni (build yozadi, client `core/self_check.py` o'qiydi) |
-| `make_icon.py` | `resources/images/logo.png` → `.ico` (build vaqtida) |
+| `make_icon.py` | `resources/images/logo_bba.svg` → `.ico` (build vaqtida) |
 | `autostart.ps1` | Task Scheduler "at logon" vazifasi (o'rnatuvchi chaqiradi) |
 | `env.production.template` | `client.env` namunasi (server manzili o'rinbosarlari bilan) |
 | `client.env` | **git'da yo'q** — o'rnatuvchiga joylanadigan tayyor `.env` (pastga qarang) |
@@ -128,9 +128,13 @@ client/dist/installer/ProctoringClientSetup-1.0.0-gpu.exe
 client/build/<nashr>/proctoring_client/  kesh, warn-*.txt, xref-*.html, smoke-report.txt
 ```
 
-Ikonka `logo.png` dan HAR build'da yasaladi (Pillow faqat build
+Ikonka (`.exe`, ish stoli/«Start» yorlig'i, o'rnatuvchi, «Programs and
+Features») `logo_bba.svg` dan HAR build'da yasaladi (Pillow faqat build
 mashinasida) — logotip almashtirilsa `.exe` ham, o'rnatuvchi ham yangi
-belgini oladi.
+belgini oladi. 48 px gacha muhrning faqat ichki «BBA» belgisi olinadi
+(to'liq muhrning aylana yozuvi kichik o'lchamda belgini ezardi), 64 px
+dan — to'liq muhr. Ko'rib chiqish: `python installer\make_icon.py
+--target build\app.ico`. Dastur ICHIDAGI logotip — alohida, `logo.png`.
 
 ### GPU va CPU nashri
 

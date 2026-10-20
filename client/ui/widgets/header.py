@@ -65,11 +65,15 @@ def _brand_block(top: QHBoxLayout) -> tuple:
 
     box = QVBoxLayout()
     box.setSpacing(2)
-    # MD3 "title large" (22 px): sarlavha qatori 44 px logotipdan
-    # baland bo'lmasligi kerak (`HEADER_LOGO_HEIGHT` izohi).
+    # MD3 "title medium" (17 px), brend rangi: nom sahifa sarlavhasi
+    # emas, logotipning davomi — 22 px qora matn sarlavhaning yarmini
+    # egallab, o'ngdagi kompyuter raqami va kataklarni siqardi. Qatorni
+    # 44 px logotipdan baland qilmaydi (`HEADER_LOGO_HEIGHT` izohi).
     name = QLabel(COMPANY_NAME)
     name.setStyleSheet(
-        "font-size: 22px; font-weight: 700; color: {};".format(COLORS["text"])
+        "font-size: 17px; font-weight: 700; letter-spacing: 0.2px; color: {};".format(
+            COLORS["primary_deep"]
+        )
     )
     box.addWidget(name)
     # Yorliq bo'sh bo'lsa ham yaratiladi: u keyin to'ldiriladi

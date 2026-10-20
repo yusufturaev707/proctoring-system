@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { auth } from '../api/endpoints'
 import { tokens } from '../api/client'
 import type { CurrentUser } from '../types/api'
@@ -28,6 +29,7 @@ const AuthContext = createContext<AuthContextValue | null>(null)
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<CurrentUser | null>(null)
   const [loading, setLoading] = useState(true)
+  const queryClient = useQueryClient()
 
   useEffect(() => {
     if (!tokens.access()) {
@@ -45,10 +47,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // `surface: 'panel'` — server client rollariga (Operator) panel
     // tokenini bermaydi va aniq sabab qaytaradi (`panel_access_denied`).
     const data = await auth.login({ ...credentials, surface: 'panel' })
+    // Kesh HISOB BILAN BIRGA almashadi: oldingi hisobning javoblari
+    // (binolar ro'yxati 5 daqiqa keshda, jadvallar) yangi hisobga
+    // ko'rinardi — respublika adminidan keyin kirgan viloyat xodimi
+    // filtrda barcha viloyatlarning binolarini ko'rardi.
+    queryClient.clear()
     tokens.set(data.access, data.refresh)
     setUser(data.user as CurrentUser)
     return data.user as CurrentUser
-  }, [])
+  }, [queryClient])
 
   const logout = useCallback(async () => {
     try {
@@ -58,7 +65,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     tokens.clear()
     setUser(null)
-  }, [])
+    // Begona hisob ma'lumoti xotirada qolmasin (`login` dagi sabab).
+    queryClient.clear()
+  }, [queryClient])
 
   /**
    * Ruxsat tekshiruvi — backenddagi mantiq bilan bir xil bo'lishi shart.

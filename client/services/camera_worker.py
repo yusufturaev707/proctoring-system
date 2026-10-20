@@ -29,9 +29,15 @@ from typing import Optional
 import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from config import CAMERA_INDEX, DETECT_EVERY_NTH_FRAME, MIN_FACE_WIDTH_PX
+from config import (
+    CAMERA_INDEX,
+    DETECT_EVERY_NTH_FRAME,
+    FRAME_HEIGHT,
+    FRAME_WIDTH,
+)
 from proctoring.camera.liveness import DEAD_STREAM_MESSAGE, FrameLiveness
 from proctoring.camera.liveness import applies as liveness_applies
+from proctoring.identity import face_params
 from proctoring.identity.candidate import match_reference, normalize_reference, selection_score
 
 log = logging.getLogger(__name__)
@@ -66,6 +72,22 @@ _EMPTY_FRAMES_BEFORE_LOST = 30
 
 #: Qurilma hali tizimdami - shu oraliqda (s); `manager._PRESENCE_CHECK_S`.
 _PRESENCE_CHECK_S = 2.0
+
+#: Ishga tushish oynasi (s): BIRINCHI kadrgacha vaqtinchalik xato
+#: ekranga chiqarilmaydi (`_report_error`), ishchi jimgina qayta urinadi.
+#:
+#: Ishlaydigan kamera ham birinchi urinishda ochilmasligi mumkin -
+#: oldingi egasi (tekshiruv sahifasining oqimi, oldingi talabgorning
+#: ishchisi) qurilmani hali bo'shatayotgan bo'ladi. Ilgari bu darhol
+#: qizil "Kamera ochilmadi" bo'lib chiqardi va bir soniyadan keyin
+#: o'zi yo'qolardi: operator talabgorni "kamera buzuq" deb boshqa
+#: stolga o'tkazardi. Qurilma umuman YO'Q bo'lsa kutilmaydi.
+_STARTUP_GRACE_S = 6.0
+
+#: Ishga tushish oynasidagi qayta urinish oralig'i (s). Qurilma ro'yxatda
+#: va odatda bir-ikki soniyada bo'shaydi: `_BACKOFF_S` (1, 2, 3...) bilan
+#: u bo'shagan lahzadan keyin yana 2-3 s bekor kutilardi.
+_STARTUP_RETRY_S = 0.5
 
 #: Kadr sifati chegaralari (`assess_quality`). Ular faqat OPERATORGA
 #: MASLAHAT tanlaydi ("yorug'lik yetarli emas"), qarorga ta'sir
@@ -157,7 +179,8 @@ def select_candidate_face(faces: list, reference=None, min_score=None) -> tuple:
 
     Uch bosqich va ularning tartibi muhim:
 
-      1. UZOQDAGILAR tushib qoladi (`MIN_FACE_WIDTH_PX`). Bu
+      1. UZOQDAGILAR tushib qoladi (`face_params.min_face_width`,
+         imtihon profilidan; zaxira `MIN_FACE_WIDTH_PX`). Bu
          chegara allaqachon bor edi va ma'nosi o'zgarmadi — ArcFace
          kichik yuzni 112x112 ga cho'zadi va ball sun'iy pasayadi.
          Endi u HAR BIR yuzga qo'llanadi, faqat yolg'iz qolganiga
@@ -190,9 +213,11 @@ def select_candidate_face(faces: list, reference=None, min_score=None) -> tuple:
         return "none", None, []
 
     ordered = sorted(faces, key=_face_width, reverse=True)
+    # Chaqiruv paytida o'qiladi: profil imtihon tanlangach keladi.
+    min_width = face_params.min_face_width()
     near = (
-        [face for face in ordered if _face_width(face) >= MIN_FACE_WIDTH_PX]
-        if MIN_FACE_WIDTH_PX > 0
+        [face for face in ordered if _face_width(face) >= min_width]
+        if min_width > 0
         else list(ordered)
     )
     if not near:
@@ -204,7 +229,7 @@ def select_candidate_face(faces: list, reference=None, min_score=None) -> tuple:
         matched, _score = match_reference(
             near, reference,
             min_score=selection_score(min_score),
-            min_width=0,  # `near` allaqachon `MIN_FACE_WIDTH_PX` dan o'tgan
+            min_width=0,  # `near` allaqachon minimal kenglikdan o'tgan
             width_of=_face_width,
             embedding_of=lambda face: face.get("embedding"),
         )
@@ -330,6 +355,10 @@ class CameraWorker(QThread):
         self._reconnect_requested = False
         #: Detektsiya xatolari soni — log'ni har kadrda to'ldirmaslik uchun.
         self._detect_errors = 0
+        #: Bu ishchi kamida bitta kadr berdimi va qachon ishga tushdi —
+        #: ishga tushish oynasi (`_STARTUP_GRACE_S`).
+        self._delivered = False
+        self._started_at = 0.0
         try:
             from core.system_events import system_events
 
@@ -370,13 +399,44 @@ class CameraWorker(QThread):
 
     @staticmethod
     def _fallback_source(camera_index: Optional[int]):
+        """
+        Taqsimotsiz zaxira: aniq indeks berilmagan bo'lsa BIRINCHI HAQIQIY
+        kamera, qurilma yo'li va nomi bilan.
+
+        Ko'r-ko'rona `CAMERA_INDEX` (0) virtual kamerani (OBS) yoki
+        boshqa qurilmani ochishi mumkin edi; yo'lsiz manba esa qayta
+        ulanishda indeks siljiganini (`WebcamSource._current_index`)
+        sezmaydi. O'lcham boshqa sahifalardagi bilan bir xil
+        (`FRAME_WIDTH`/`FRAME_HEIGHT`).
+        """
         from proctoring.camera.webcam import WebcamSource
+
+        if camera_index is None:
+            try:
+                from proctoring.camera.discovery import looks_virtual
+                from proctoring.camera.dshow import enumerate_devices
+
+                devices = enumerate_devices()
+            except Exception:
+                log.debug("Kameralar ro'yxati o'qilmadi", exc_info=True)
+                devices = []
+            real = next((item for item in devices if not looks_virtual(item.name)), None)
+            if real is not None:
+                log.warning(
+                    "Kamera taqsimoti berilmadi — birinchi haqiqiy kamera ochiladi: "
+                    "#%s %s", real.index, real.name,
+                )
+                return WebcamSource(
+                    real.index, role="primary", label=real.name,
+                    device_path=real.device_path,
+                    width=FRAME_WIDTH, height=FRAME_HEIGHT,
+                )
 
         index = CAMERA_INDEX if camera_index is None else int(camera_index)
         log.warning(
             "Kamera taqsimoti berilmadi — zaxira indeks ishlatilmoqda (#%s)", index
         )
-        return WebcamSource(index, role="primary")
+        return WebcamSource(index, role="primary", width=FRAME_WIDTH, height=FRAME_HEIGHT)
 
     @property
     def label(self) -> str:
@@ -436,6 +496,7 @@ class CameraWorker(QThread):
         if source is None:
             self._report_error("Yuz kamerasi topilmadi.")
             return
+        self._started_at = time.monotonic()
 
         # UZILISH ISHCHINI TO'XTATMAYDI. Ilgari kamera ochilmasa yoki
         # kadr kelmay qolsa `run()` tugardi va sahifa qayta ochmaguncha
@@ -454,7 +515,7 @@ class CameraWorker(QThread):
                     attempt = self._cycle(source, attempt)
                 except Exception as exc:
                     log.exception("Kamera ishchisida kutilmagan xato")
-                    self._report_error("Kamera xatosi: {}".format(str(exc)[:120]))
+                    self._report_error("Kamera xatosi: {}".format(str(exc)[:120]), source)
                     self._close(source)
                     if not self._sleep_backoff(attempt):
                         break
@@ -470,7 +531,7 @@ class CameraWorker(QThread):
         """Bitta "ochish -> o'qish -> uzilish" aylanishi. Keyingi `attempt`."""
         self._reconnect_requested = False
         if not source.open():
-            self._report_error(source.last_error or "Kamera ochilmadi.")
+            self._report_error(source.last_error or "Kamera ochilmadi.", source)
             if not self._sleep_backoff(attempt):
                 return attempt
             return attempt + 1
@@ -508,7 +569,7 @@ class CameraWorker(QThread):
                 # USB sug'urilganda DirectShow kadr qaytaraverishi mumkin -
                 # bo'sh kadrlar qoidasi buni ko'rmaydi (`WebcamSource.is_present`).
                 if source.is_present() is False:
-                    self._report_error(_explain_lost(source))
+                    self._report_error(_explain_lost(source), source)
                     return ""
             frame = source.read()
             read_s = time.monotonic() - now
@@ -517,7 +578,7 @@ class CameraWorker(QThread):
                 # Bitta o'tkazib yuborilgan kadr normal holat (USB
                 # uzilishi). Ketma-ket 30 tasi esa kamera yo'qolgani.
                 if failures >= _EMPTY_FRAMES_BEFORE_LOST:
-                    self._report_error(_explain_lost(source))
+                    self._report_error(_explain_lost(source), source)
                     return ""
                 time.sleep(0.03)
                 continue
@@ -529,10 +590,11 @@ class CameraWorker(QThread):
                 if summary:
                     log.info("Kamera oqimi (%s): %s", source.info.label, summary)
                 if state == "dead":
-                    self._report_error(DEAD_STREAM_MESSAGE)
+                    self._report_error(DEAD_STREAM_MESSAGE, source)
                     return "dead"
                 if state != "live":
                     continue  # qora/qotgan bufer - "tiklandi" ham, kadr ham emas
+            self._delivered = True
             if self._outage:
                 self._outage = False
                 self._reported_error = ""
@@ -544,14 +606,38 @@ class CameraWorker(QThread):
             if self._detect and frame_index % max(1, DETECT_EVERY_NTH_FRAME) == 0:
                 self._process(frame)
 
-    def _report_error(self, message: str) -> None:
+    def _report_error(self, message: str, source=None) -> None:
         """Uzilish haqida xabar — boshida bir marta, sabab o'zgarsa yana."""
+        if self._in_startup_grace(source):
+            # Xabar ham, `_outage` ham yo'q: birinchi kadr kelganda
+            # "tiklandi" chiqmasin - operator hech narsa ko'rmagan.
+            log.info("Kamera hali ochilmadi, qayta urinilmoqda: %s", message)
+            return
         self._outage = True
         if message == self._reported_error:
             return
         self._reported_error = message
         log.warning("Kamera: %s", message)
         self.camera_error.emit(message)
+
+    def _in_startup_grace(self, source) -> bool:
+        """
+        Xato ishga tushish oynasidami (`_STARTUP_GRACE_S`) - ko'rsatilmaydi.
+
+        Qurilma ro'yxatda YO'Q bo'lsa (`is_present() is False`) - yo'q:
+        kutishdan foyda yo'q va operator sababni darhol bilishi kerak.
+        `None` (bilib bo'lmadi, IP kamera) - vaqtinchalik deb olinadi.
+        """
+        if self._delivered or not self._started_at:
+            return False
+        if time.monotonic() - self._started_at >= _STARTUP_GRACE_S:
+            return False
+        if source is None:
+            return True
+        try:
+            return source.is_present() is not False
+        except Exception:  # noqa: BLE001 - tekshiruv xatosi xabarni yashirmasin
+            return False
 
     def _sleep_backoff(self, attempt: int) -> bool:
         """
@@ -560,6 +646,12 @@ class CameraWorker(QThread):
         Kichik bo'laklarda: `stop()` va uyg'onish so'rovi darhol sezilsin.
         """
         delay = _BACKOFF_S[min(attempt, len(_BACKOFF_S) - 1)]
+        if (
+            not self._delivered
+            and self._started_at
+            and time.monotonic() - self._started_at < _STARTUP_GRACE_S
+        ):
+            delay = min(delay, _STARTUP_RETRY_S)
         deadline = time.monotonic() + delay
         while self._running and time.monotonic() < deadline:
             if self._reconnect_requested:

@@ -8,6 +8,19 @@ from django.utils.translation import gettext_lazy as _
 from apps.common.models import SoftDeleteModel, TimeStampedModel
 
 
+def validate_det_size(value):
+    """
+    Yuz detektori (SCRFD) kirish o'lchami 32 ga karrali bo'lsin.
+
+    Detektorning eng katta qadami 32 px: karrali bo'lmagan o'lchamda
+    tarmoq chiqishlari anchor setkasiga mos kelmay, ramkalar siljiydi.
+    """
+    if value % 32:
+        raise ValidationError(
+            _("O'lcham 32 ga karrali bo'lishi kerak (masalan 480, 640, 800)")
+        )
+
+
 def validate_heartbeat_interval(value):
     """
     Heartbeat oralig'i `HEARTBEAT_TIMEOUT` ning YARMIDAN oshmasin.
@@ -432,6 +445,37 @@ class Setting(SoftDeleteModel):
         help_text=_("Shuncha vaqt shaxsni solishtirib bo'lmasa - o'rta jiddiylikdagi hodisa"),
     )
 
+    # --- FaceID: yuz DETEKTORI (client `face_engine`, `face_params`) ---
+    #
+    # Ilgari uchalasi har mashinaning `.env` ida edi (`FACE_DET_THRESH`,
+    # `MIN_FACE_WIDTH_PX`; o'lcham kodda qadalgan) - model login'dan
+    # oldin yuklanadi. Endi model `.env` zaxirasi bilan yuklanadi va
+    # imtihon profili kelgach detektor QAYTA YUKLANMASDAN sozlanadi
+    # (SCRFD da o'lcham va ishonch - oddiy parametr). Kamera va xona
+    # bino bo'yicha farq qiladi: uzoqdagi yuzni tushirish chegarasini
+    # 500 mashinada qo'lda tahrirlab bo'lmaydi.
+    faceid_det_size = models.PositiveSmallIntegerField(
+        _("Detektor o'lchami (px)"), default=640,
+        validators=[MinValueValidator(160), MaxValueValidator(1280), validate_det_size],
+        help_text=_(
+            "Kadr detektorga shu o'lchamda beriladi: kattasi kichik/uzoq yuzni "
+            "ham topadi, lekin sekinroq"
+        ),
+    )
+    faceid_det_thresh = models.FloatField(
+        _("Detektor ishonchi"), default=0.6,
+        validators=[MinValueValidator(0.1), MaxValueValidator(0.95)],
+        help_text=_("Shundan past ishonchli topilma yuz hisoblanmaydi"),
+    )
+    # ArcFace yuzni 112x112 ga tekislaydi: kichik yuz cho'ziladi va ball
+    # sun'iy pasayadi. Shu chegaradan tor yuz talabgor sifatida
+    # TANLANMAYDI ("Yaqinroq keling"; `camera_worker.select_candidate_face`).
+    faceid_min_face_width = models.PositiveSmallIntegerField(
+        _("Minimal yuz kengligi (px)"), default=110,
+        validators=[MinValueValidator(40), MaxValueValidator(480)],
+        help_text=_("Kadrda yuz shundan tor bo'lsa - uzoqda deb hisoblanadi va solishtirilmaydi"),
+    )
+
     # --- Qurilma ---
     # Standart `True` (`controls.0012_client_runtime_settings`). Ilgari
     # maydon bor edi, lekin client uni O'QIMASDI va ekranni `.env` dagi
@@ -548,7 +592,23 @@ class Setting(SoftDeleteModel):
     )
 
     # --- Texnik muammolar ---
-    is_enable_check_tp = models.BooleanField(_("Texnik muammoni tekshirish"), default=True)
+    # Maydon nomi tarixiy (`check_tp`), ma'nosi — talabgor test
+    # sahifasidan «Texnik muammo» xabarini yubora oladimi. Ilgari client
+    # uni o'qimasdi va paneldagi kalit hech narsani o'zgartirmasdi;
+    # endi client bandni yashiradi, server esa rad etadi
+    # (`TechnicalProblemReportView`).
+    is_enable_check_tp = models.BooleanField(
+        _("Texnik muammo xabari"), default=True,
+        help_text=_("Talabgor test sahifasidan «Texnik muammo» xabarini yubora oladi"),
+    )
+    # Har xabar sessiyani `technical_problem` holatiga o'tkazadi va
+    # yuqori jiddiylikdagi hodisa beradi — cheklovsiz tugma nazoratchini
+    # bir xil xabar bilan to'ldirardi.
+    technical_problem_limit = models.PositiveSmallIntegerField(
+        _("Texnik muammo xabarlari soni"), default=3,
+        validators=[MaxValueValidator(50)],
+        help_text=_("Bitta sessiyada nechta xabar yuborish mumkin; 0 — cheklanmagan"),
+    )
 
     # --- Tarmoq ---
     # Chegara `HEARTBEAT_TIMEOUT` ning yarmi (`validate_heartbeat_interval`):

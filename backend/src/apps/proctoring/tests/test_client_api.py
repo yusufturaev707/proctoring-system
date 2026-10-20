@@ -907,3 +907,70 @@ class HandshakeMachineTests(TestCase):
         response = self.post({"app_version": "1.0.0", "mac_address": "A" * 40})
 
         self.assertEqual(response.status_code, 400)
+
+
+class TechnicalProblemReportTests(RedisStateMixin, TestCase):
+    """
+    «Texnik muammo» — imtihon profili bo'yicha (`Setting.is_enable_check_tp`,
+    `technical_problem_limit`). Client bandni yashiradi, lekin qaror
+    SERVERDA: eski client va ikki marta bosish chegarani chetlab o'tmasin.
+    """
+
+    def setUp(self):
+        super().setUp()
+        cache.clear()
+        self.addCleanup(cache.clear)
+        self.client = APIClient()
+        self.url = reverse("client-technical-problem")
+        self.device = factories.make_device()
+        self.setting = factories.make_setting(technical_problem_limit=2)
+        self.session = factories.make_session(
+            device=self.device, exam=factories.make_exam(setting=self.setting)
+        )
+        self.operator = factories.make_user(permissions=["client.operate"])
+
+        from apps.proctoring.services import session as session_service
+
+        self.raw_token = session_service.issue_session_token(self.session)
+        self.auth = bearer(self.operator)
+
+    def _post(self):
+        return self.client.post(
+            self.url,
+            {"kind": "network", "description": "Sahifa ochilmayapti"},
+            format="json",
+            HTTP_AUTHORIZATION=self.auth,
+            HTTP_X_DEVICE_ID=self.device.device_id,
+            HTTP_X_PROCTORING_SESSION=self.raw_token,
+        )
+
+    def test_limit_counts_down_and_then_rejects(self):
+        from apps.proctoring.models import TechnicalProblem
+
+        first = self._post()
+        self.assertEqual(first.status_code, 201, first.content)
+        self.assertEqual(first.json()["data"]["remaining"], 1)
+        second = self._post()
+        self.assertEqual(second.json()["data"]["remaining"], 0)
+
+        third = self._post()
+        self.assertEqual(third.status_code, 409, third.content)
+        self.assertEqual(third.json()["error"]["code"], "technical_problem_limit")
+        self.assertEqual(TechnicalProblem.objects.filter(session=self.session).count(), 2)
+
+    def test_zero_limit_means_unlimited(self):
+        Setting = type(self.setting)
+        Setting.objects.filter(pk=self.setting.pk).update(technical_problem_limit=0)
+        for _ in range(3):
+            response = self._post()
+            self.assertEqual(response.status_code, 201, response.content)
+            self.assertIsNone(response.json()["data"]["remaining"])
+
+    def test_disabled_profile_rejects(self):
+        from apps.proctoring.models import TechnicalProblem
+
+        type(self.setting).objects.filter(pk=self.setting.pk).update(is_enable_check_tp=False)
+        response = self._post()
+        self.assertEqual(response.status_code, 403, response.content)
+        self.assertEqual(response.json()["error"]["code"], "technical_problem_disabled")
+        self.assertFalse(TechnicalProblem.objects.filter(session=self.session).exists())

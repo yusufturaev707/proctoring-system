@@ -61,7 +61,8 @@ KEYS = {
 }
 DEFAULT = [k.strip() for k in (
     "alt+tab,alt+shift+tab,alt+esc,win,ctrl+esc,alt+f4,alt+space,"
-    "print screen,ctrl+shift+esc,f12,ctrl+shift+i"
+    "print screen,ctrl+shift+esc,f12,ctrl+shift+i,"
+    "alt+z,alt+f9,alt+f10,alt+f1"
 ).split(",")]
 
 

@@ -49,6 +49,9 @@ const READ_ONLY = [
   'ai_proctoring',
 ]
 
+/** Yuz detektori o'lchamlari: 32 ga karrali (`controls.models.validate_det_size`). */
+const DET_SIZES = [320, 416, 480, 512, 640, 800, 960, 1024, 1280]
+
 const stripReadOnly = (obj: ApiRecord) =>
   Object.fromEntries(Object.entries(obj).filter(([key]) => !READ_ONLY.includes(key)))
 
@@ -545,6 +548,37 @@ export default function Settings() {
                 </Section>
               </Grid>
               <Grid item xs={12} md={6}>
+                {/* Model client'da login'dan OLDIN .env zaxirasi bilan
+                    yuklanadi; profil kelgach detektor qayta yuklanmasdan
+                    sozlanadi (client `face_params.py`). */}
+                <Section title="Yuz detektori">
+                  <TextField
+                    select label="Detektor o‘lchami (px)"
+                    value={form.faceid_det_size ?? 640}
+                    onChange={setNumber('faceid_det_size')} disabled={!canManage}
+                    helperText="Kattasi kichik va uzoqdagi yuzni ham topadi, lekin sekinroq. Standart — 640"
+                  >
+                    {DET_SIZES.map((size) => (
+                      <MenuItem key={size} value={size}>{size} × {size}</MenuItem>
+                    ))}
+                  </TextField>
+                  <TextField
+                    label="Detektor ishonchi (0.1–0.95)" type="number"
+                    value={form.faceid_det_thresh}
+                    onChange={setNumber('faceid_det_thresh')} disabled={!canManage}
+                    inputProps={{ step: 0.05, min: 0.1, max: 0.95 }}
+                    helperText="Shundan past ishonchli topilma yuz hisoblanmaydi. Pastrog‘i yomon yorug‘likda ham topadi, lekin soxta topilma ko‘payadi"
+                  />
+                  <TextField
+                    label="Minimal yuz kengligi (px)" type="number"
+                    value={form.faceid_min_face_width}
+                    onChange={setNumber('faceid_min_face_width')} disabled={!canManage}
+                    inputProps={{ min: 40, max: 480 }}
+                    helperText="Kadrda yuz shundan tor bo‘lsa — uzoqda deb hisoblanadi va solishtirilmaydi («Yaqinroq keling»). Orqadagi odamlarni tushirish uchun oshiring; 110 dan kichigi ballni pasaytiradi"
+                  />
+                </Section>
+              </Grid>
+              <Grid item xs={12} md={6}>
                 <Section title="Server auditi (ishlamaydi)">
                   {/* Maydon SAQLANGAN, lekin uni hech kim o'qimaydi:
                       server ballni qayta hisoblay olmaydi — buning
@@ -763,8 +797,22 @@ export default function Settings() {
                 </Section>
               </Grid>
               <Grid item xs={12} md={6}>
+                {/* Client test sahifasidagi «Texnik muammo» bandini yashiradi,
+                    server esa o'chiq profilda va chegaradan keyin rad etadi. */}
                 <Section title="Texnik muammolar">
-                  <Toggle label="Avtomatik tekshirish" checked={form.is_enable_check_tp} onChange={set('is_enable_check_tp')} disabled={!canManage} />
+                  <Toggle
+                    label="Talabgor «Texnik muammo» xabarini yubora oladi"
+                    checked={form.is_enable_check_tp}
+                    onChange={set('is_enable_check_tp')} disabled={!canManage}
+                  />
+                  <TextField
+                    label="Bitta sessiyada xabarlar soni" type="number"
+                    value={form.technical_problem_limit}
+                    onChange={setNumber('technical_problem_limit')}
+                    disabled={!canManage || !form.is_enable_check_tp}
+                    inputProps={{ min: 0, max: 50 }}
+                    helperText="Chegaraga yetgach tugma yashiriladi. 0 — cheklanmagan"
+                  />
                 </Section>
               </Grid>
               <Grid item xs={12} md={6}>

@@ -38,6 +38,11 @@ RUNTIME_FIELDS = {
     ("face", "interval"): "faceid_interval",
     ("face", "far_warn_s"): "faceid_far_warn_s",
     ("face", "far_unverified_s"): "faceid_far_unverified_s",
+    ("face", "det_size"): "faceid_det_size",
+    ("face", "det_thresh"): "faceid_det_thresh",
+    ("face", "min_face_width"): "faceid_min_face_width",
+    ("technical_problem", "enabled"): "is_enable_check_tp",
+    ("technical_problem", "limit"): "technical_problem_limit",
     ("capture", "screen_record"): "is_screen_record",
     ("capture", "record_fps"): "screen_record_fps",
     ("capture", "record_width"): "screen_record_width",
@@ -93,6 +98,11 @@ class ConfigShapeTests(TestCase):
             faceid_fail_min_seconds=12,
             faceid_far_warn_s=15,
             faceid_far_unverified_s=300,
+            faceid_det_size=480,
+            faceid_det_thresh=0.45,
+            faceid_min_face_width=90,
+            is_enable_check_tp=False,
+            technical_problem_limit=5,
             is_screen_record=False,
             screen_record_fps=3,
             screen_record_width=1280,
@@ -159,6 +169,12 @@ class SettingApiValidationTests(TestCase):
             ("event_batch_interval", 0),
             ("faceid_far_warn_s", 0),
             ("faceid_far_unverified_s", 3601),
+            ("faceid_det_size", 650),       # 32 ga karrali emas
+            ("faceid_det_size", 128),
+            ("faceid_det_thresh", 0.05),
+            ("faceid_det_thresh", 1.0),
+            ("faceid_min_face_width", 20),
+            ("technical_problem_limit", 51),
         ):
             with self.subTest(field=field):
                 response = self._patch(**{field: value})

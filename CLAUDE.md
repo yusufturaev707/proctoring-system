@@ -128,8 +128,9 @@ proktor yakunlaydi (shu mashinada — `_replace_previous_on_device`).
 
 **Client'da uzilish ekranga XABAR CHIQARMAYDI** (`ExamWebViewPage.
 _on_network_changed`; test sayti boshqa server va ishlab turgan bo'lishi
-mumkin): faqat pastki paneldagi nuqta qizaradi va yonida hisoblagich
-(`_offline_label`, `format_clock`). Snackbar/dialog QAYTARMANG. Sessiya
+mumkin): faqat amallar tugmasida qizil pulsli nishon, hisoblagich
+(`format_clock`) — menyuning «Aloqa» bandida va tooltip'da (yopiq tugma
+kengaymaydi). Snackbar/dialog QAYTARMANG. Sessiya
 serverda yopilsa — `describe_session_lost` (xom kod emas, uzilish
 davomiyligi bilan).
 
@@ -312,7 +313,7 @@ natija eskirgan `_DETECTION_TTL_MS`); foiz oval tepasida.
 `CameraView.set_detection` yuz koordinatalarini qabul qilmaydi.
 
 **Kadrda kim talabgor** — `camera_worker.select_candidate_face`:
-`width < MIN_FACE_WIDTH_PX` tushadi → eng kattasi asosiy → ikkinchisi
+`width < face_params.min_face_width()` tushadi → eng kattasi asosiy → ikkinchisi
 > 0.7 × asosiy bo'lsa `multiple`. Uchinchi qadam MAJBURIY: usiz kameraga
 egilgan suflyor "talabgor" bo'lib solishtirilardi. Qoida
 `identity/face_identity.py` (eng katta yuz) bilan bir xil bo'lishi shart.
@@ -554,6 +555,10 @@ Kompyuter jadvalidagi unikallik (hammasi shartli — tirik yozuvlar orasida):
 * **Logotip — fayl** (`client/resources/images/logo.png`; PyInstaller'da
   `--add-data "resources;resources"`). Topilmasa vidjet yashirinadi.
   Login/tarmoq sahifalarida oq rangda, `BrandBackdrop.make_logo`.
+  O'rnatilgan dastur IKONKASI — boshqa manba, `logo_bba.svg` (muhr),
+  build'da `installer/make_icon.py`: Figma SVG'si (`pattern` ichida PNG)
+  QtSvg'da bo'sh chiziladi — o'zi o'qiydi; ≤ 48 px — faqat ichki «BBA»
+  belgisi (`_SMALL_MARK`), ≤ 48 px o'tkirlanadi.
 * **Yangi katak IKKI joyga**: `ContextChips.FIELDS` va `set_values` imzosi
   (`*` bilan qat'iy — faqat `FIELDS` ga qo'shish login'dan keyin
   `TypeError` beradi). Ko'rsatilmaydigan katak qiymati jimgina tashlanadi.
@@ -863,6 +868,13 @@ tinglanayotgan port → fayl nomi (zaxira).
   qilinyapti", zanjir tekshiruvi tarmoqqa bog'liq.
 * **Keng vendor imzosi katalogga kirmaydi** ("Google LLC" Chrome'ni tutardi);
   Chrome Remote Desktop `OriginalFilename`/`ProductName` bilan.
+* **NVIDIA overlay** (ekranni yozadi; Alt+Z/F9/F10/F1 — standart qulf
+  ro'yxatida, production shablonida ham): qoida FAQAT `nvsphelper64.exe`
+  (yopilgach tugmalar ishlamaydi, o'zi qaytmaydi). `NVIDIA Overlay.exe`
+  ni qo'shmang — `nvcontainer` 1 s da qaytaradi, har imtihonda aybsiz
+  hodisa bo'lardi; NVIDIA imzosi bo'yicha ham emas (drayver, CUDA).
+* **Versiya resursi satri birinchi NUL da kesiladi**
+  (`process_identity._resource_text`): ba'zi binarlarda uzunlik baytda.
 * **Avval xizmat, keyin jarayon** (aks holda SCM qayta ko'taradi);
   `sweep()` tozalashdan keyin qayta skanerlaydi.
 * Qidiruv tartibi: `BUILTIN_RULES` → `Setting.rdp_objects` →
@@ -1053,10 +1065,38 @@ operator JSHSHIR yozayotganda oldindan ko'tariladi
 
 **Brauzer menyusi O'CHIQ** (`web_view` — `NoContextMenu`): Qt standart
 menyusida «Back» bor (talabgor platformaning oldingi sahifalariga qaytardi).
-Qotgan sahifani yangilashning yagona yo'li — imtihon panelidagi
-«Qayta yuklash» (`_on_reload_clicked`, tasdiq `ReloadDialog`): xato
+Qotgan sahifani yangilashning yagona yo'li — amallar menyusidagi
+«Sahifani yangilash» (`_on_reload_clicked`, tasdiq `ReloadDialog`): xato
 ekranidagi bilan bitta yo'l (`_reload_page`, GET — forma qayta
 yuborilmaydi). Serverga hodisa ketmaydi (`client_anomaly` ballga qo'shilardi).
+
+**Imtihon sahifasida doimiy panel YO'Q — bitta SHAFFOF tugma**
+(`ui/widgets/exam_menu.py:ExamActionMenu`, MD3 FAB menu, pastki o'ng):
+yopiq holatda fon ~28%, ostidagi test matni o'qiladi; vidjet faqat tugma
+o'lchamida (atrofni bosishni to'smaydi). Bosilganda to'rt band: aloqa,
+sahifani yangilash, texnik muammo, yakunlash (eng uzoqda). Tashqariga bosish
+(YUTILMAYDI), Esc, 8 s harakatsizlik yopadi. Hammasi bitta `paintEvent`
+da — bola vidjet/uslub jadvali shaffof fonni buzardi. Doimiy panelni
+qaytarmang: u test sahifasining pastki qismini yopib turardi.
+
+**«Texnik muammo» — imtihon profilidan** (`Setting.is_enable_check_tp` —
+yoqilgan, `technical_problem_limit` — bitta sessiyada nechta xabar, 0 —
+cheklanmagan; client'ga `technical_problem.{enabled,limit}`). O'chiq profilda
+band yashirin (`ExamActionMenu.set_item_visible`; aloqa va yakunlash
+yashirilmaydi). Chegarani SERVER sanaydi (`TechnicalProblemReportView`,
+sessiya qatori `select_for_update`): javobda `remaining` (`None` —
+cheklanmagan), 403 `technical_problem_disabled`, 409
+`technical_problem_limit`; client `remaining == 0` yoki shu kodlarda bandni
+yashiradi — o'z hisobini yuritmaydi (qayta ishga tushsa yo'qotardi).
+
+**Kompyuter raqami — pastki CHAP burchakda suzadi**
+(`ui/widgets/brand.py:FloatingSeatTag`, `ExamWebViewPage._show_seat`):
+nazoratchi zalda mashinani raqam bilan qidiradi, imtihon sahifasida esa
+sarlavha yo'q. Yashil yarim shaffof kapsula + oq chiziq (oq va to'q test
+sahifasida ham ko'rinadi), `WA_TransparentForMouseEvents` — ostidagi test
+bosiladi. Raqam yo'q — inventar kodi, biriktirilmagan — yashirin
+(`SeatBadge` qoidasi). Snackbar uning USTIGA ko'tariladi
+(`Snackbar.bottom_inset`).
 
 ### IP kamera holati va paneldagi jonli ko'rish
 
@@ -1399,7 +1439,7 @@ Qobiq bitta — `base.py:CardDialog` (ramkasiz, shaffof fon, 28 px karta, soya).
   `compact=True` (20 px ikonka, kichik chet/shrift, server matni tooltip'da).
 * **Talabgor ko'radigan matnda kuzatuv tafsiloti YO'Q**: skrinshot, ekran
   yozuvi, FaceID foizi, xavf balli, "kuzatuv ishga tushdi", texnik nomlar
-  (QtWebEngineProcess, DNS). Imtihon paneli nuqtasining tooltip'i — faqat
+  (QtWebEngineProcess, DNS). Amallar tugmasining tooltip'i — faqat
   aloqa (`_update_status_tooltip`; qolgani `_status` da, ekranga chiqmaydi).
   "Proktor" o'rniga "nazoratchi". Texnik sabab — log'ga.
 
@@ -1462,6 +1502,15 @@ qo'shimcha qatlam; AI qismi faqat `services/monitoring.py` buferiga yozadi.
   /restart-device` (2 daqiqada bir marta). Ishlagan rejim saqlanadi.
   MSMF uchun `main.py` `OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS=0`
   (usiz ochilish 19 s — qo'riqchi chegarasi 20 s).
+* **FaceID kamerasi talabgor topilganda oldindan ochiladi**
+  (`FaceIDPage.prewarm_camera`, `CandidatePage.candidate_found`): MJPG
+  1280x720 DirectShow'da ~2.8 s ochiladi (o'lcham + format = grafni ikki
+  marta qayta qurish; boshqa tartib MJPG yoki 720p ni yo'qotadi). Sahifa
+  ko'rinmaguncha kadr/xato ekranga chiqmaydi; 90 s ishlatilmasa yopiladi.
+  Birinchi kadrgacha vaqtinchalik xato ko'rsatilmaydi
+  (`CameraWorker._STARTUP_GRACE_S`, urinish 0.5 s), qurilma ro'yxatda
+  YO'Q bo'lsa — darhol. Ro'yxatdagi qurilma ochilmasa 3 s tayyorlanish
+  qo'llanmaydi (faqat qaytgan qurilmaga).
 * **Abadiy osilgan `read()`** (DirectShow, USB sug'urilganda):
   `GuardedSource` `_REPLACE_AFTER_S` (10 s) dan keyin osilgan I/O
   thread'ni tashlab ketadi va manbani `fresh_copy()` bilan yangi thread'da
@@ -1504,7 +1553,9 @@ O'QIMANG. **Yangi kalit = `Setting` maydoni + `_serialize` VA
 | Sozlama | Qayerda |
 |---|---|
 | `API_*`, `WS_BASE_URL`, `INVENTORY_CODE` | `.env` |
-| `FACE_MODEL_NAME`, `FACE_DET_THRESH`, `MIN_FACE_WIDTH_PX` | `.env` (model serverdan oldin yuklanadi) |
+| `FACE_MODEL_NAME` | `.env` (model serverdan oldin yuklanadi) |
+| yuz detektori: o'lcham, ishonch, minimal yuz kengligi | `Setting.faceid_det_size` / `faceid_det_thresh` / `faceid_min_face_width` (zaxira `FACE_DET_SIZE`, `FACE_DET_THRESH`, `MIN_FACE_WIDTH_PX`) |
+| «Texnik muammo» yoqilgan, xabarlar soni | `Setting.is_enable_check_tp` / `technical_problem_limit` |
 | `FACE_REQUIRE_GPU`, `CUDA_DLL_DIR`, `CAMERA_INDEX`, `FRAME_*`, `DETECT_EVERY_NTH_FRAME`, `CAMERA_FRAME_MAX_AGE_S`, `SCREENSHOT_RETRY_QUEUE` | `.env` (apparat) |
 | `FULLSCREEN`, `KIOSK_MODE`, `*_MONITORS*`, `CLOSE_OTHER_APPS*`, `THREAT_*`, `LOCAL_ARCHIVE_*`, `LOCAL_SERVICE_*` | `.env` (Qt/serverdan oldin, mashina) |
 | `SCREENSHOT_ENABLED` | `.env` (dev VETO) |
@@ -1513,6 +1564,17 @@ O'QIMANG. **Yangi kalit = `Setting` maydoni + `_serialize` VA
 | presence oralig'i | server doimiysi `PRESENCE_PING_INTERVAL` |
 
 `ProctoringPolicy` ga hech narsa ko'chmadi (u "kamera nimani ko'radi").
+
+**Yuz detektori modeli QAYTA YUKLANMAYDI**: model login'dan oldin `.env`
+zaxirasi bilan yuklanadi; login (global profil) va «Davom etish» (imtihon
+profili) da `face_engine.apply_detection_settings` joriy qiymatni
+`proctoring/identity/face_params.py` ga yozadi va `FaceEngine.apply_detection`
+SCRFD atributlarini (`det_thresh`, `input_size(s)`) o'zgartiradi.
+`FaceAnalysis.prepare` ni qayta CHAQIRMANG — CPU'da `set_providers` fon
+inferensiyasi bilan to'qnashadi. O'lcham 32 ga karrali
+(`validate_det_size`). Minimal kenglikni FaceID ishchisi ham, AI qatlami ham
+CHAQIRUV paytida `face_params.min_face_width()` dan oladi — `config`
+dagi `MIN_FACE_WIDTH_PX` ni to'g'ridan-to'g'ri import qilmang.
 Imtihon qiymatlari "Davom etish" dan keyin o'qiladi (`FaceIDPage.start()`,
 `_finish_check`, `ScreenRecorder.start(config=)`, `ScreenshotService.start`,
 `SessionMonitor.start(config)`); presence — login'da.
@@ -1674,6 +1736,15 @@ biznes-mantiq) / `api/v1/{serializers,views,urls}.py`. View'lar yupqa.
     `republic_write_only = True` (`RepublicLevelWrite`, 403
     `republic_level_only`); panelda `ResourcePage shared` /
     `AuthContext.canShared`. Viloyat admini respublika rolini bera olmaydi.
+  * **PANEL**: React Query keshi login VA logout'da tozalanadi
+    (`AuthContext`, `queryClient.clear()`) — aks holda respublika adminidan
+    keyin kirgan viloyat xodimi keshdagi barcha binolarni ko'rardi.
+    `useZoneOptions` viloyat xodimiga faqat o'z binolarini beradi (ikkinchi
+    qatlam); jonli kuzatuv viloyat qulfi — `is_region_scoped`
+    (`is_superuser` emas). Sahifalar bo'yicha test —
+    `test_region_access.PanelPagesScopeTests`. Viloyat roli panelga faqat
+    `panel.access` bilan kiradi — ruxsat bazada bo'lmasa (`seed_base_data`
+    ishlatilmagan) panelga faqat superuser kiradi va u hamma viloyatni ko'radi.
 * **Preflight YO'Q** (`client/preflight/`, `client/access-attempt/` olib
   tashlangan): client dastur login formasidan boshlanadi. IP to'sig'i —
   client LOGIN'ida (`auth/login/`, `surface` = `client`; panel o'tmaydi),

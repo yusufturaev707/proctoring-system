@@ -1,5 +1,5 @@
 """
-Brend: logotip va ish o'rni raqami.
+Brend: logotip va ish o'rni raqami (sarlavhada va imtihon sahifasida).
 
 LOGO FAYL SIFATIDA (`resources/images/logo.png`), `icons.py` dagidek
 chizilgan emas: u muassasa belgisi va uni almashtirish kod o'zgarishi
@@ -18,12 +18,13 @@ safar diskdan o'qish oynani cho'zishni sekinlashtirardi.
 from __future__ import annotations
 
 import logging
+import math
 from functools import lru_cache
 from typing import Optional
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QImage, QPainter, QPixmap
-from PyQt6.QtWidgets import QFrame, QLabel, QVBoxLayout
+from PyQt6.QtCore import QRectF, QSize, Qt
+from PyQt6.QtGui import QColor, QFont, QFontMetricsF, QImage, QPainter, QPen, QPixmap
+from PyQt6.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
 
 from core.bundle_paths import resource_path
 from ui.styles import COLORS
@@ -181,3 +182,112 @@ class SeatBadge(QFrame):
         self._value.setText(text)
         self.setToolTip(label or text)
         self.setVisible(bool(text))
+
+
+class FloatingSeatTag(QWidget):
+    """
+    Imtihon sahifasidagi kompyuter raqami — pastki CHAP burchakda suzadi.
+
+    Imtihon sahifasida sarlavha yo'q (butun ekran testniki), ya'ni
+    `SeatBadge` ham yo'q. Nazoratchi zalda "12-kompyuter" ni shu raqam
+    bilan qidiradi: u ekranga uzoqdan qaraydi va raqam stol yorlig'idan
+    ko'ra tezroq ko'zga tashlanishi kerak.
+
+    YASHIL YARIM SHAFFOF KAPSULA, OQ MATN VA OQ CHIZIQ: test sahifasi oq
+    ham, to'q ham bo'lishi mumkin. Kulrang/qora kapsula to'q sahifada
+    ko'rinmay qolardi; brend yashili ikkalasida ajraladi, oq chiziq esa
+    chegarani to'q fonda ham chizadi. Ostidagi matn fon orqali ko'rinadi. Pastki chap — o'ngda
+    amallar tugmasi (`ExamActionMenu`), tepa qism platformaning sarlavhasi
+    va taymeri uchun ochiq.
+
+    SICHQONCHA UCHUN SHAFFOF (`WA_TransparentForMouseEvents`): kapsula
+    ostidagi test tugmasi bosilishi kerak. Shu sababli tooltip yo'q.
+    Bola vidjet va uslub jadvali yo'q — hammasi bitta `paintEvent` da
+    (`exam_menu` dagi sabab: global uslub shaffof fonni buzardi).
+    """
+
+    #: Ota vidjet chetidan masofa (`ExamActionMenu` tugmasi bilan bir xil).
+    MARGIN = 18
+    #: Fon shaffofligi (0..1): raqam o'qiladi, ostidagi matn ko'rinadi.
+    _FILL_ALPHA = 0.78
+    _RING_ALPHA = 0.55
+    _PAD_X = 16
+    _PAD_Y = 7
+    _CAPTION_PX = 10
+    _VALUE_PX = 26
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, False)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._text = ""
+        self._caption_font = QFont()
+        self._caption_font.setPixelSize(self._CAPTION_PX)
+        self._caption_font.setWeight(QFont.Weight.ExtraBold)
+        self._caption_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.4)
+        self._value_font = QFont()
+        self._value_font.setPixelSize(self._VALUE_PX)
+        self._value_font.setWeight(QFont.Weight.ExtraBold)
+        # Otasiz vidjetda `show()` chaqirilmaydi (CLAUDE.md, tuzoqlar).
+        self.hide()
+
+    @property
+    def text(self) -> str:
+        return self._text
+
+    def set_seat(self, number: Optional[int], *, code: str = "") -> None:
+        """`SeatBadge.set_seat` qoidasi: raqam, bo'lmasa inventar kodi, aks holda yashirin."""
+        self._text = "№{}".format(number) if number else (code or "")
+        if not self._text:
+            self.hide()
+            return
+        self.reposition()
+        if self.parentWidget() is not None:
+            self.show()
+            self.raise_()
+        self.update()
+
+    def reposition(self) -> None:
+        caption = QFontMetricsF(self._caption_font)
+        value = QFontMetricsF(self._value_font)
+        width = max(caption.horizontalAdvance(_SEAT_CAPTION), value.horizontalAdvance(self._text))
+        size = QSize(
+            math.ceil(width) + 2 * self._PAD_X,
+            math.ceil(caption.height() + value.height()) + 2 * self._PAD_Y,
+        )
+        parent = self.parentWidget()
+        y = (parent.height() - self.MARGIN - size.height()) if parent is not None else 0
+        self.setGeometry(self.MARGIN, max(0, y), size.width(), size.height())
+
+    def paintEvent(self, _event) -> None:
+        if not self._text:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        fill = QColor(COLORS["primary_dark"])
+        fill.setAlphaF(self._FILL_ALPHA)
+        ring = QColor(255, 255, 255)
+        ring.setAlphaF(self._RING_ALPHA)
+        painter.setPen(QPen(ring, 1))
+        painter.setBrush(fill)
+        painter.drawRoundedRect(rect, 16, 16)
+
+        caption = QFontMetricsF(self._caption_font)
+        top = rect.top() + self._PAD_Y
+        caption_rect = QRectF(rect.left(), top, rect.width(), caption.height())
+        painter.setFont(self._caption_font)
+        painter.setPen(QColor(255, 255, 255, 200))
+        painter.drawText(caption_rect, Qt.AlignmentFlag.AlignCenter, _SEAT_CAPTION)
+
+        value_rect = QRectF(rect.left(), caption_rect.bottom(), rect.width(),
+                            rect.bottom() - self._PAD_Y - caption_rect.bottom())
+        painter.setFont(self._value_font)
+        painter.setPen(QColor(255, 255, 255))
+        painter.drawText(value_rect, Qt.AlignmentFlag.AlignCenter, self._text)
+        painter.end()
+
+
+_SEAT_CAPTION = "KOMPYUTER"

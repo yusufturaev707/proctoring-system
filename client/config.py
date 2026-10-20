@@ -148,11 +148,13 @@ INVENTORY_CODE = _getenv("INVENTORY_CODE", "").strip()
 # ── InsightFace ──────────────────────────────────────────────────────
 FACE_MODEL_NAME = _getenv("FACE_MODEL_NAME", "buffalo_l")
 FACE_MODEL_ROOT = resource_root()          # ичида models/<name>/ izlanadi
-FACE_DET_SIZE = (640, 640)
-# Detektor ishonchi LOKAL va bu ataylab: u model YUKLANAYOTGANDA
-# (`FaceAnalysis.prepare`) beriladi, model esa login formasi bilan
-# parallel, ya'ni server javobidan OLDIN yuklanadi. Uni serverdan
-# olish modelni har imtihon profilida qayta yuklashni talab qilardi.
+# Yuz detektori: o'lcham va ishonch — FAQAT ZAXIRA (egasi — imtihon
+# profili, `Setting.faceid_det_size` / `faceid_det_thresh`). Model login
+# formasi bilan parallel, server javobidan OLDIN shular bilan yuklanadi;
+# profil kelgach detektor QAYTA YUKLANMASDAN sozlanadi
+# (`proctoring/identity/face_params.py`, `FaceEngine.apply_detection`).
+FACE_DET_SIZE_PX = _env_int("FACE_DET_SIZE", 640)
+FACE_DET_SIZE = (FACE_DET_SIZE_PX, FACE_DET_SIZE_PX)
 FACE_DET_THRESH = _env_float("FACE_DET_THRESH", 0.6)
 
 # Cosine similarity chegarasi — FAQAT ZAXIRA.
@@ -195,11 +197,11 @@ CUDA_DLL_DIR = _getenv("CUDA_DLL_DIR", "").strip()
 # ("Yaqinroq keling"). ArcFace yuzni 112x112 ga tekislaydi, shuning uchun
 # ~110 px dan kichik kadr upscale bo'lib, o'xshashlikni pasaytiradi.
 #
-# LOKAL: bu imtihon qoidasi emas, MODEL (112 px tekislash) va KADR
-# O'LCHAMI (`FRAME_WIDTH`, u ham lokal) xususiyati. Yana: qoida
-# `select_candidate_face` da va AI qatlami u bilan bir xil javob
-# berishi shart ("KADRDA KIM TALABGOR") - imtihon profiliga qarab
-# o'zgaradigan chegara ikki qatlamni ajratib yuborardi.
+# FAQAT ZAXIRA (egasi — `Setting.faceid_min_face_width`). Qoida
+# `select_candidate_face` da va AI qatlamida BIR XIL bo'lishi shart
+# ("KADRDA KIM TALABGOR"): ikkalasi joriy qiymatni bitta joydan oladi
+# (`proctoring/identity/face_params.min_face_width`), bu o'zgaruvchidan
+# to'g'ridan-to'g'ri emas.
 MIN_FACE_WIDTH_PX = _env_int("MIN_FACE_WIDTH_PX", 110)
 
 # ── FaceID oqimi: ZAXIRA (egasi — panel, `Setting.faceid_*`) ─────────
@@ -459,9 +461,16 @@ KIOSK_MODE = _env_bool("KIOSK_MODE", FULLSCREEN)
 # bloklanmaydi - u chiqishning yagona yo'li; `alt+shift` ham (til
 # almashtirishning yagona yo'li, ekranda til tugmasi yo'q). Nusxa/qo'yish (`ctrl+c`/`ctrl+v`) ham
 # yo'q: ular imtihon qoidasi va panelda imtihon profiliga yoziladi.
+#
+# `alt+z`, `alt+f9`, `alt+f10`, `alt+f1` - NVIDIA overlay (NVIDIA App /
+# GeForce Experience): menyu, ekranni yozish, oxirgi daqiqalarni saqlash
+# (Instant Replay), skrinshot. Usiz talabgor savollarni videoga yozib
+# chiqara olardi. Ikkinchi qatlam - ShadowPlay yordamchisini yopish
+# (`threat_rules` `nvidia_overlay`).
 DEFAULT_BLOCKED_HOTKEYS = (
     "alt+tab,alt+shift+tab,alt+esc,win,ctrl+esc,alt+f4,alt+space,"
-    "print screen,ctrl+shift+esc,f12,ctrl+shift+i"
+    "print screen,ctrl+shift+esc,f12,ctrl+shift+i,"
+    "alt+z,alt+f9,alt+f10,alt+f1"
 )
 BLOCKED_HOTKEYS = _env_list("BLOCKED_HOTKEYS", DEFAULT_BLOCKED_HOTKEYS)
 
@@ -533,6 +542,13 @@ THREAT_SCAN_ENABLED = _env_bool("THREAT_SCAN_ENABLED", KIOSK_MODE)
 # hodisa baribir yoziladi va proktor panelda ko'radi - faqat operator
 # imtihonni boshlay oladi.
 THREAT_BLOCK_EXAM = _env_bool("THREAT_BLOCK_EXAM", True)
+
+# «Texnik muammo» bandi va bitta sessiyadagi xabarlar soni — ZAXIRA
+# (egasi `config.technical_problem`, `Setting.is_enable_check_tp` /
+# `technical_problem_limit`; 0 — cheklanmagan). Chegarani server ham
+# majburlaydi.
+TECHNICAL_PROBLEM_ENABLED = _env_bool("TECHNICAL_PROBLEM_ENABLED", True)
+TECHNICAL_PROBLEM_LIMIT = _env_int("TECHNICAL_PROBLEM_LIMIT", 3)
 
 # E'tiborsiz qoldiriladigan qoida kodlari yoki jarayon nomlari (vergul
 # bilan): muassasaning o'z IT yordam agenti, inventarizatsiya dasturi.

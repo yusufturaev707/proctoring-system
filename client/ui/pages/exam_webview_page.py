@@ -42,13 +42,7 @@ from PyQt6.QtWebEngineCore import (
     QWebEngineUrlRequestInterceptor,
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
-from PyQt6.QtWidgets import (
-    QFrame,
-    QHBoxLayout,
-    QLabel,
-    QVBoxLayout,
-    QWidget,
-)
+from PyQt6.QtWidgets import QVBoxLayout, QWidget
 
 from config import CAMERA_FRAME_MAX_AGE_S, EVENT_BATCH_MAX, FACE_MATCH_THRESHOLD
 from services import local_archive, net_policy, runtime_settings
@@ -69,7 +63,8 @@ from services.workers import ApiWorker, WorkerHolder
 from ui.dialogs.finish_dialog import FinishDialog
 from ui.styles import COLORS
 from ui.dialogs.reload_dialog import ReloadDialog
-from ui.widgets.icons import GlyphButton, StatusDot
+from ui.widgets.brand import FloatingSeatTag
+from ui.widgets.exam_menu import ExamActionMenu
 from ui.pages.webview_errors import (
     ERR_BLOCKED_BY_CLIENT,
     LOAD_RETRY_BASE_S,
@@ -382,8 +377,8 @@ class ExamWebViewPage(QWidget):
         #
         # UZILISH TALABGORGA XALAQIT BERMAYDI: test sayti boshqa server va
         # u ishlab turgan bo'lishi mumkin, ya'ni talabgor ishlashda davom
-        # etadi. Ekranga xabar CHIQMAYDI - faqat pastki paneldagi nuqta
-        # qizaradi va yonida hisoblagich turadi (`_offline_label`).
+        # etadi. Ekranga xabar CHIQMAYDI - faqat amallar tugmasida qizil
+        # nishon, hisoblagich esa menyuning "Aloqa" bandida (`ExamActionMenu`).
         self._offline_since: Optional[float] = None
         #: Oxirgi uzilish davomiyligi (s) - sessiya yopilganda xabar uchun.
         self._last_outage_s = 0.0
@@ -489,6 +484,9 @@ class ExamWebViewPage(QWidget):
         self._error_panel.retry_requested.connect(self._on_error_retry)
 
         self._build_floating_bar()
+        # Kompyuter raqami (pastki chap): nazoratchi zalda mashinani shu
+        # raqam bilan qidiradi, imtihon sahifasida esa sarlavha yo'q.
+        self._seat_tag = FloatingSeatTag(self)
         self.overlay = BusyOverlay(self)
         # "Test ochilmoqda" - yuz tasdig'idan platformaning birinchi
         # muvaffaqiyatli yuklanishigacha (`ui/widgets/launch_screen.py`).
@@ -510,76 +508,52 @@ class ExamWebViewPage(QWidget):
 
     def _build_floating_bar(self) -> None:
         """
-        Brauzer ustidagi suzuvchi panel (MD3 elevated surface).
+        Brauzer ustidagi amallar tugmasi (`ui/widgets/exam_menu.py`).
 
-        PASTKI O'NG BURCHAKDA. Tepa qism platformaning o'z
-        sarlavhasi va tugmalari uchun ochiq qolishi kerak; pastki
-        o'ng burchak esa veb-sahifalarda deyarli har doim bo'sh
-        bo'ladi. Bu MD3 dagi FAB o'rni ham.
+        Ilgari bu doim ochiq panel edi (aloqa nuqtasi, qayta yuklash,
+        texnik muammo, yakunlash) va u butun imtihon davomida test
+        sahifasining pastki o'ng qismini yopib turardi. Endi bitta
+        SHAFFOF tugma: ostidagi matn ko'rinadi, to'rt amal bosilganda
+        ochiladi (MD3 FAB menu).
 
-        Panel LAYOUTDA EMAS - u sahifaning bevosita bolasi va
-        `resizeEvent` da joylashtiriladi. Layoutda bo'lsa u
-        brauzerdan joy olardi, ya'ni "to'liq ochilsin" talabi
-        bajarilmasdi.
+        PASTKI O'NG BURCHAKDA: tepa qism platformaning sarlavhasi va
+        taymeri uchun ochiq qolishi kerak. Tugma LAYOUTDA EMAS - sahifaning
+        bevosita bolasi va `resizeEvent` da joylashtiriladi.
+
+        Uchala amal ham shu yerda qoladi:
+          * QAYTA YUKLASH - sahifa qotib, lekin xato bermaganda yagona yo'l
+            (kioskda F5 va manzil satri yo'q, brauzer menyusi «Back» tufayli
+            o'chiq). Tasdiq bilan (`ReloadDialog`).
+          * YAKUNLASH - sessiyani to'g'ri yopadigan YAGONA yo'l: usiz u
+            faqat `close_stale_sessions` bilan test vaqti tugagach yig'ilardi
+            va shu vaqt talabgor boshqa mashinada qayta kira olmasdi.
         """
-        # Panel — dizayn tizimidagi KARTA (`QFrame[role="card"]`).
-        #
-        # O'z uslubini yozish mumkin edi, lekin global jadvaldagi
-        # `QWidget { background-color: ... }` qoidasi u bilan
-        # birlashib, burchaklarni to'rtburchak qilib qoldirardi.
-        # Karta selektori esa `QFrame` ga tegishli va u butun
-        # ilovada allaqachon shu tarzda chiziladi - panel qolgan
-        # kartalar bilan bir oilada bo'ladi.
-        self._bar = QFrame(self)
-        self._bar.setProperty("role", "card")
-        layout = QHBoxLayout(self._bar)
-        layout.setContentsMargins(14, 6, 8, 6)
-        layout.setSpacing(4)
-
-        self.status_dot = StatusDot(12)
-        layout.addWidget(self.status_dot, 0, Qt.AlignmentFlag.AlignVCenter)
-
-        # UZILISH HISOBLAGICHI - faqat aloqa yo'qligida, nuqta yonida.
-        # Panel pastki o'ng burchakda: test sahifasining sarlavhasi va
-        # taymeri (odatda tepada) yopilmaydi. Matn - faqat raqam; nima
-        # ekanini tooltip aytadi.
-        self._offline_label = QLabel(self._bar)
-        self._offline_label.setStyleSheet(
-            "color: {}; font-size: 12px; font-weight: 600; "
-            "background: transparent; padding: 0 4px 0 0;".format(COLORS["error"])
-        )
-        self._offline_label.setToolTip("Server bilan aloqa yo'q — shuncha vaqtdan beri")
-        self._offline_label.hide()
-        layout.addWidget(self._offline_label, 0, Qt.AlignmentFlag.AlignVCenter)
-
-        # QAYTA YUKLASH — sahifa qotib, lekin xato bermaganda yagona yo'l:
-        # kioskda F5 va manzil satri yo'q, brauzer menyusi esa ataylab
-        # o'chirilgan («Back» tufayli). Tasdiq bilan (`ReloadDialog`).
-        self.reload_btn = GlyphButton(
-            "refresh", size=38, tooltip="Test sahifasini qayta yuklash"
-        )
-        self.reload_btn.clicked.connect(self._on_reload_clicked)
-        layout.addWidget(self.reload_btn)
-
-        self.problem_btn = GlyphButton(
-            "warning", size=38, tooltip="Texnik muammo haqida xabar berish"
-        )
-        self.problem_btn.clicked.connect(self._on_technical_problem)
-        layout.addWidget(self.problem_btn)
-
-        # YAKUNLASH TUGMASI QOLDIRILDI. U sessiyani to'g'ri yopadigan
-        # YAGONA yo'l: usiz sessiya ochiq qolib, faqat
-        # `close_stale_sessions` bilan test vaqti tugagach yig'ilardi
-        # va o'sha vaqt ichida talabgor boshqa mashinada qayta kira
-        # olmasdi (`MainWindow._back_action` izohi).
-        self.finish_btn = GlyphButton(
-            "power", size=38, tone="danger", tooltip="Imtihonni yakunlash"
-        )
-        self.finish_btn.clicked.connect(self._on_finish_clicked)
-        layout.addWidget(self.finish_btn)
-
-        self._bar.adjustSize()
+        self._bar = ExamActionMenu(self, margin=_BAR_MARGIN)
+        self._bar.reload_requested.connect(self._on_reload_clicked)
+        self._bar.problem_requested.connect(self._on_technical_problem)
+        self._bar.finish_requested.connect(self._on_finish_clicked)
         self._update_status_tooltip()
+
+    def _show_seat(self) -> None:
+        """Raqamni chiqaradi va snackbar'ni uning USTIGA ko'taradi (ikkalasi chapda)."""
+        device = self._state.device
+        self._seat_tag.set_seat(device.number, code=device.inventory_code)
+        self.message.bottom_inset = (
+            self._seat_tag.height() + 8 if self._seat_tag.text else 0
+        )
+        self.message.reposition()
+
+    def _arm_technical_problem(self) -> None:
+        """
+        «Texnik muammo» bandi — imtihon profili bo'yicha (`technical_problem`).
+
+        O'chiq profilda band ko'rinmaydi. Chegara (`limit`) serverda
+        sanaladi: band javobdagi `remaining` 0 bo'lganda yoki server rad
+        etganda yashiriladi — client o'z hisobini yuritmaydi (qayta
+        ishga tushgan client sanog'ini yo'qotardi).
+        """
+        enabled = runtime_settings.get(self._state.config, "technical_problem.enabled")
+        self._bar.set_item_visible("problem", bool(enabled))
 
     def _update_status_tooltip(self) -> None:
         """
@@ -592,9 +566,9 @@ class ExamWebViewPage(QWidget):
         Qolgan holatlar `_status` da (log va testlar uchun) qoladi,
         ekranga chiqmaydi; proktor ularni panelda ko'radi.
         """
-        tooltip = self._status.get("network", "")
-        self.status_dot.setToolTip(tooltip)
-        self._bar.setToolTip(tooltip)
+        online = self._offline_since is None
+        elapsed = "" if online else format_clock(time.monotonic() - self._offline_since)
+        self._bar.set_network(online, elapsed, tooltip=self._status.get("network", ""))
 
     def _place_floating_bar(self) -> None:
         """
@@ -604,13 +578,11 @@ class ExamWebViewPage(QWidget):
         boshqaradi va sahifa qayta yuklanganda u panelni bosib
         qolishi mumkin.
         """
-        self._bar.adjustSize()
-        margin = _BAR_MARGIN
-        self._bar.move(
-            self.width() - self._bar.width() - margin,
-            self.height() - self._bar.height() - margin,
-        )
+        self._bar.reposition()
         self._bar.raise_()
+        if self._seat_tag.text:
+            self._seat_tag.reposition()
+            self._seat_tag.raise_()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -685,6 +657,8 @@ class ExamWebViewPage(QWidget):
         self._session_closed = False
         self._pending_access = access
         self._pending_camera = camera
+        self._show_seat()
+        self._arm_technical_problem()
         self._arm_local_archive()
 
         # Apparat profili SHU YERDA aniqlanadi va u fon thread'ida
@@ -1570,10 +1544,11 @@ class ExamWebViewPage(QWidget):
         etadi, hodisalar buferda kutadi. Test sayti ham ochilmasa - u
         o'zining xato ekranini ko'rsatadi (`WebErrorPanel`).
 
-        Nuqta QIZIL va pulsatsiya bilan, yonida hisoblagich: proktor yoki
-        operator yaqinlashsa, aloqa qancha vaqtdan beri yo'qligini ko'radi.
+        Amallar tugmasida QIZIL pulsli nishon, hisoblagich esa menyuning
+        "Aloqa" bandida va tooltip'da: proktor yoki operator yaqinlashsa,
+        aloqa qancha vaqtdan beri yo'qligini ko'radi. Yopiq tugma
+        hisoblagich bilan kengaymaydi - test matnini yopmasligi uchun.
         """
-        self.status_dot.set_online(online)
         now = time.monotonic()
         if online:
             if self._offline_since is not None:
@@ -1581,15 +1556,12 @@ class ExamWebViewPage(QWidget):
                 log.info("Server bilan aloqa tiklandi (%.0f s yo'q edi)", self._last_outage_s)
             self._offline_since = None
             self._offline_timer.stop()
-            self._offline_label.hide()
             self._status["network"] = "Aloqa bor"
         else:
             if self._offline_since is None:
                 self._offline_since = now
             self._offline_timer.start()
-            self._offline_label.show()
             self._tick_offline()
-        self._refit_bar()
         self._update_status_tooltip()
         # Uzilish hodisa oqimida ham qoladi. Bu bayonnoma uchun muhim:
         # uzilish paytida skrinshot va hodisalarda bo'shliq bo'ladi va
@@ -1606,7 +1578,6 @@ class ExamWebViewPage(QWidget):
         if self._offline_since is None:
             return
         elapsed = time.monotonic() - self._offline_since
-        self._offline_label.setText(format_clock(elapsed))
         self._status["network"] = "Server bilan aloqa yo'q: {}".format(format_clock(elapsed))
         self._update_status_tooltip()
 
@@ -1622,24 +1593,10 @@ class ExamWebViewPage(QWidget):
             self._last_outage_s = time.monotonic() - self._offline_since
         self._offline_since = None
         self._offline_timer.stop()
-        self._offline_label.hide()
-        self.status_dot.set_online(True)
         self._status["network"] = "Aloqa bor"
-        self._refit_bar()
-
-    def _refit_bar(self) -> None:
-        """
-        Panel kengligi o'zgardi (hisoblagich) - o'lcham va joy qayta.
-
-        Z-tartibga TEGILMAYDI (`_place_floating_bar` dan farqi): uzilish
-        "Test ochilmoqda" ekrani yoki xato ekrani paytida bo'lsa, panel
-        ularning ustiga chiqib qolmasligi kerak (`_raise_chrome`).
-        """
-        self._bar.adjustSize()
-        self._bar.move(
-            self.width() - self._bar.width() - _BAR_MARGIN,
-            self.height() - self._bar.height() - _BAR_MARGIN,
-        )
+        self._update_status_tooltip()
+        # Keyingi talabgor menyuni ochiq holda ko'rmasin.
+        self._bar.collapse(animated=False)
 
     @property
     def last_outage_seconds(self) -> float:
@@ -1799,7 +1756,7 @@ class ExamWebViewPage(QWidget):
                 self._opened_at = time.monotonic()
             self._error_panel.show_error(
                 "Test sahifasi ochilmadi",
-                "Test oynasini ochib bo'lmadi. «Qayta yuklash» ni bosing; "
+                "Test oynasini ochib bo'lmadi. «Sahifani yangilash» ni bosing; "
                 "takrorlansa administratorga murojaat qiling.",
             )
             self._retry_url = QUrl()
@@ -1858,7 +1815,7 @@ class ExamWebViewPage(QWidget):
                 )
                 self._error_panel.show_error(
                     "Test sahifasi qayta-qayta yopilmoqda",
-                    "«Qayta yuklash» ni bosing; takrorlansa administratorga "
+                    "«Sahifani yangilash» ni bosing; takrorlansa administratorga "
                     "murojaat qiling.",
                 )
             else:
@@ -2007,6 +1964,8 @@ class ExamWebViewPage(QWidget):
 
         from ui.dialogs.technical_problem_dialog import TechnicalProblemDialog
 
+        if not self._bar.is_item_visible("problem"):
+            return
         # Ota — OYNA, sahifa emas: dialog ekran markazida ochilishi
         # va butun dasturni modal qilib qulflashi kerak.
         dialog = TechnicalProblemDialog(self.window())
@@ -2019,11 +1978,29 @@ class ExamWebViewPage(QWidget):
             description=dialog.description,
             parent=self,
         )
-        worker.succeeded.connect(
-            lambda _: self.message.show_message("Muammo qayd etildi", "success")
-        )
-        worker.failed.connect(lambda message, code: self.message.show_message(message, "error"))
+        worker.succeeded.connect(self._on_problem_reported)
+        worker.failed.connect(self._on_problem_refused)
         self._workers.run(worker)
+
+    def _on_problem_reported(self, payload) -> None:
+        remaining = (payload or {}).get("remaining")
+        if remaining is not None and int(remaining) <= 0:
+            self._bar.set_item_visible("problem", False)
+            self.message.show_message(
+                "Muammo qayd etildi. Boshqa xabar yuborib bo'lmaydi — kerak bo'lsa "
+                "nazoratchiga murojaat qiling.",
+                "success",
+            )
+            return
+        self.message.show_message("Muammo qayd etildi", "success")
+
+    def _on_problem_refused(self, message: str, code: str) -> None:
+        # Profil o'chirilgan yoki chegara tugagan — tugma endi ma'nosiz.
+        if code in ("technical_problem_disabled", "technical_problem_limit"):
+            self._bar.set_item_visible("problem", False)
+            self.message.show_message(message, "warning")
+            return
+        self.message.show_message(message, "error")
 
     def _on_reload_clicked(self) -> None:
         """

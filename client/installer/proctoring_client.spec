@@ -471,14 +471,13 @@ def _filter_binaries(binaries):
 
 
 # --------------------------------------------------------------------------
-# Ikonka va versiya resursi — BITTA manbadan (logo.png, version.py)
+# Ikonka va versiya resursi — BITTA manbadan (logo_bba.svg, version.py)
 # --------------------------------------------------------------------------
 def _make_icon():
     target = WORK_DIR / "app.ico"
     try:
-        runpy.run_path(str(SPEC_DIR / "make_icon.py"), run_name="make_icon")["build_icon"](
-            CLIENT_DIR / "resources" / "images" / "logo.png", target
-        )
+        make_icon = runpy.run_path(str(SPEC_DIR / "make_icon.py"), run_name="make_icon")
+        make_icon["build_icon"](make_icon["DEFAULT_SOURCE"], target)
         return str(target)
     except Exception as exc:  # Pillow yo'q yoki logotip buzilgan
         print("[spec] OGOHLANTIRISH: ikonka yasalmadi ({}) — standart belgi".format(exc))

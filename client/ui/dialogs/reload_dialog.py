@@ -3,7 +3,7 @@
 
 NIMA UCHUN KERAK. Test platformasi ba'zan qotib qoladi (oq ekran,
 tugma javob bermaydi), lekin xato bermaydi — o'shanda xato ekrani va
-uning «Qayta yuklash» tugmasi chiqmaydi. Kioskda F5 ham, manzil satri
+uning «Sahifani yangilash» tugmasi chiqmaydi. Kioskda F5 ham, manzil satri
 ham yo'q, brauzer menyusi esa ataylab o'chirilgan
 (`exam_webview_page`, `NoContextMenu`: unda «Back» bor — talabgor
 platformaning oldingi sahifalariga qaytib ketardi).
@@ -51,7 +51,7 @@ class ReloadDialog(CardDialog):
     """Qayta yuklashni tasdiqlaydi. `exec()` -> `Accepted` = qayta yuklash."""
 
     def __init__(self, parent=None) -> None:
-        super().__init__(parent, title="Sahifani qayta yuklash", card_width=480,
+        super().__init__(parent, title="Sahifani yangilash", card_width=480,
                          padding=(32, 30, 32, 26))
         layout = self.body
 
@@ -62,7 +62,7 @@ class ReloadDialog(CardDialog):
         layout.addLayout(badge_row)
         layout.addSpacing(16)
 
-        title = QLabel("Test sahifasini qayta yuklaysizmi?")
+        title = QLabel("Test sahifasini yangilaysizmi?")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         apply_font(title, 22, bold=True, extra="color: {};".format(COLORS["text"]))
         layout.addWidget(title)
@@ -102,7 +102,7 @@ class ReloadDialog(CardDialog):
         self.back_btn.clicked.connect(self.reject)
         buttons.addWidget(self.back_btn, 1)
 
-        self.reload_btn = QPushButton("Qayta yuklash")
+        self.reload_btn = QPushButton("Sahifani yangilash")
         self.reload_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.reload_btn.setStyleSheet(primary_button_style(48))
         self.reload_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)

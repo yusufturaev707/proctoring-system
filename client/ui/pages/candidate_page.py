@@ -132,6 +132,10 @@ class CandidatePage(QWidget):
     """Talabgorni JSHSHIR bo'yicha topish."""
 
     candidate_ready = pyqtSignal(object)  # Candidate
+    #: Talabgor topildi (karta ko'rsatildi), «Davom etish» hali bosilmagan.
+    #: `MainWindow` shu paytda yuz kamerasini oldindan ochadi
+    #: (`FaceIDPage.prewarm_camera`).
+    candidate_found = pyqtSignal()
     #: `MainWindow` ikkalasiga ham ulanadi, lekin bu sahifa ularni
     #: EMITLAMAYDI - yuqoridagi izohga qarang. Signallar oqim
     #: shartnomasi qismi bo'lgani uchun saqlanadi.
@@ -150,6 +154,12 @@ class CandidatePage(QWidget):
         #: taymer uni har 30 s da qayta chizmasligi va boshqa xabarni
         #: (masalan bron xatosini) bosib ketmasligi uchun.
         self._check_warned = False
+        #: Natija kartasi ko'rsatayotgan JSHSHIR ("" — karta yo'q). Shu
+        #: raqam maydonda turguncha «TEKSHIRISH» o'chiq: qayta bosish
+        #: platformaga takroriy so'rov yuborib JSHSHIR throttle
+        #: byudjetini sarflardi va ekrandagi natijani hech narsa
+        #: o'zgartirmasdan qaytadan chizardi.
+        self._found_pinfl = ""
         self._setup_ui()
         network_status().changed.connect(self._on_network_changed)
         self._check_timer = QTimer(self)
@@ -501,6 +511,7 @@ class CandidatePage(QWidget):
             captions=captions,
         )
 
+        self._found_pinfl = ""
         self.pinfl_input.clear()
         self.message.clear_message()
         self._check_warned = False
@@ -626,6 +637,12 @@ class CandidatePage(QWidget):
         baribir yashil bo'ladi va rang orqali keladigan signal
         o'sha yerda yo'qoladi.
         """
+        # Raqam o'zgardi — ekrandagi natija ENDI BOSHQA odamniki: karta
+        # yashiriladi, aks holda operator yangi JSHSHIR yonida eski
+        # talabgorni ko'rib «Yuzni tekshirish» ni bosib yuborardi.
+        if self._found_pinfl and digits != self._found_pinfl:
+            self._found_pinfl = ""
+            self.result_card.setVisible(False)
         left = PINFL_LENGTH - len(digits)
         complete = left <= 0
         self.counter_label.setText("{} / {}".format(len(digits), PINFL_LENGTH))
@@ -634,17 +651,22 @@ class CandidatePage(QWidget):
                 COLORS["primary_dark"] if complete else COLORS["text_muted"]
             )
         )
-        if complete:
+        if self._found_pinfl:
+            self.hint_label.setText("Talabgor topildi — boshqasi uchun raqamni o'zgartiring")
+        elif complete:
             self.hint_label.setText("Tayyor — Enter bosing")
         elif digits:
             self.hint_label.setText("Yana {} ta raqam".format(left))
         else:
             self.hint_label.setText("Enter tugmasi bilan ham qidirish mumkin")
-        self.lookup_btn.setEnabled(complete)
+        self.lookup_btn.setEnabled(complete and not self._found_pinfl)
 
     def _on_lookup(self) -> None:
         pinfl = self.pinfl_input.text().strip()
         exam = self._state.selected_exam
+        if self._found_pinfl and pinfl == self._found_pinfl:
+            # Enter ham tugma bilan bir qoidada (tugma o'chiq).
+            return
         if len(pinfl) != PINFL_LENGTH:
             self.message.show_message("JSHSHIR 14 xonali bo'lishi kerak", "warning")
             return
@@ -682,7 +704,6 @@ class CandidatePage(QWidget):
     def _on_found(self, payload) -> None:
         self._network_failed = False
         self.overlay.stop()
-        self.lookup_btn.setEnabled(True)
 
         candidate = Candidate.from_api(payload or {})
         self._state.candidate = candidate
@@ -724,6 +745,8 @@ class CandidatePage(QWidget):
             self.reference_badge.setStyleSheet(badge_style("warning"))
 
         self.result_card.setVisible(True)
+        self._found_pinfl = self._state.pinfl
+        self._update_pinfl_state(self._found_pinfl)
         # "Talabgor topildi" degan xabar ATAYLAB yo'q: natija
         # kartasining o'zi paydo bo'lishi ayni shu narsani aytadi
         # va uni matn bilan takrorlash ekranga ma'lumot qo'shmasdan
@@ -733,6 +756,7 @@ class CandidatePage(QWidget):
         # Fokus KEYINGI qadamga o'tadi: operator natijani o'qib,
         # Enter bilan davom eta oladi va sichqonchaga qo'l uzatmaydi.
         self.next_btn.setFocus()
+        self.candidate_found.emit()
 
     def _set_meta_visible(self, key: str, visible: bool) -> None:
         for widget in (self._value_labels.get(key), self._meta_captions.get(key)):

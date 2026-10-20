@@ -80,6 +80,12 @@ SPECS: dict[str, Spec] = {
     # Test davomida yuz juda uzoq (`face_presence.FaceEpisodes`), soniyada.
     "face.far_warn_s": Spec("FACE_FAR_WARN_S", float, minimum=1, maximum=600),
     "face.far_unverified_s": Spec("FACE_FAR_UNVERIFIED_S", float, minimum=1, maximum=3600),
+    # Yuz detektori (`proctoring/identity/face_params.py`).
+    "face.det_size": Spec("FACE_DET_SIZE_PX", int, minimum=160, maximum=1280),
+    "face.det_thresh": Spec("FACE_DET_THRESH", float, minimum=0.1, maximum=0.95),
+    "face.min_face_width": Spec("MIN_FACE_WIDTH_PX", int, minimum=0, maximum=480),
+    "technical_problem.enabled": Spec("TECHNICAL_PROBLEM_ENABLED", bool),
+    "technical_problem.limit": Spec("TECHNICAL_PROBLEM_LIMIT", int, minimum=0, maximum=50),
     # --- Ekran yozuvi (imtihon profili, test sahifasi ochilganda) ---
     "capture.screen_record": Spec("SCREEN_RECORD_ENABLED", bool),
     "capture.record_fps": Spec("SCREEN_RECORD_FPS", float, minimum=0.5, maximum=15),

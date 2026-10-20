@@ -341,6 +341,27 @@ class SeatInUse(DomainError):
     default_code = "seat_in_use"
 
 
+class TechnicalProblemDisabled(DomainError):
+    """Imtihon profilida «Texnik muammo» o'chirilgan (`Setting.is_enable_check_tp`)."""
+
+    status_code = status.HTTP_403_FORBIDDEN
+    default_detail = "Bu imtihonda texnik muammo xabari o'chirilgan — nazoratchiga murojaat qiling"
+    default_code = "technical_problem_disabled"
+
+
+class TechnicalProblemLimit(DomainError):
+    """
+    Bitta sessiyadagi xabarlar chegarasi tugadi (`Setting.technical_problem_limit`).
+
+    Chegara SERVERDA: client tugmani yashiradi, lekin eski client yoki
+    takroriy so'rov (ikki marta bosish) uni chetlab o'tmasligi kerak.
+    """
+
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = "Texnik muammo xabarlari soni tugadi — nazoratchiga murojaat qiling"
+    default_code = "technical_problem_limit"
+
+
 # --------------------------------------------------------------------------
 # Erkin joylashuv (`Setting.is_booking=False`) — JSHSHIR tekshiruvi.
 #
