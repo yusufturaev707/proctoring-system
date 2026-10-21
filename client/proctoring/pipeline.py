@@ -507,10 +507,16 @@ class ProctoringPipeline(QThread):
 
         if self._identity is not None and self._rates["identity"].due(now):
             identity = self._timed("identity", self._identity.analyse, frame)
-            primary = identity.primary if identity is not None else None
+            # FaceID ishchisi (`_on_face_result`) bilan BIR XIL ma'no:
+            # `(vektor, odamlar)` — vektor faqat bitta talabgor yuzida;
+            # begona shaxs bor kadr — `(None, 2+)`, uzoqdagi yuz —
+            # `(None, 1)`. Ilgari bu yerda kadrdagi BARCHA yuzlar sanalardi:
+            # orqa qatordagi odam davriy FaceID'ni butun imtihon davomida
+            # to'xtatardi, yolg'iz uzoqdagi yuz esa solishtirilib "mos
+            # kelmadi" berardi.
             self._last_identity = (
-                primary.embedding if primary is not None else None,
-                identity.count if identity is not None else 0,
+                identity.comparable_embedding if identity is not None else None,
+                identity.people if identity is not None else 0,
             )
             self._last_identity_at = now
 

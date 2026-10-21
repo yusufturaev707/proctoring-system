@@ -38,25 +38,14 @@ from config import (
 from proctoring.camera.liveness import DEAD_STREAM_MESSAGE, FrameLiveness
 from proctoring.camera.liveness import applies as liveness_applies
 from proctoring.identity import face_params
-from proctoring.identity.candidate import match_reference, normalize_reference, selection_score
+from proctoring.identity.candidate import (
+    normalize_reference,
+    select_faces,
+    selection_score,
+)
 
 log = logging.getLogger(__name__)
 
-#: Ikkinchi yuz ASOSIYSINING shuncha ulushidan KATTA bo'lsa —
-#: "kadrda bir nechta odam", aks holda u fon deb e'tiborsiz
-#: qoldiriladi.
-#:
-#: NIMA UCHUN O'LCHAM BO'YICHA. Yuz kengligi masofaga TESKARI
-#: proporsional: kamera oldida o'tirgan talabgor ~60 sm da, orqa
-#: qatordagi odam ~150 sm da — nisbat ~0.4. Yonida turgan odam
-#: (~80 sm) esa ~0.75 beradi va u AYNAN shubhali holat: suflyor
-#: talabgorga egilib turadi. Shuning uchun 0.7 — "orqadagi odam"
-#: bilan "yonidagi odam" orasidagi chegara.
-#:
-#: Qat'iy piksel chegarasi bu ishni bajara olmasdi: u kameraning
-#: ko'rish burchagiga va rezolyutsiyasiga bog'liq, nisbat esa
-#: ikkalasidan ham mustaqil.
-_DOMINANCE_RATIO = 0.7
 
 #: Qayta ulanish kechikishlari (soniya), oxirgisi takrorlanadi.
 #:
@@ -171,11 +160,10 @@ def select_candidate_face(faces: list, reference=None, min_score=None) -> tuple:
     ya'ni zalda o'tirgan talabgor tasdiqdan o'ta olmasdi va operator
     uning sababini ekrandan topa olmasdi.
 
-    QOIDA AI QATLAMIDAGI BILAN BIR XIL
-    (`proctoring/identity/face_identity.py`: "eng katta yuz —
-    asosiy, uzoqdagi odam talabgorning o'rnini egallamasligi
-    kerak"). Ikki joyda ikki xil javob bo'lsa, FaceID bir odamni,
-    kuzatuv boshqasini "talabgor" deb hisoblardi.
+    QOIDA AI QATLAMI BILAN BITTA FUNKSIYA (`candidate.select_faces`,
+    `FaceIdentity.analyse` ham shuni chaqiradi). Ikki joyda ikki xil
+    javob bo'lsa, FaceID bir odamni, kuzatuv boshqasini "talabgor"
+    deb hisoblardi.
 
     Uch bosqich va ularning tartibi muhim:
 
@@ -188,7 +176,7 @@ def select_candidate_face(faces: list, reference=None, min_score=None) -> tuple:
       2. eng kattasi ASOSIY deb olinadi — u kameraga eng yaqin
          odam, ya'ni kompyuter oldida o'tirgan talabgor;
       3. qolganlaridan biri undan sezilarli kichik bo'lmasa
-         (`_DOMINANCE_RATIO`) — bu haqiqatan HAL QILIB BO'LMAYDIGAN
+         (`candidate.DOMINANCE_RATIO`) — bu haqiqatan HAL QILIB BO'LMAYDIGAN
          holat: ikki odam bir xil masofada turibdi va qaysi biri
          talabgor ekani noma'lum. Shunda `multiple` qaytadi va
          hech kim solishtirilmaydi.
@@ -209,39 +197,23 @@ def select_candidate_face(faces: list, reference=None, min_score=None) -> tuple:
     bo'lmasa (talabgor kadrda yo'q yoki almashtirilgan) — yuqoridagi
     qoida o'zgarishsiz.
     """
-    if not faces:
-        return "none", None, []
-
-    ordered = sorted(faces, key=_face_width, reverse=True)
-    # Chaqiruv paytida o'qiladi: profil imtihon tanlangach keladi.
-    min_width = face_params.min_face_width()
-    near = (
-        [face for face in ordered if _face_width(face) >= min_width]
-        if min_width > 0
-        else list(ordered)
+    # Qoida BITTA joyda (`candidate.select_faces`) — AI qatlami ham shuni
+    # chaqiradi. Minimal kenglik CHAQIRUV paytida o'qiladi: profil imtihon
+    # tanlangach keladi.
+    selection = select_faces(
+        faces, reference,
+        min_score=selection_score(min_score),
+        min_width=face_params.min_face_width(),
+        width_of=_face_width,
+        embedding_of=lambda face: face.get("embedding"),
     )
-    if not near:
+    if selection.state == "far":
         # Yuz bor, lekin hammasi juda uzoqda. Bu "yuz yo'q" emas:
         # operatorga aytiladigan gap boshqa — "yaqinroq keling".
-        return "far", None, ordered
-
-    if reference is not None:
-        matched, _score = match_reference(
-            near, reference,
-            min_score=selection_score(min_score),
-            min_width=0,  # `near` allaqachon minimal kenglikdan o'tgan
-            width_of=_face_width,
-            embedding_of=lambda face: face.get("embedding"),
-        )
-        if matched is not None and matched is not near[0]:
-            return "multiple", None, []
-
-    main = near[0]
-    limit = _face_width(main) * _DOMINANCE_RATIO
-    if any(_face_width(face) >= limit for face in near[1:]):
-        return "multiple", None, []
-
-    return "ok", main, [face for face in ordered if face is not main]
+        return "far", None, list(selection.ignored)
+    if selection.state != "ok":
+        return selection.state, None, []
+    return "ok", selection.candidate, list(selection.ignored)
 
 
 def source_for_role(layout, role: str = "primary", *, stream_url_provider=None):

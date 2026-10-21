@@ -37,9 +37,20 @@ from typing import Optional
 import numpy as np
 
 from proctoring.identity import face_params
-from proctoring.identity.candidate import match_reference, normalize_reference, selection_score
+from proctoring.identity.candidate import normalize_reference, select_faces, selection_score
 
 log = logging.getLogger(__name__)
+
+
+def _score(reference: np.ndarray, embedding: np.ndarray) -> Optional[int]:
+    """Etalonga o'xshashlik bali (`similarity_score` shkalasi) yoki `None`."""
+    from services.face_engine import similarity_score
+
+    try:
+        cosine = float(np.dot(reference, embedding))
+    except (TypeError, ValueError):
+        return None
+    return similarity_score(cosine) if np.isfinite(cosine) else None
 
 
 @dataclass
@@ -51,6 +62,9 @@ class Face:
     embedding: Optional[np.ndarray] = None
     #: `(106, 2)` yoki `(5, 2)` — nigoh moduli uchun.
     landmarks: Optional[np.ndarray] = None
+    #: Etalonga o'xshashlik bali (0..100) — dalil belgisida "kim" degan
+    #: savolga javob. Etalon yo'q yoki yuz e'tiborsiz bo'lsa `None`.
+    score: Optional[int] = None
 
     @property
     def width(self) -> int:
@@ -69,12 +83,17 @@ class IdentityResult:
     """Bitta kadr uchun shaxs holati."""
 
     faces: list = field(default_factory=list)
-    #: Asosiy yuz — TALABGOR: etalonga mos yuz (`candidate.match_reference`),
+    #: Asosiy yuz — TALABGOR: etalonga mos yuz (`candidate.select_faces`),
     #: mos yuz bo'lmasa kadrdagi eng KATTASI (kameraga eng yaqin odam).
     primary: Optional[Face] = None
     #: `primary` etalon bo'yicha tanlanganmi (o'lcham bo'yicha emas).
     matched: bool = False
-    #: Etalonga o'xshashlik (0..1). Etalon yo'q bo'lsa `None`.
+    #: `candidate.FaceSelection.state`: none | far | multiple | ok.
+    state: str = "none"
+    #: Talabgor yonidagi BEGONA SHAXSLAR (fon va uzoqdagilar kirmaydi).
+    strangers: list = field(default_factory=list)
+    #: Etalonga o'xshashlik (0..1). Etalon yo'q yoki yuz juda uzoq
+    #: (`far` — embedding ishonchsiz) bo'lsa `None`.
     similarity: Optional[float] = None
     #: Yuzning kadr kengligiga nisbati — "uzoq/yaqin" uchun.
     face_ratio: float = 0.0
@@ -88,6 +107,22 @@ class IdentityResult:
     @property
     def has_face(self) -> bool:
         return self.primary is not None
+
+    @property
+    def comparable_embedding(self) -> Optional[np.ndarray]:
+        """
+        Davriy FaceID solishtiradigan vektor — FaceID ishchisi bilan bir xil
+        qoida: faqat `ok` (bitta talabgor yuzi). Uzoqdagi yuz va begona
+        shaxs bor kadr "solishtirib bo'lmadi".
+        """
+        if self.state != "ok" or self.primary is None:
+            return None
+        return self.primary.embedding
+
+    @property
+    def people(self) -> int:
+        """Kadrda hisobga olinadigan odamlar: talabgor + begona shaxslar (fonsiz)."""
+        return 0 if self.primary is None else 1 + len(self.strangers)
 
     def as_dict(self) -> dict:
         return {
@@ -157,35 +192,38 @@ class FaceIdentity:
         if not raw:
             return IdentityResult()
 
-        # Eng katta yuz — asosiy. Kadrga tasodifan tushgan uzoqdagi
-        # odam (koridordan o'tayotgan) talabgorning o'rnini
-        # egallamasligi kerak.
+        # KIM TALABGOR, KIM BEGONA — FaceID ishchisi bilan BITTA qoida
+        # (`candidate.select_faces`): etalonga mos yuz talabgor (begona
+        # odamning yuzi kattaroq bo'lsa ham), mos yuz bo'lmasa eng
+        # kattasi; uning yonidagi yuzlar begona shaxs, uzoqdagi va
+        # orqadagi yuzlar fon. Hamma yuz `faces` da qoladi.
+        selection = select_faces(
+            raw, self._reference,
+            min_score=self._select_score,
+            # Minimal kenglik — joriy profil qiymati (`face_params`).
+            min_width=face_params.min_face_width(),
+            width_of=lambda item: item.width,
+            embedding_of=lambda item: item.embedding,
+        )
         raw.sort(key=lambda item: item.width, reverse=True)
-        primary = raw[0]
-        # ETALON USTUN: kameraga egilgan begona odamning yuzi kattaroq
-        # bo'lsa ham talabgor - etalonga mos yuz. Qoida FaceID ishchisi
-        # bilan BITTA (`camera_worker.select_candidate_face`,
-        # `candidate.match_reference`). Begona odam yashirilmaydi:
-        # `faces` da qoladi va `multiple_faces` beradi.
-        matched = None
-        if self._reference is not None and len(raw) > 1:
-            matched, _score = match_reference(
-                raw, self._reference,
-                min_score=self._select_score,
-                # FaceID ishchisi bilan BITTA joriy qiymat (`face_params`).
-                min_width=face_params.min_face_width(),
-                width_of=lambda item: item.width,
-                embedding_of=lambda item: item.embedding,
-            )
-            if matched is not None:
-                primary = matched
+        primary = selection.primary
+
+        if self._reference is not None:
+            # Har bir HISOBGA OLINADIGAN yuzning bali: dalil belgisida
+            # talabgor ham, begona shaxs ham raqam bilan ko'rinadi. Fon
+            # va uzoqdagi yuzlar baholanmaydi — embedding ishonchsiz.
+            for face in (primary, *selection.strangers):
+                if selection.state != "far" and face.embedding is not None:
+                    face.score = _score(self._reference, face.embedding)
 
         height, width = frame.shape[:2]
         center_x, center_y = primary.center
         result = IdentityResult(
             faces=raw,
             primary=primary,
-            matched=matched is not None,
+            matched=selection.matched,
+            state=selection.state,
+            strangers=list(selection.strangers),
             face_ratio=primary.width / max(1, width),
             offset=float(
                 max(
@@ -195,7 +233,15 @@ class FaceIdentity:
             ),
         )
 
-        if self._reference is not None and primary.embedding is not None:
+        # UZOQDAGI yuz (`far`) SOLISHTIRILMAYDI: ArcFace uni 112x112 ga
+        # cho'zadi va ball sun'iy pasayadi — joyidan turgan talabgor
+        # o'rnida kadrda qolgan uzoqdagi odam `face_mismatch` (jiddiylik 3)
+        # berardi. FaceID ishchisida ham shu holat "yaqinroq keling".
+        if (
+            self._reference is not None
+            and selection.state != "far"
+            and primary.embedding is not None
+        ):
             result.similarity = float(np.dot(self._reference, primary.embedding))
         return result
 

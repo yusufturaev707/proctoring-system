@@ -314,21 +314,32 @@ natija eskirgan `_DETECTION_TTL_MS`); foiz oval tepasida.
 
 **Kadrda kim talabgor** — `camera_worker.select_candidate_face`:
 `width < face_params.min_face_width()` tushadi → eng kattasi asosiy → ikkinchisi
-> 0.7 × asosiy bo'lsa `multiple`. Uchinchi qadam MAJBURIY: usiz kameraga
+> 0.7 × asosiy bo'lsa `multiple` (`candidate.select_faces`). Uchinchi qadam MAJBURIY: usiz kameraga
 egilgan suflyor "talabgor" bo'lib solishtirilardi. Qoida
 `identity/face_identity.py` (eng katta yuz) bilan bir xil bo'lishi shart.
 Chetlatilgan yuzlar belgilanmaydi. Serverga `faces_detected` har doim `1`
 (`verify_initial_face` boshqasini qabul qilmaydi).
 
-**Test davomida talabgor — ETALONGA MOS yuz**, o'lchamidan qat'i nazar
-(`proctoring/identity/candidate.py:match_reference`; ikkala yo'l —
-`select_candidate_face(reference=)` va `FaceIdentity.analyse` — SHUNI
-chaqiradi). Etalon — `AppState.face_reference` (`CameraWorker.set_reference`
+**Test davomida talabgor — ETALONGA MOS yuz**, o'lchamidan qat'i nazar.
+Qoida BITTA funksiyada — `proctoring/identity/candidate.py:select_faces`
+(holat `none`/`far`/`multiple`/`ok`, `primary`, `candidate`, `strangers`,
+`ignored`); FaceID ishchisi (`select_candidate_face(reference=)`) va AI
+(`FaceIdentity.analyse`) FAQAT shuni chaqiradi — ikkinchi nusxa yozmang.
+Etalon — `AppState.face_reference` (`CameraWorker.set_reference`
 `_attach_camera` da; AI yo'lida `set_reference`). Tanlov bali
 `min(25, min_score_exam)` (`selection_score`) — qaror EMAS, "mos/mos emas"
-avvalgidek imtihon chegarasi bilan. Kattaroq begona yuz fon bo'la olmaydi:
-FaceID ishchisida `multiple` (solishtirilmaydi), AI'da `faces` da qoladi
-(`multiple_faces`). Mos yuz yo'q — eski o'lcham qoidasi O'ZGARISHSIZ
+avvalgidek imtihon chegarasi bilan. **Begona shaxs** — talabgor yuzining
+`DOMINANCE_RATIO` (0.7) ulushidan katta boshqa yuz (talabgordan kattasi
+doim); kichigi va minimal kenglikdan tori — fon, sanalmaydi. Ikkala yo'lda:
+begona shaxs bor — `multiple` (davriy FaceID solishtirmaydi, AI'da
+`multiple_faces`); yolg'iz uzoqdagi yuz (`far`) — solishtirilmaydi (AI'da
+`similarity = None`, `face_mismatch` yo'q). Pipeline davriy FaceID'ga
+`(comparable_embedding, people)` beradi — `_on_face_result` bilan bir xil
+ma'no; kadrdagi BARCHA yuzlarni sanamang (orqa qatordagi odam tekshiruvni
+butun imtihon davomida to'xtatardi). **Dalil belgisi** (`_identity_marks`):
+"Talabgor · N%" FAQAT etalonga mos yuzda, mos bo'lmasa asosiy yuz
+"Tasdiqlanmagan · N%", begonalar "Begona shaxs · N%"; fon belgilanmaydi.
+Mos yuz yo'q — eski o'lcham qoidasi O'ZGARISHSIZ
 (almashtirilgan talabgor "mos kelmadi" beradi). Eng katta yuzning
 `MIN_RELATIVE_WIDTH` (0.4) ulushidan kichik yuz tanlanmaydi — orqada
 turgan haqiqiy talabgor joyidagi boshqa odamni yashirmasligi uchun.

@@ -103,6 +103,36 @@ def _face_mark(identity, features, label: str) -> list:
     return _marks(_mark(label, "face", primary.bbox, features))
 
 
+def _identity_marks(identity, features) -> list:
+    """
+    "Kim kim" — talabgor va begona shaxslar, etalonga ballari bilan.
+
+    Talabgor deb FAQAT etalonga mos kelgan yuz yoziladi (`matched`).
+    Mos yuz yo'q bo'lsa asosiy yuz "Tasdiqlanmagan" — u talabgor boshini
+    burgani ham, uning o'rnidagi boshqa odam ham bo'lishi mumkin; ilgari
+    eng katta yuz shartsiz "Talabgor" deb belgilanardi va dalil kadrida
+    begona odam talabgor bo'lib ko'rinardi. Fon yuzlar belgilanmaydi.
+    """
+    def label(text: str, face) -> str:
+        score = getattr(face, "score", None)
+        return text if score is None else "{} · {}%".format(text, score)
+
+    primary = identity.primary
+    if primary is None:
+        return []
+    if identity.matched:
+        main = _mark(label("Talabgor", primary), "student", primary.bbox, features)
+    elif identity.similarity is None and getattr(primary, "score", None) is None:
+        main = _mark("Asosiy yuz", "face", primary.bbox, features)  # etalonsiz rejim
+    else:
+        main = _mark(label("Tasdiqlanmagan", primary), "face", primary.bbox, features)
+    others = [
+        _mark(label("Begona shaxs", face), "person", face.bbox, features)
+        for face in identity.strangers[:9]
+    ]
+    return _marks(main, *others)
+
+
 @dataclass
 class FrameFeatures:
     """
@@ -265,10 +295,13 @@ class BehaviorAnalyzer:
             self._observe_two_stage("no_face", features, now, severity_low=2)
             return
 
-        if identity.count > 1:
-            # IKKINCHI ODAM. Bu darhol shubhali, lekin baribir
-            # temporal tasdiqlashdan o'tadi: kadr chetidan o'tib
-            # ketgan xodim bir-ikki kadrda ko'rinishi mumkin.
+        if identity.strangers:
+            # BEGONA SHAXS — talabgor yonidagi yuz (`candidate.select_faces`:
+            # talabgor yuzining `DOMINANCE_RATIO` ulushidan katta). Orqa
+            # qatordagi talabgor va uzoqdan o'tgan odam — fon, ular
+            # sanalmaydi: ilgari kadrdagi HAR yuz shu hodisani (jiddiylik
+            # 3, dalil klipi) berardi. Baribir temporal tasdiqdan o'tadi:
+            # kadr chetidan o'tib ketgan xodim bir-ikki kadrda ko'rinadi.
             self._engine.observe(
                 Condition(
                     key="multiple_faces",
@@ -278,18 +311,10 @@ class BehaviorAnalyzer:
                 ),
                 confidence=1.0,
                 payload={
-                    "faces": identity.count,
-                    # `primary` — talabgor (`face_identity` qoidasi:
-                    # etalonga mos yuz, bo'lmasa eng kattasi), qolganlari —
-                    # kadrdagi boshqa yuzlar.
-                    "marks": _marks(*[
-                        _mark(
-                            "Talabgor" if face is identity.primary else "Boshqa yuz",
-                            "student" if face is identity.primary else "person",
-                            face.bbox, features,
-                        )
-                        for face in identity.faces[:10]
-                    ]),
+                    "faces": identity.people,
+                    "strangers": len(identity.strangers),
+                    "matched": identity.matched,
+                    "marks": _identity_marks(identity, features),
                 },
                 now=now,
             )
