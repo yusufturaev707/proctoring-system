@@ -128,9 +128,12 @@ def _serialize(setting) -> dict:
         },
         "capture": {
             "screen_record": setting.is_screen_record,
-            # Skrinshot BUYRUQ bilan (interval yo'q); `upload` - serverga
-            # ham yuborilsinmi, mashinada esa har doim saqlanadi.
+            # Skrinshot BUYRUQ bilan (interval yo'q). Saqlash joyi - ikki
+            # mustaqil bayroq: `upload` serverga, `local` mashina arxiviga
+            # (ikkalasi birdan o'chiq bo'lmaydi - `Setting` cheklovi).
+            # `local` ni bilmaydigan eski client mashinada saqlayveradi.
             "upload": setting.is_screenshot_upload,
+            "local": setting.is_screenshot_local,
             "quality": setting.screenshot_quality,
             "max_width": setting.screenshot_max_width,
             # Foizda (5..40), client ulushga o'zi o'giradi: panel ham,
@@ -484,6 +487,7 @@ def _default_config() -> dict:
             # tizim dalilni jimgina yozmay qo'ymasligi kerak.
             "screen_record": True,
             "upload": True,
+            "local": True,
             "quality": 80,
             "max_width": 1920,
             "record_fps": 5,

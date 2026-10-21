@@ -25,8 +25,9 @@ CURRENT = "https://test.uz/exam/question/7"
 
 
 def _page(*, exam_open=True, error_visible=False, timer_active=False):
-    return SimpleNamespace(
+    page = SimpleNamespace(
         _exam_open=exam_open,
+        _modal_dialog=None,
         web_view=SimpleNamespace(url=lambda: QUrl(CURRENT)),
         _reload_timer=mock.Mock(isActive=mock.Mock(return_value=timer_active)),
         _error_panel=mock.Mock(isVisible=mock.Mock(return_value=error_visible)),
@@ -35,6 +36,8 @@ def _page(*, exam_open=True, error_visible=False, timer_active=False):
         _retry_url=QUrl(),
         window=lambda: None,
     )
+    page._run_dialog = lambda dialog: ExamWebViewPage._run_dialog(page, dialog)
+    return page
 
 
 def _click(page, *, accepted=True):

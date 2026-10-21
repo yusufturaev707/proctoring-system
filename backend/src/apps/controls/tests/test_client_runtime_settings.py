@@ -48,6 +48,7 @@ RUNTIME_FIELDS = {
     ("capture", "record_width"): "screen_record_width",
     ("capture", "record_pip_percent"): "screen_record_pip_percent",
     ("capture", "upload"): "is_screenshot_upload",
+    ("capture", "local"): "is_screenshot_local",
     ("capture", "camera_overlay"): "is_screenshot_camera_overlay",
     ("capture", "camera_overlay_percent"): "screenshot_pip_percent",
     ("rdp", "block_exam"): "is_threat_block_exam",
@@ -91,6 +92,8 @@ class ConfigShapeTests(TestCase):
                 self.assertEqual(_at(default, path), model_default)
 
     def test_serialize_carries_profile_values(self):
+        # `is_screenshot_local` alohida testda: uni `upload=False` bilan
+        # birga o'chirib bo'lmaydi (`setting_screenshot_has_destination`).
         setting = factories.make_setting(
             faceid_guide_seconds=0,
             faceid_match_streak=5,
@@ -120,6 +123,20 @@ class ConfigShapeTests(TestCase):
         for path, field in RUNTIME_FIELDS.items():
             with self.subTest(key=".".join(path)):
                 self.assertEqual(_at(config, path), getattr(setting, field))
+
+    def test_serialize_server_only_screenshots(self):
+        """«Faqat serverda»: mashina arxivi o'chiq, serverga yuborish yoqiq."""
+        config = services._serialize(
+            factories.make_setting(is_screenshot_local=False, is_screenshot_upload=True)
+        )
+        self.assertFalse(config["capture"]["local"])
+        self.assertTrue(config["capture"]["upload"])
+
+    def test_screenshot_needs_a_destination_in_database(self):
+        from django.db import IntegrityError, transaction
+
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            factories.make_setting(is_screenshot_local=False, is_screenshot_upload=False)
 
     def test_presence_interval_comes_from_server_constant(self):
         config = services._serialize(factories.make_setting())
@@ -187,6 +204,24 @@ class SettingApiValidationTests(TestCase):
         # Faqat birinchisini o'zgartirish ham saqlangan ikkinchisi bilan solishtiriladi.
         self.assertEqual(self._patch(faceid_far_warn_s=200).status_code, 400)
         self.assertEqual(self._patch(faceid_far_warn_s=60, faceid_far_unverified_s=60).status_code, 200)
+
+    def test_screenshot_storage_modes(self):
+        """Panelning uch varianti saqlanadi, ikkalasi o'chiq - 400 (500 emas)."""
+        for local, upload in ((True, False), (True, True), (False, True)):
+            with self.subTest(local=local, upload=upload):
+                response = self._patch(is_screenshot_local=local, is_screenshot_upload=upload)
+                self.assertEqual(response.status_code, 200, response.content)
+
+        response = self._patch(is_screenshot_local=False, is_screenshot_upload=False)
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("is_screenshot_local", response.content.decode())
+
+        # Qisman PATCH saqlangan qiymat bilan solishtiriladi: hozir
+        # «faqat serverda» - yuborishni o'chirish kadrni yo'qotardi.
+        self.assertEqual(self._patch(is_screenshot_upload=False).status_code, 400)
+        self.setting.refresh_from_db()
+        self.assertFalse(self.setting.is_screenshot_local)
+        self.assertTrue(self.setting.is_screenshot_upload)
 
     def test_change_reaches_client_config(self):
         """Saqlash keshni tozalaydi - client keyingi so'rovda yangi qiymatni oladi."""

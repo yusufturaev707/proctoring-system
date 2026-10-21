@@ -313,6 +313,19 @@ class SettingSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"faceid_far_unverified_s": "Ogohlantirish vaqtidan kam bo'lmasligi kerak"}
             )
+        # Bazadagi `setting_screenshot_has_destination` cheklovining
+        # aynan o'zi: DRF `CheckConstraint` dan validator yasamaydi va
+        # usiz qisman `PATCH` 500 (`IntegrityError`) olardi.
+        keep_local = attrs.get(
+            "is_screenshot_local", getattr(self.instance, "is_screenshot_local", True)
+        )
+        upload = attrs.get(
+            "is_screenshot_upload", getattr(self.instance, "is_screenshot_upload", True)
+        )
+        if not keep_local and not upload:
+            raise serializers.ValidationError(
+                {"is_screenshot_local": "Skrinshot kamida bitta joyda saqlanishi kerak (mashinada yoki serverda)"}
+            )
         return attrs
 
 

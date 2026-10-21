@@ -303,11 +303,20 @@ SCREENSHOT_ENABLED = _env_bool("SCREENSHOT_ENABLED", True)
 # jimgina bo'sh qolmasligi kerak.
 SCREENSHOT_UPLOAD = _env_bool("SCREENSHOT_UPLOAD", True)
 
+# Skrinshot mashina arxiviga yoziladimi - ZAXIRA. Egasi
+# `config.capture.local` (`Setting.is_screenshot_local`): `false` -
+# «faqat serverda», talabgor ekrani mashina diskida qolmaydi. Standart
+# `true`: sozlama kelmagan holatda dalilning ikkinchi nusxasi jimgina
+# yo'qolmasligi kerak. `LOCAL_ARCHIVE_ENABLED=false` (lokal VETO)
+# baribir ustun.
+SCREENSHOT_LOCAL = _env_bool("SCREENSHOT_LOCAL", True)
+
 # ── Lokal xizmat (test platformasi uchun) ────────────────────────────
 # Client `127.0.0.1:<port>` da kichik HTTP xizmat ochadi
 # (`services/local_service.py`): test platformasining frontendi
-# `GET /api/device_info` (UUID, IP, MAC, kompyuter raqami) va
-# `POST /api/capture_screen` (skrinshot buyrug'i) ga murojaat qiladi.
+# `GET /api/device_info` (UUID, IP, MAC, kompyuter raqami),
+# `POST /api/capture_screen` (skrinshot buyrug'i) va
+# `POST /api/finished_session` (talabgor testni yakunladi) ga murojaat qiladi.
 # Port platforma bilan SHARTNOMA - uni faqat platforma bilan birga
 # o'zgartiring. Faqat loopback'da tinglanadi: tarmoqdan ko'rinmaydi.
 LOCAL_SERVICE_ENABLED = _env_bool("LOCAL_SERVICE_ENABLED", True)

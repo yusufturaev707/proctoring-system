@@ -27,10 +27,18 @@ kechroq olinadi va o'sha paytda ekranda KEYINGI savol turgan bo'lishi
 mumkin (kadr noto'g'ri savol nomi bilan saqlanardi). Spam chegarasi
 lokal xizmatda (sekundiga 20 buyruq).
 
-IKKI MANZIL (`Setting.is_screenshot_upload` -> `config.capture.upload`):
+IKKI MANZIL, ikkalasi imtihon profilidan (panel «Saqlash joyi»):
 
-    mahalliy arxiv   HAR DOIM (`services/local_archive.py`)
-    server           faqat `upload` yoqilgan bo'lsa, FONDA
+    mahalliy arxiv   `capture.local`  (`Setting.is_screenshot_local`),
+                     `services/local_archive.py`
+    server           `capture.upload` (`Setting.is_screenshot_upload`), FONDA
+
+Uch variant: faqat mashinada / mashinada + serverga / faqat serverda.
+Ikkalasi birdan o'chiq bo'lmaydi (server cheklovi). «Faqat serverda»
+rejimida yuborilmagan kadrning yagona nusxasi RAM navbati: shuning
+uchun imtihon yakunida navbat `session/finish/` dan OLDIN bo'shatiladi
+(`wait_idle`), aks holda oxirgi javobning kadri token bekor bo'lgach
+yo'qolardi.
 
 Serverga yuborishning ikki yo'lini bu modul biladi va o'rnatish
 profiliga qarab bittasini tanlaydi (`_resolve_mode`):
@@ -123,6 +131,12 @@ class CaptureConfig:
     #: mahalliy arxiv: trafik yoki server diski masalasida imtihon
     #: egasi shuni tanlaydi.
     upload: bool = True
+    #: Mashina arxiviga yoziladimi (`capture.local`). `False` - «faqat
+    #: serverda»: talabgor ekrani mashina diskida qolmaydi. Server
+    #: ikkalasini birdan o'chirishga yo'l qo'ymaydi; buzilgan/eski
+    #: javob baribir shunday kelsa, `from_server` arxivni YOQADI -
+    #: dalil jimgina hech qayerga yozilmasligidan ko'ra trafiksiz nusxa.
+    local: bool = True
     #: Skrinshot ostiga kamera tasmasi qo'shiladimi va ramka ulushi
     #: (0..1). Imtihon profilidan (`capture.camera_overlay*`), zaxira -
     #: `.env`: tasma har kadrni ~24% og'irlashtiradi, ya'ni bu trafik
@@ -141,10 +155,16 @@ class CaptureConfig:
                 return _FALLBACK[name]
             return raw if raw > 0 else _FALLBACK[name]
 
+        upload = runtime_settings.get(config, "capture.upload")
+        local = runtime_settings.get(config, "capture.local")
+        if not upload and not local:
+            log.warning("Skrinshot sozlamasi: na server, na mashina - mashinada saqlanadi")
+            local = True
         return cls(
             quality=max(20, min(95, value("quality"))),
             max_width=max(320, value("max_width")),
-            upload=runtime_settings.get(config, "capture.upload"),
+            upload=upload,
+            local=local,
             camera_overlay=runtime_settings.get(config, "capture.camera_overlay"),
             camera_overlay_ratio=runtime_settings.get(
                 config, "capture.camera_overlay_percent"
@@ -358,8 +378,8 @@ class ScreenshotService(QObject):
     UCH BOSQICH, UCHTASI ALOHIDA va hech biri boshqasini kutmaydi:
 
         olish      UI thread, ~20 ms   ekran + kamera kadri, AYNAN buyruq lahzasi
-        kodlash    fon, ~40 ms         JPEG + mahalliy arxiv (DOIM)
-        yuklash    fon, tarmoqqa bog'liq  serverga (faqat `capture.upload`)
+        kodlash    fon, ~40 ms         JPEG + mahalliy arxiv (`capture.local`)
+        yuklash    fon, tarmoqqa bog'liq  serverga (`capture.upload`)
 
     Ilgari bitta "uchuvchi" ish bor edi va yuklash tugamaguncha keyingi
     kadr TASHLANARDI. Taymerda bu kelishuv edi (10 s dan keyin yana
@@ -390,7 +410,8 @@ class ScreenshotService(QObject):
         self._jobs: deque = deque(maxlen=_MAX_PENDING_ENCODES)
         self._encoding = False
         #: Yuborilmagan kadrlar (kodlangan). Cheklangan - RAM uchun;
-        #: tushib qolgani baribir mahalliy arxivda bor.
+        #: tushib qolgani mahalliy arxivda bor («faqat serverda»
+        #: rejimida esa yo'qoladi - ERROR log, `_log_dropped`).
         self._queue = deque(maxlen=max(1, SCREENSHOT_RETRY_QUEUE))
         self._uploading = False
         #: Sessiya yopildi (token bekor) - yuklash to'xtaydi.
@@ -410,7 +431,11 @@ class ScreenshotService(QObject):
         # buyruq kelmasligi mumkin (oxirgi savol).
         self._retry = QTimer(self)
         self._retry.setSingleShot(True)
-        self._retry.timeout.connect(self._kick_upload)
+        self._retry.timeout.connect(self._on_retry_timeout)
+        #: Backoff kutilmoqda - `QTimer.isActive()` ning nusxasi, uni
+        #: `wait_idle` fon thread'idan o'qiydi (Qt obyektiga u yerdan
+        #: murojaat qilinmaydi).
+        self._retry_pending = False
         self._backoff = net_policy.Backoff(base=_RETRY_BASE_S, cap=_RETRY_CAP_S)
         on_power_resumed(self._on_power_resumed)
 
@@ -452,13 +477,15 @@ class ScreenshotService(QObject):
         self._upload_closed = False
         self._backoff.success()
         log.info(
-            "Skrinshot: buyruq bilan, maks. kenglik %s px, sifat %s, serverga %s",
+            "Skrinshot: buyruq bilan, maks. kenglik %s px, sifat %s, serverga %s, mashinada %s",
             self._config.max_width,
             self._config.quality,
-            "yuboriladi" if self._config.upload else "YUBORILMAYDI (faqat mashinada)",
+            "yuboriladi" if self._config.upload else "YUBORILMAYDI",
+            "saqlanadi" if self._config.local else "SAQLANMAYDI (faqat serverda)",
         )
-        if not self._config.upload and not LOCAL_ARCHIVE_ENABLED:
-            # Ikkala manzil ham yopiq - kadr hech qayerga yozilmaydi.
+        if not self._config.upload and not (self._config.local and LOCAL_ARCHIVE_ENABLED):
+            # Ikkala manzil ham yopiq (server «faqat mashinada» dedi,
+            # `.env` esa arxivni o'chirgan) - kadr hech qayerga yozilmaydi.
             log.warning("Skrinshot na serverga, na mahalliy arxivga yoziladi")
         return True
 
@@ -468,7 +495,8 @@ class ScreenshotService(QObject):
 
         Olingan kadrlar yo'qolmaydi: kodlash va yuklash fonda davom etadi
         - sessiya tokeni tirik ekan navbat bo'shaydi, u bekor bo'lsa
-        kadrlar baribir mashinada.
+        kadrlar mashinada (yoki, «faqat serverda» rejimida, yakun ularni
+        oldindan `wait_idle` bilan yuborib olgan).
         """
         if not self._active:
             return
@@ -479,6 +507,63 @@ class ScreenshotService(QObject):
             self._total_sent,
             f", {len(self._queue)} tasi navbatda" if self._queue else "",
         )
+
+    def wait_idle(self, timeout: float) -> bool:
+        """
+        FON THREAD'IDAN, imtihon yakunidan OLDIN: olingan kadrlar
+        kodlanib, serverga yetguncha kutadi (ko'pi bilan `timeout` s).
+
+        Yakun sessiya tokenini bekor qiladi va navbatda qolgan kadr
+        shundan keyin hech qachon yuborilmaydi. «Faqat serverda»
+        rejimida bu kadrning boshqa nusxasi yo'q - odatda aynan
+        "Yakunlash" dan oldingi OXIRGI javobning kadri. Kutish
+        arzon: navbat odatda bo'sh va darhol `True` qaytadi.
+
+        Backoff kutilayotgan bo'lsa (server/tarmoq xatosi) KUTILMAYDI:
+        yakun so'rovi ham o'sha xatoni oladi, qolgan vaqt esa unga
+        kerak. `False` - navbat bo'shamadi (sababi log'da).
+
+        UI thread'ini BAND QILMAYDI: kodlash va yuklash natijasi UI
+        thread'iga signal bilan qaytadi, shuning uchun bu metod UI
+        thread'idan chaqirilsa doim muddat tugaguncha kutardi.
+        """
+        deadline = time.monotonic() + max(0.0, timeout)
+        while True:
+            if self._is_idle():
+                return True
+            if self._retry_pending:
+                log.warning(
+                    "Yakundan oldin skrinshot navbati bo'shamadi (server xatosi): %s ta kadr",
+                    len(self._queue) + len(self._jobs),
+                )
+                return False
+            if time.monotonic() >= deadline:
+                log.warning(
+                    "Yakundan oldin skrinshot navbati bo'shamadi (%.1f s): %s ta kadr",
+                    timeout, len(self._queue) + len(self._jobs),
+                )
+                return False
+            time.sleep(0.05)
+
+    def _is_idle(self) -> bool:
+        if self._jobs or self._encoding or self._uploading:
+            return False
+        if self._commits and not self._upload_closed:
+            return False
+        return not (self._queue and self._config.upload and not self._upload_closed)
+
+    def _has_local_copy(self) -> bool:
+        return self._config.local and LOCAL_ARCHIVE_ENABLED
+
+    def _log_dropped(self, message: str, *args, always_error: bool = False) -> None:
+        """
+        Serverga yetmagan kadr. Daraja nusxaga qarab: mashinada bor -
+        ogohlantirish, «faqat serverda» - ERROR (dalil YO'QOLDI).
+        """
+        if self._has_local_copy():
+            (log.error if always_error else log.warning)(message + " (mashinada bor)", *args)
+        else:
+            log.error(message + " - mashinada nusxasi yo'q, kadr yo'qoldi", *args)
 
     def request_capture(self, question: Optional[dict] = None) -> bool:
         """
@@ -512,7 +597,9 @@ class ScreenshotService(QObject):
         job = (
             image,
             self._camera_slots(),
-            local_archive.context(),
+            # «Faqat serverda» - kontekst olinmaydi, ya'ni kadr arxivga
+            # umuman yozilmaydi (`_encode_and_store`).
+            local_archive.context() if self._config.local else None,
             datetime.now(timezone.utc).isoformat(),
             question_id,
             question_number,
@@ -564,10 +651,11 @@ class ScreenshotService(QObject):
             raise ClientError("Skrinshotni kodlab bo'lmadi", code="encode_failed")
         frame.question_id = question_id
         frame.question_number = question_number
-        # MAHALLIY ARXIV — HAR DOIM va yuklashdan OLDIN
-        # (`services/local_archive.py`). Kontekst buyruq paytidagi:
-        # sessiya shu orada yopilgan bo'lsa ham kadr o'z papkasiga
-        # tushadi. Yozish xatosi yutiladi - arxiv qulaylik.
+        # MAHALLIY ARXIV — yuklashdan OLDIN (`services/local_archive.py`),
+        # «faqat serverda» rejimida kontekst yo'q va kadr diskka
+        # yozilmaydi. Kontekst buyruq paytidagi: sessiya shu orada
+        # yopilgan bo'lsa ham kadr o'z papkasiga tushadi. Yozish xatosi
+        # yutiladi - arxiv qulaylik.
         if archive_context:
             if question_id:
                 local_archive.save_question_shot(
@@ -582,7 +670,9 @@ class ScreenshotService(QObject):
         return frame
 
     def _on_encoded(self, frame: Frame) -> None:
-        self._encoding = False
+        # `_encoding` OXIRIDA tushiriladi: `wait_idle` fon thread'idan
+        # o'qiydi va kadr navbatga tushmasdan "bo'sh" holatni ko'rib,
+        # yakunni shu kadrsiz boshlab yuborardi.
         if self._config.upload and not self._upload_closed:
             if frame.question_id:
                 # Shu savolning hali YUBORILMAGAN kadri keraksiz: serverda
@@ -595,9 +685,10 @@ class ScreenshotService(QObject):
                     except ValueError:
                         pass  # ishchi shu orada olib ketdi
             if len(self._queue) == self._queue.maxlen:
-                log.warning("Skrinshot navbati to'ldi - eng eski kadr tashlandi (mashinada bor)")
+                self._log_dropped("Skrinshot navbati to'ldi - eng eski kadr tashlandi")
             self._queue.append(frame)
             self._kick_upload()
+        self._encoding = False
         self._kick_encode()
 
     def _on_encode_failed(self, message: str, code: str) -> None:
@@ -650,11 +741,10 @@ class ScreenshotService(QObject):
                 if net_policy.is_poison_payload(exc.status):
                     # Server kadrni o'zini rad etdi (buzilgan fayl, hajm):
                     # takror ham xuddi shunday tugaydi va navbat boshida
-                    # qolsa orqasidagi kadrlar ABADIY kutardi. Kadr
-                    # mahalliy arxivda bor.
-                    log.error(
-                        "Skrinshot server tomonidan rad etildi (%s %s) - tashlandi "
-                        "(mashinada bor)", exc.status, exc.code or "-",
+                    # qolsa orqasidagi kadrlar ABADIY kutardi.
+                    self._log_dropped(
+                        "Skrinshot server tomonidan rad etildi (%s %s) - tashlandi",
+                        exc.status, exc.code or "-", always_error=True,
                     )
                     continue
                 superseded = bool(frame.question_id) and any(
@@ -804,17 +894,19 @@ class ScreenshotService(QObject):
         message = getattr(exc, "message", "") or str(exc)
         code = getattr(exc, "code", "") or ""
         # Sessiya yopilgan bo'lsa qayta urinishning ma'nosi yo'q (token
-        # bekor): navbat tashlanadi - kadrlar mahalliy arxivda qoladi.
+        # bekor): navbat tashlanadi - kadrlar mahalliy arxivda qoladi
+        # («faqat serverda» rejimida esa yo'qoladi; yakun shuning uchun
+        # navbatni oldindan bo'shatadi - `wait_idle`).
         if code in ("session_not_found", "session_forbidden"):
             self._upload_closed = True
             if self._queue:
-                log.warning(
-                    "Sessiya yopildi - %s ta skrinshot serverga yuborilmadi (mashinada bor)",
-                    len(self._queue),
+                self._log_dropped(
+                    "Sessiya yopildi - %s ta skrinshot serverga yuborilmadi", len(self._queue),
                 )
             self._queue.clear()
         elif self._queue:
             delay = self._backoff.failure(getattr(exc, "retry_after", None))
+            self._retry_pending = True
             self._retry.start(int(delay * 1000))
             log.warning(
                 "Skrinshot yuborilmadi (%s): %s - %.0f s dan keyin qayta",
@@ -823,6 +915,10 @@ class ScreenshotService(QObject):
         else:
             log.warning("Skrinshot yuborilmadi (%s): %s", code or "-", message)
         self.failed.emit(message)
+
+    def _on_retry_timeout(self) -> None:
+        self._retry_pending = False
+        self._kick_upload()
 
     def _on_power_resumed(self) -> None:
         """Uyg'onish: backoff qisqaradi (jitter bilan), navbat bir necha daqiqa kutmaydi."""
@@ -835,6 +931,7 @@ class ScreenshotService(QObject):
         """Dasturdan chiqish: qolgan ish CHEGARALANGAN vaqt kutiladi."""
         self.stop()
         self._retry.stop()
+        self._retry_pending = False
         if self._commits and not self._upload_closed:
             # Commit qilinmagan S3 fayli proktorga ko'rinmaydi va
             # retention'ga tushmaydi - best-effort.

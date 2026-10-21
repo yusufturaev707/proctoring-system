@@ -42,7 +42,7 @@ from PyQt6.QtWebEngineCore import (
     QWebEngineUrlRequestInterceptor,
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
-from PyQt6.QtWidgets import QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QDialog, QVBoxLayout, QWidget
 
 from config import CAMERA_FRAME_MAX_AGE_S, EVENT_BATCH_MAX, FACE_MATCH_THRESHOLD
 from services import local_archive, net_policy, runtime_settings
@@ -96,6 +96,12 @@ _EXIT_BUDGET_S = 9.0
 #: Yordamchi qadamga bundan kam vaqt qolsa u o'tkazib yuboriladi -
 #: bunday timeout bilan so'rov baribir ulgurmasdi.
 _MIN_STEP_TIMEOUT_S = 0.5
+#: Yakundan oldin skrinshot navbati bo'shashini kutish chegarasi (s):
+#: oddiy yakunda va dasturdan chiqishda. Odatda navbat bo'sh va kutish
+#: 0 s; chegara faqat sekin tarmoqda yakunni cho'zmaslik uchun.
+#: Chiqishdagisi kichik - byudjetning asosiy qismi yakunning o'ziga.
+_FINISH_SHOT_DRAIN_S = 8.0
+_EXIT_SHOT_DRAIN_S = 2.0
 #: Yuz natijasi (`CameraWorker` yo'li) shundan eskiroq bo'lsa davriy
 #: FaceID uni solishtirmaydi (s). Natija sekundiga bir necha marta
 #: keladi; eskirgani - kamera uzilgan yoki qotgan. Ilgari uzilish
@@ -321,6 +327,12 @@ class ExamWebViewPage(QWidget):
         self._local_service = local_service
         if local_service is not None:
             local_service.capture_requested.connect(self._screenshots.request_capture)
+            # Talabgor testni platformada yakunladi - «Yakunlash» tugmasi
+            # bilan bir xil yo'l (`_on_platform_finished`).
+            local_service.finish_requested.connect(self._on_platform_finished)
+        #: Hozir `exec()` da turgan sahifa dialogi (yakunlash, qayta
+        #: yuklash, texnik muammo) - platforma yakunlasa yopiladi.
+        self._modal_dialog = None
 
         # Proktor buyruqlari. Bu TEZLIK qatlami: u uzilsa ham imtihon
         # to'xtamaydi va sessiyaning yakunlangani heartbeat orqali
@@ -948,6 +960,13 @@ class ExamWebViewPage(QWidget):
 
         policy = access.get("webview_policy") or {}
         self._start_web(policy, access)
+        if self._exam_open and self._local_service is not None:
+            # Platforma sahifasi yuklanishidan OLDIN: uning birinchi
+            # so'rovi ham Origin tekshiruvidan o'tishi kerak. Origin
+            # qoidasi WebView allowlist'i bilan BIR XIL (`webview_policy`).
+            self._local_service.set_exam_target(
+                True, policy.get("allowed_domains") or [], pinfl=self._state.pinfl
+            )
 
         # AI kuzatuv KAMERANI EGALLAYDI. Bitta qurilmani ikki
         # jarayon ocha olmaydi, shuning uchun eski `CameraWorker`
@@ -996,11 +1015,7 @@ class ExamWebViewPage(QWidget):
         if self._screenshots.start(
             self._state.config, camera_provider=self._screenshot_cameras
         ) and self._local_service is not None:
-            # Origin qoidasi WebView allowlist'i bilan BIR XIL (`policy`
-            # yuqorida, `webview_policy`).
-            self._local_service.set_capture_target(
-                True, policy.get("allowed_domains") or []
-            )
+            self._local_service.set_capture_target(True)
         self._start_recording()
 
         session = self._state.session
@@ -1960,8 +1975,6 @@ class ExamWebViewPage(QWidget):
         chizilar (kiosk oynasining ustida begona kulrang oyna) va
         turni umuman so'ramasdi — client har doim `other` yuborardi.
         """
-        from PyQt6.QtWidgets import QDialog
-
         from ui.dialogs.technical_problem_dialog import TechnicalProblemDialog
 
         if not self._bar.is_item_visible("problem"):
@@ -1969,7 +1982,7 @@ class ExamWebViewPage(QWidget):
         # Ota — OYNA, sahifa emas: dialog ekran markazida ochilishi
         # va butun dasturni modal qilib qulflashi kerak.
         dialog = TechnicalProblemDialog(self.window())
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+        if not self._run_dialog(dialog):
             return
 
         worker = ApiWorker(
@@ -2019,10 +2032,7 @@ class ExamWebViewPage(QWidget):
         if self._reload_timer.isActive():
             return  # qayta yuklash allaqachon navbatda
         # Ota — OYNA: dialog ekran markazida (`_on_finish_clicked` bilan bir xil).
-        if ReloadDialog(self.window()).exec() != ReloadDialog.DialogCode.Accepted:
-            return
-        # Dialog ochiq turganda imtihon yakunlangan bo'lishi mumkin.
-        if not self._exam_open or self.web_view is None:
+        if not self._run_dialog(ReloadDialog(self.window())) or self.web_view is None:
             return
         log.info("Test sahifasini operator qayta yukladi")
         if self._error_panel.isVisible():
@@ -2034,6 +2044,8 @@ class ExamWebViewPage(QWidget):
         self._reload_timer.start(0)
 
     def _on_finish_clicked(self) -> None:
+        if not self._exam_open:
+            return  # yakun allaqachon ketmoqda (masalan, platforma buyrug'i)
         candidate = self._state.candidate
         device = self._state.device
         # Ota — OYNA: dialog ekran markazida ochiladi va butun dasturni
@@ -2051,12 +2063,52 @@ class ExamWebViewPage(QWidget):
                 time.monotonic() - self._opened_at if self._opened_at is not None else None
             ),
         )
-        if dialog.exec() != FinishDialog.DialogCode.Accepted:
+        if not self._run_dialog(dialog):
             return
-        # `completed` FAQAT SHU YERDA: talabgor testni o'zi yakunladi va
-        # server kompyuter bronini keyingi talabgor uchun bo'shatadi.
-        # Dasturdan chiqish (`finish_on_exit`) joyni band qoldiradi.
+        # `completed` FAQAT talabgor testni o'zi yakunlaganda (shu tugma
+        # va platforma buyrug'i - `_on_platform_finished`): server
+        # kompyuter bronini keyingi talabgor uchun bo'shatadi. Dasturdan
+        # chiqish (`finish_on_exit`) joyni band qoldiradi.
         self.finish(reason="Operator yakunladi", completed=True)
+
+    def _on_platform_finished(self, _payload) -> None:
+        """
+        Test platformasi talabgor testni yakunlaganini aytdi
+        (`POST /api/finished_session`, lokal xizmat).
+
+        «Yakunlash» tugmasi bilan AYNAN BIR XIL yo'l (`finish`,
+        `completed=True`): joy bo'shaydi va JSHSHIR sahifasiga
+        qaytiladi. Tasdiq so'ralmaydi - talabgor testni platformaning
+        o'zida tasdiqlagan. Ochiq sahifa dialogi (yakunlash, qayta
+        yuklash, texnik muammo) yopiladi: u endi ma'nosiz, «Yakunlash»
+        dialogi esa ikkinchi yakunni yuborardi. Proktor ogohlantirishi
+        ham yopiladi - u shu talabgorga edi va JSHSHIR sahifasini
+        to'smasligi kerak.
+        """
+        if not self._exam_open:
+            # Yakun allaqachon ketmoqda yoki sessiya boshqa yo'l bilan
+            # yopildi (chetlashtirish, muddat) - ikkinchi yakun yo'q.
+            log.info("Platformaning yakun buyrug'i - imtihon allaqachon yopilgan")
+            return
+        log.info("Imtihonni test platformasi yakunladi")
+        if self._modal_dialog is not None:
+            self._modal_dialog.reject()
+        if self._warning is not None:
+            self._warning.dismiss()
+        self.finish(reason="Test platformasida yakunlandi", completed=True)
+
+    def _run_dialog(self, dialog) -> bool:
+        """
+        Sahifa dialogini `exec()` qiladi. `True` - qabul qilindi VA imtihon
+        hali ochiq: dialog ochiq turganda imtihon yakunlangan bo'lishi
+        mumkin (platforma buyrug'i, proktor, muddat).
+        """
+        self._modal_dialog = dialog
+        try:
+            accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        finally:
+            self._modal_dialog = None
+        return accepted and self._exam_open
 
     def finish(self, *, reason: str = "", completed: bool = False) -> None:
         """
@@ -2076,6 +2128,7 @@ class ExamWebViewPage(QWidget):
         """
         self._exam_open = False
         self._session_closed = True
+        self._begin_local_finish()
         self._launch.dismiss()
         self.overlay.start("Yakunlanmoqda...")
         recording = self._stop_capture(register=False)
@@ -2125,6 +2178,7 @@ class ExamWebViewPage(QWidget):
             return None
         self._exam_open = False
         self._session_closed = True
+        self._begin_local_finish()
         log.info("Dasturdan chiqilmoqda - ochiq sessiya yakunlanadi (%s)", reason)
         recording = self._stop_capture(register=False)
         fields = self._recording_fields(recording) if recording is not None else None
@@ -2142,6 +2196,11 @@ class ExamWebViewPage(QWidget):
         )
         self._workers.run(worker)
         return worker
+
+    def _begin_local_finish(self) -> None:
+        """Lokal xizmatga: yakun boshlandi - platformaning takroriy buyrug'i signal bermaydi."""
+        if self._local_service is not None:
+            self._local_service.begin_finish()
 
     def _collect_final_events(self) -> list:
         """
@@ -2169,10 +2228,12 @@ class ExamWebViewPage(QWidget):
                                timeout: Optional[float] = None, completed: bool = False,
                                events: Optional[list] = None):
         """
-        FON THREAD'IDA: hodisalar -> yozuv manzili -> yakun.
+        FON THREAD'IDA: skrinshot navbati -> hodisalar -> yozuv manzili -> yakun.
 
-        Uchalasi BITTA chaqiruvda va shu tartibda: oldingi ikkitasi
+        Hammasi BITTA chaqiruvda va shu tartibda: yakundan oldingilar
         sessiya tokenini talab qiladi, u esa yakunda bekor bo'ladi.
+        Skrinshot navbati birinchi: «faqat serverda» rejimida oxirgi
+        javobning kadri faqat RAM'da (`ScreenshotService.wait_idle`).
         Ular yakunni TO'SMAYDI - xatosi log'ga yoziladi, yakun baribir
         yuboriladi.
 
@@ -2189,6 +2250,15 @@ class ExamWebViewPage(QWidget):
             if deadline is None:
                 return None
             return min(timeout, deadline - time.monotonic() - timeout)
+
+        drain = side_timeout()
+        drain = _FINISH_SHOT_DRAIN_S if drain is None else min(_EXIT_SHOT_DRAIN_S, drain)
+        if drain >= _MIN_STEP_TIMEOUT_S:
+            try:
+                self._screenshots.wait_idle(drain)
+            except Exception:
+                # Yakunni TO'SMAYDI (qolgan qadamlar bilan bir xil qoida).
+                log.exception("Skrinshot navbatini kutishda xato")
 
         if events:
             self._send_final_events(events, side_timeout)
@@ -2262,6 +2332,10 @@ class ExamWebViewPage(QWidget):
     def stop(self) -> None:
         """Nazoratni to'xtatadi va WebView'ni tozalaydi."""
         self._exam_open = False
+        # Platforma buyruqlari (yakun, skrinshot) endi 409 oladi - keyingi
+        # talabgorgacha hech narsa qabul qilinmaydi.
+        if self._local_service is not None:
+            self._local_service.set_exam_target(False)
         # Hisoblagich to'xtaydi, uzilish davomiyligi esa xabar uchun qoladi.
         self._reset_offline()
         self._launch.dismiss()

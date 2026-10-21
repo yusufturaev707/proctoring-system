@@ -4,12 +4,19 @@ Lokal xizmat: test platformasi frontendi uchun `127.0.0.1:8050`.
 Test platformasi client ICHIDAGI WebView'da ochiladi, lekin u client
 bilan gaplasha olmaydi - boshqa domen, boshqa dastur. Ikki ehtiyoj bor:
 
-    GET  /api/device_info     shu mashina kim (UUID, IP, MAC, raqam)
-    POST /api/capture_screen  ekranni HOZIR suratga ol (javob belgilandi)
+    GET  /api/device_info       shu mashina kim (UUID, IP, MAC, raqam)
+    POST /api/capture_screen    ekranni HOZIR suratga ol (javob belgilandi)
+    POST /api/finished_session  talabgor testni platformada yakunladi
 
 Ikkinchisi skrinshotning YAGONA manbai - taymer yo'q
 (`services/screen_capture.py`). Platforma talabgor javobni belgilagan
 lahzani biladi, client esa bilmaydi.
+
+Uchinchisi imtihon sahifasidagi «Yakunlash» tugmasi bilan AYNAN BIR XIL
+yo'l (`ExamWebViewPage._on_platform_finished` -> `finish(completed=True)`):
+dalil, hodisalar, yozuv manzili, `session/finish/`, joy bo'shaydi va
+JSHSHIR sahifasiga qaytiladi. Tasdiq dialogi SO'RALMAYDI - talabgor
+testni platformaning o'zida tasdiqlab yakunlagan.
 
 JAVOB SHAKLI (platforma bilan SHARTNOMA - kalitlarni o'zgartirmang):
 
@@ -37,6 +44,27 @@ nomi bilan saqlanadi va savolga qayta belgilansa ALMASHADI
 fonda. Platforma javobni kutib turmasligi kerak: talabgorning keyingi
 bosishi sekinlashardi.
 
+`finished_session` TANASI ixtiyoriy - `{"imie": "<jshshir>"}` (yoki
+`pinfl`; JSON, forma yoki query). Berilsa, client'dagi joriy talabgor
+bilan solishtiriladi: boshqa talabgorning kechikkan so'rovi bu
+talabgorning imtihonini yopa olmaydi.
+
+| Javob | Qachon |
+|---|---|
+| 202 `{"ok": true, "accepted": true}` | qabul qilindi - yakun fonda (bir necha soniya) |
+| 202 `{..., "already": true}` | yakun allaqachon ketmoqda (takroriy so'rov yoki «Yakunlash» tugmasi) |
+| 400 `invalid_json` / `invalid_pinfl` | tana yaroqsiz |
+| 403 `origin_required` | `Origin` sarlavhasi yo'q (brauzer emas) |
+| 409 `no_active_exam` | imtihon ochiq emas |
+| 409 `candidate_mismatch` | JSHSHIR joriy talabgorniki emas |
+
+Javob yakun TUGASHINI kutmaydi: 202 dan keyin client test sahifasini
+yopadi (`about:blank`), ya'ni platformaning keyingi kodi ishlamasligi
+mumkin. Oxirgi javob kadri kerak bo'lsa, platforma `capture_screen`
+javobini (202) KUTIB, keyin `finished_session` ni yuboradi - ikkala
+buyruq UI thread'iga shu tartibda yetadi va yakun kadr yuborilishini
+kutadi (`ScreenshotService.wait_idle`).
+
 XAVFSIZLIK - to'rt qatlam, hammasi arzon:
 
   * faqat LOOPBACK (`127.0.0.1` va `::1`) - tarmoqdan ko'rinmaydi;
@@ -49,6 +77,12 @@ XAVFSIZLIK - to'rt qatlam, hammasi arzon:
     bo'lmaydi;
   * tana 16 KB, `q_id` qat'iy belgilar to'plami (fayl nomiga boradi -
     `..\\` kabi yo'l qismlari o'tmaydi), sekundiga 20 buyruq.
+
+`finished_session` QAYTARIB BO'LMAYDIGAN amal, shuning uchun unda
+`Origin` MAJBURIY (`*` dev rejimidan tashqari): platforma uni doim
+WebView ichidagi sahifadan yuboradi va Chromium POST'ga `Origin` ni
+har doim qo'yadi - Origin'siz so'rov faqat brauzerdan tashqaridagi
+jarayondan keladi.
 
 Bu KREDENSIAL EMAS: MAC va raqam maxfiy emas, skrinshot esa baribir
 kuzatuv qismi. Maqsad - begona sahifa buyruq yubora olmasligi.
@@ -90,6 +124,8 @@ _LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]", "::1")
 #: Windows fayl nomi uchun xavfsiz (`\ / : * ? " < > |` yo'q).
 QUESTION_ID_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,64}$")
 QUESTION_NUMBER_MAX = 100_000
+#: JSHSHIR - 14 ta raqam (backend'dagi qoida bilan bir xil).
+PINFL_RE = re.compile(r"^\d{14}$")
 
 #: Sekundiga ko'pi bilan shuncha skrinshot buyrug'i (sirpanuvchi oyna).
 #: Odam bundan tez bosa olmaydi; chegara buzilgan yoki begona skript
@@ -151,22 +187,8 @@ def host_allowed(host_header: str, port: int) -> bool:
     return False
 
 
-def parse_capture_payload(body: bytes, content_type: str = "", query: str = "") -> dict:
-    """
-    `POST /api/capture_screen` tanasi -> `{"q_id": str, "q_n": int}` (yoki `{}`).
-
-    Platforma `{"q_id": "1", "q_n": "3"}` yuboradi: "shu ID va raqamli
-    savolga javob belgilandi". Qiymat satr ham, son ham bo'lishi mumkin -
-    JavaScript'da ikkalasi odatiy. JSON bo'lmasa forma
-    (`application/x-www-form-urlencoded`) yoki query satri ham qabul
-    qilinadi: `navigator.sendBeacon` va oddiy `fetch(url + "?q_id=")`
-    ham ishlashi kerak.
-
-    Bo'sh tana - savolsiz buyruq (kadr umumiy nom bilan saqlanadi).
-    `q_n` bo'lib `q_id` bo'lmasa - XATO: fayl va server yozuvi savol
-    ID'si bo'yicha almashtiriladi, raqam esa savolni ajratmaydi (bitta
-    raqam turli variantlarda boshqa savol bo'lishi mumkin).
-    """
+def _payload_fields(body: bytes, content_type: str, query: str) -> dict:
+    """Tana maydonlari: JSON, forma yoki (tana bo'sh bo'lsa) query satri."""
     raw = (body or b"").strip()
     fields: dict = {}
     if raw:
@@ -183,7 +205,48 @@ def parse_capture_payload(body: bytes, content_type: str = "", query: str = "") 
             fields = dict(parse_qsl(text, keep_blank_values=True))
     if not fields and query:
         fields = dict(parse_qsl(query, keep_blank_values=True))
+    return fields
 
+
+def parse_finish_payload(body: bytes, content_type: str = "", query: str = "") -> dict:
+    """
+    `POST /api/finished_session` tanasi -> `{"pinfl": str}` yoki `{}`.
+
+    JSHSHIR ixtiyoriy: platformadagi nomi `imie` (`integrations/exam_site.py`
+    so'rovidagi kabi), `pinfl` ham qabul qilinadi. Son bo'lib kelsa ham
+    ishlaydi - JSHSHIR noldan boshlanmaydi. Boshqa maydonlar e'tiborsiz.
+    """
+    fields = _payload_fields(body, content_type, query)
+    value = fields.get("imie")
+    if value in (None, ""):
+        value = fields.get("pinfl")
+    if value in (None, ""):
+        return {}
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        raise PayloadError("invalid_pinfl", "JSHSHIR satr yoki son bo'lishi kerak")
+    value = str(value).strip()
+    if not PINFL_RE.match(value):
+        raise PayloadError("invalid_pinfl", "JSHSHIR 14 ta raqamdan iborat bo'lishi kerak")
+    return {"pinfl": value}
+
+
+def parse_capture_payload(body: bytes, content_type: str = "", query: str = "") -> dict:
+    """
+    `POST /api/capture_screen` tanasi -> `{"q_id": str, "q_n": int}` (yoki `{}`).
+
+    Platforma `{"q_id": "1", "q_n": "3"}` yuboradi: "shu ID va raqamli
+    savolga javob belgilandi". Qiymat satr ham, son ham bo'lishi mumkin -
+    JavaScript'da ikkalasi odatiy. JSON bo'lmasa forma
+    (`application/x-www-form-urlencoded`) yoki query satri ham qabul
+    qilinadi: `navigator.sendBeacon` va oddiy `fetch(url + "?q_id=")`
+    ham ishlashi kerak.
+
+    Bo'sh tana - savolsiz buyruq (kadr umumiy nom bilan saqlanadi).
+    `q_n` bo'lib `q_id` bo'lmasa - XATO: fayl va server yozuvi savol
+    ID'si bo'yicha almashtiriladi, raqam esa savolni ajratmaydi (bitta
+    raqam turli variantlarda boshqa savol bo'lishi mumkin).
+    """
+    fields = _payload_fields(body, content_type, query)
     q_id = fields.get("q_id")
     q_n = fields.get("q_n")
     if q_id in (None, "") and q_n in (None, ""):
@@ -337,18 +400,58 @@ class _Handler(BaseHTTPRequestHandler):
             return
         body = self.rfile.read(length) if length else b""
         path, _, query = self.path.partition("?")
-        if path.rstrip("/") != "/api/capture_screen":
+        path = path.rstrip("/")
+        if path == "/api/capture_screen":
+            self._capture(body, query)
+        elif path == "/api/finished_session":
+            self._finish(body, query)
+        else:
             self._json(404, {"ok": False, "error": "not_found"})
+
+    def _bad_payload(self, exc: Exception) -> None:
+        code = getattr(exc, "code", "invalid_body")
+        message = getattr(exc, "message", "Tana UTF-8 emas")
+        log.warning("Lokal xizmat: yaroqsiz buyruq (%s): %s", code, message)
+        self._json(400, {"ok": False, "error": code, "message": message})
+
+    def _finish(self, body: bytes, query: str) -> None:
+        owner: LocalDeviceService = self.server.owner
+        if not self.headers.get("Origin") and not owner.allows_any_origin:
+            log.warning("Lokal xizmat: Origin'siz yakun buyrug'i rad etildi")
+            self._json(403, {
+                "ok": False, "error": "origin_required",
+                "message": "Yakun buyrug'i faqat test sahifasidan qabul qilinadi",
+            })
             return
+        try:
+            payload = parse_finish_payload(body, self.headers.get("Content-Type", ""), query)
+        except (PayloadError, UnicodeDecodeError) as exc:
+            self._bad_payload(exc)
+            return
+
+        status = owner.request_finish(payload)
+        if status == "accepted":
+            self._json(202, {"ok": True, "accepted": True})
+        elif status == "finishing":
+            self._json(202, {"ok": True, "accepted": True, "already": True})
+        elif status == "mismatch":
+            self._json(409, {
+                "ok": False, "error": "candidate_mismatch",
+                "message": "JSHSHIR shu kompyuterdagi talabgorniki emas",
+            })
+        else:
+            self._json(409, {
+                "ok": False, "error": "no_active_exam",
+                "message": "Imtihon ochiq emas",
+            })
+
+    def _capture(self, body: bytes, query: str) -> None:
         try:
             question = parse_capture_payload(
                 body, self.headers.get("Content-Type", ""), query
             )
         except (PayloadError, UnicodeDecodeError) as exc:
-            code = getattr(exc, "code", "invalid_body")
-            message = getattr(exc, "message", "Tana UTF-8 emas")
-            log.warning("Lokal xizmat: yaroqsiz buyruq (%s): %s", code, message)
-            self._json(400, {"ok": False, "error": code, "message": message})
+            self._bad_payload(exc)
             return
 
         status = self.server.owner.request_capture(question)
@@ -376,14 +479,26 @@ class LocalDeviceService(QObject):
     Dastur ishga tushganda ochiladi va chiqishda yopiladi.
 
     `device_info` imtihondan TASHQARIDA ham javob beradi (platforma uni
-    sahifa yuklanishi bilan so'rashi mumkin); `capture_screen` esa faqat
-    imtihon sahifasi `set_capture_target(True, ...)` qilganda.
+    sahifa yuklanishi bilan so'rashi mumkin). Qolgan ikkitasi imtihon
+    sahifasi ochgan holatga bog'liq va ikki holat ATAYLAB alohida:
+
+    | Holat | Kim ochadi / yopadi | Nimaga ta'sir qiladi |
+    |---|---|---|
+    | imtihon (`set_exam_target`) | platforma ochilganda / `stop()` | Origin domenlari, `finished_session` |
+    | skrinshot (`set_capture_target`) | skrinshot xizmati / dalil oynasi tugaganda | `capture_screen` |
+
+    Dalil yig'ish oynasi (testga ajratilgan vaqt) tugagach skrinshot
+    o'chadi, imtihon esa davom etadi - platforma yakun buyrug'ini
+    baribir yubora olishi kerak.
     """
 
     #: HTTP thread'idan chiqariladi, UI thread'ida qabul qilinadi
     #: (navbatli ulanish - Qt emitter thread'ini o'zi aniqlaydi).
     #: Argument - `parse_capture_payload` natijasi (`{}` yoki savol).
     capture_requested = pyqtSignal(object)
+    #: Platforma imtihonni yakunladi (`parse_finish_payload` natijasi).
+    #: Sessiyaga BIR MARTA chiqariladi - takroriy so'rov signal bermaydi.
+    finish_requested = pyqtSignal(object)
 
     def __init__(self, info_provider: Callable[[], dict], *, port: int,
                  extra_origins: Iterable[str] = (), parent=None) -> None:
@@ -393,6 +508,12 @@ class LocalDeviceService(QObject):
         self._extra_origins = list(extra_origins)
         self._lock = threading.Lock()
         self._capture_enabled = False
+        self._exam_open = False
+        #: Yakun boshlangan (platforma buyrug'i yoki «Yakunlash» tugmasi):
+        #: takroriy buyruq signal bermaydi, faqat "allaqachon" javobini oladi.
+        self._finishing = False
+        #: Joriy talabgorning JSHSHIR'i - platforma yuborgani bilan solishtirish uchun.
+        self._pinfl = ""
         #: `None` - imtihon ochiq emas (`origin_allowed` izohi).
         self._exam_domains: Optional[list] = None
         self._servers: list = []
@@ -438,18 +559,87 @@ class LocalDeviceService(QObject):
         return bool(self._servers)
 
     # ------------------------------------------------------------------
-    def set_capture_target(self, enabled: bool, exam_domains: Optional[list] = None) -> None:
-        """Imtihon sahifasi chaqiradi (UI thread)."""
+    def set_exam_target(self, open_: bool, exam_domains: Optional[list] = None, *,
+                        pinfl: str = "") -> None:
+        """
+        Imtihon sahifasi chaqiradi (UI thread): test platformasi ochildi /
+        imtihon yopildi. Yopilganda skrinshot buyrug'i ham o'chadi.
+
+        `exam_domains` - `webview_policy.allowed_domains` (WebView
+        allowlist'i bilan BIR XIL qoida), `[]` - cheklov yo'q.
+        """
         with self._lock:
+            self._exam_open = bool(open_)
+            self._finishing = False
+            self._exam_domains = (
+                list(exam_domains) if open_ and exam_domains is not None else None
+            )
+            self._pinfl = (pinfl or "").strip() if open_ else ""
+            if not open_:
+                self._capture_enabled = False
+        log.info("Lokal xizmat: yakun buyrug'i %s", "qabul qilinadi" if open_ else "o'chirildi")
+
+    def set_capture_target(self, enabled: bool) -> None:
+        """Imtihon sahifasi chaqiradi (UI thread). Faqat ochiq imtihonda yoqiladi."""
+        with self._lock:
+            if enabled and not (self._exam_open and not self._finishing):
+                log.warning("Lokal xizmat: imtihon ochiq emas - skrinshot buyrug'i yoqilmadi")
+                return
             self._capture_enabled = bool(enabled)
-            self._exam_domains = list(exam_domains) if enabled and exam_domains is not None else None
         log.info("Lokal xizmat: skrinshot buyrug'i %s", "qabul qilinadi" if enabled else "o'chirildi")
+
+    def begin_finish(self) -> None:
+        """
+        Imtihon yakunlanmoqda (UI thread, «Yakunlash» tugmasi va chiqish).
+
+        Shu paytdan platformaning `finished_session` i "allaqachon" (202)
+        oladi va signal bermaydi, yangi skrinshot buyrug'i - 409.
+        """
+        with self._lock:
+            if self._exam_open:
+                self._finishing = True
+            self._capture_enabled = False
+
+    @property
+    def allows_any_origin(self) -> bool:
+        """`.env` da `*` (faqat dev: platformani oddiy brauzerda yoki curl bilan sinash)."""
+        return any(item.strip() == "*" for item in self._extra_origins if item)
 
     # --- HTTP thread'idan ----------------------------------------------
     def origin_allowed(self, origin: str) -> bool:
         with self._lock:
             domains = self._exam_domains
         return origin_allowed(origin, extra=self._extra_origins, exam_domains=domains)
+
+    def request_finish(self, payload: Optional[dict] = None) -> str:
+        """
+        `accepted` / `finishing` / `mismatch` / `disabled` (HTTP thread'idan).
+
+        Holat QULF OSTIDA o'zgaradi: bir lahzada kelgan ikki so'rovdan
+        faqat bittasi signal beradi (platforma `fetch` va `sendBeacon`
+        ni birga yuborishi mumkin).
+        """
+        payload = dict(payload or {})
+        with self._lock:
+            if not self._exam_open:
+                return "disabled"
+            if self._finishing:
+                return "finishing"
+            pinfl = payload.get("pinfl") or ""
+            if pinfl and self._pinfl and pinfl != self._pinfl:
+                mismatch = True
+            else:
+                mismatch = False
+                self._finishing = True
+                # Yakundan keyingi kadr endi bu imtihonga tegishli emas.
+                self._capture_enabled = False
+        if mismatch:
+            # JSHSHIR log'ga YOZILMAYDI (log fayli imtihon mashinasida qoladi).
+            log.warning("Lokal xizmat: yakun buyrug'i rad etildi - JSHSHIR joriy talabgorniki emas")
+            return "mismatch"
+        log.info("Lokal xizmat: test platformasi imtihonni yakunladi")
+        self.finish_requested.emit(payload)
+        return "accepted"
 
     def request_capture(self, question: Optional[dict] = None) -> str:
         """`accepted` / `throttled` / `disabled` (HTTP thread'idan)."""

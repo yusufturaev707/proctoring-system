@@ -194,7 +194,7 @@ class SmbiosTests(unittest.TestCase):
         self.assertEqual(parse_smbios_uuid(b"\x00"), "")
 
 
-class HttpTests(unittest.TestCase):
+class _HttpCase(unittest.TestCase):
     def setUp(self):
         self.port = _free_port()
         self.captures = 0
@@ -216,19 +216,26 @@ class HttpTests(unittest.TestCase):
         self.captures += 1
         self.last_question = question
 
-    def call(self, method, path, origin=None, body=b"{}"):
+    def open_exam(self, domains, *, pinfl=""):
+        """Imtihon sahifasidagi tartib: avval imtihon, keyin skrinshot."""
+        self.service.set_exam_target(True, domains, pinfl=pinfl)
+        self.service.set_capture_target(True)
+
+    def call(self, method, path, origin=None, body=b"{}", content_type="application/json"):
         request = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", method=method)
         if origin:
             request.add_header("Origin", origin)
         if method == "POST":
             request.data = body
-            request.add_header("Content-Type", "application/json")
+            request.add_header("Content-Type", content_type)
         try:
             with urllib.request.urlopen(request, timeout=5) as response:
                 return response.status, dict(response.headers), response.read()
         except urllib.error.HTTPError as error:
             return error.code, dict(error.headers), error.read()
 
+
+class HttpTests(_HttpCase):
     def test_device_info(self):
         status, _, body = self.call("GET", "/api/device_info")
         self.assertEqual(status, 200)
@@ -239,27 +246,27 @@ class HttpTests(unittest.TestCase):
     def test_capture_requires_active_exam(self):
         status, _, body = self.call("POST", "/api/capture_screen")
         self.assertEqual((status, json.loads(body)["error"]), (409, "no_active_exam"))
-        self.service.set_capture_target(True, ["test.uz"])
+        self.open_exam(["test.uz"])
         status, headers, _ = self.call("POST", "/api/capture_screen", origin="https://test.uz")
         self.assertEqual(status, 202)
         self.assertEqual(headers.get("Access-Control-Allow-Origin"), "https://test.uz")
         self.assertEqual(self.captures, 1)
 
     def test_foreign_origin_rejected(self):
-        self.service.set_capture_target(True, ["test.uz"])
+        self.open_exam(["test.uz"])
         status, _, _ = self.call("POST", "/api/capture_screen", origin="https://evil.uz")
         self.assertEqual(status, 403)
         self.assertEqual(self.captures, 0)
 
     def test_preflight_allows_private_network(self):
-        self.service.set_capture_target(True, ["test.uz"])
+        self.open_exam(["test.uz"])
         status, headers, _ = self.call("OPTIONS", "/api/capture_screen", origin="https://test.uz")
         self.assertEqual(status, 204)
         self.assertEqual(headers.get("Access-Control-Allow-Private-Network"), "true")
         self.assertIn("POST", headers.get("Access-Control-Allow-Methods", ""))
 
     def test_capture_with_question(self):
-        self.service.set_capture_target(True, [])
+        self.open_exam([])
         status, _, body = self.call(
             "POST", "/api/capture_screen", body=b'{"q_id": "1", "q_n": "3"}'
         )
@@ -268,7 +275,7 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(self.last_question, {"q_id": "1", "q_n": 3})
 
     def test_invalid_payload_is_400_and_not_captured(self):
-        self.service.set_capture_target(True, [])
+        self.open_exam([])
         for body, code in (
             (b'{"q_id": "../x"}', "invalid_q_id"),
             (b'{"q_id": "1", "q_n": "-2"}', "invalid_q_n"),
@@ -281,10 +288,125 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(self.captures, 0)
 
     def test_rate_limit(self):
-        self.service.set_capture_target(True, [])
+        self.open_exam([])
         statuses = [self.service.request_capture({}) for _ in range(ls._MAX_CAPTURES_PER_SECOND + 3)]
         self.assertEqual(statuses.count("accepted"), ls._MAX_CAPTURES_PER_SECOND)
         self.assertEqual(statuses[-1], "throttled")
 
     def test_unknown_path(self):
         self.assertEqual(self.call("GET", "/api/other")[0], 404)
+        self.assertEqual(self.call("POST", "/api/other")[0], 404)
+
+    def test_capture_needs_open_exam(self):
+        self.service.set_capture_target(True)  # imtihonsiz - yoqilmaydi
+        self.assertEqual(self.service.request_capture({}), "disabled")
+
+
+PINFL = "32705901230024"
+OTHER_PINFL = "41206981230011"
+
+
+class FinishedSessionTests(_HttpCase):
+    """`POST /api/finished_session` - «Yakunlash» tugmasining platformadagi o'rni."""
+
+    def setUp(self):
+        super().setUp()
+        self.finishes = []
+        self.service.finish_requested.connect(
+            self.finishes.append, Qt.ConnectionType.DirectConnection
+        )
+
+    def finish(self, body=b"", origin="https://test.uz", **kwargs):
+        status, _, raw = self.call("POST", "/api/finished_session", origin=origin, body=body, **kwargs)
+        return status, json.loads(raw)
+
+    def test_requires_open_exam(self):
+        # Imtihon yo'q - platforma domeni ham ruxsatda emas.
+        self.assertEqual(self.finish()[1]["error"], "origin_not_allowed")
+        self.service._extra_origins = ["https://test.uz"]
+        status, body = self.finish()
+        self.assertEqual((status, body["error"]), (409, "no_active_exam"))
+        self.assertEqual(self.finishes, [])
+
+    def test_accepted_once_then_already(self):
+        self.open_exam(["test.uz"], pinfl=PINFL)
+        status, body = self.finish()
+        self.assertEqual((status, body), (202, {"ok": True, "accepted": True}))
+        self.assertEqual(self.finishes, [{}])
+        # Takroriy so'rov (fetch + sendBeacon) - signal YO'Q, javob baribir muvaffaqiyat.
+        status, body = self.finish()
+        self.assertEqual(status, 202)
+        self.assertTrue(body["already"])
+        self.assertEqual(len(self.finishes), 1)
+        # Yakundan keyingi kadr bu imtihonga tegishli emas.
+        status, _, _ = self.call("POST", "/api/capture_screen", origin="https://test.uz")
+        self.assertEqual(status, 409)
+
+    def test_works_after_capture_window_closed(self):
+        # Dalil yig'ish oynasi tugadi - imtihon esa davom etyapti.
+        self.open_exam(["test.uz"])
+        self.service.set_capture_target(False)
+        self.assertEqual(self.finish()[0], 202)
+
+    def test_closed_exam_rejects(self):
+        self.open_exam(["test.uz"])
+        self.service.set_exam_target(False)
+        self.assertEqual(self.finish()[1]["error"], "origin_not_allowed")
+        self.service._extra_origins = ["https://test.uz"]
+        self.assertEqual(self.finish()[1]["error"], "no_active_exam")
+        self.assertEqual(self.service.request_capture({}), "disabled")
+
+    def test_button_finish_makes_platform_request_idempotent(self):
+        self.open_exam(["test.uz"])
+        self.service.begin_finish()
+        status, body = self.finish()
+        self.assertEqual((status, body.get("already")), (202, True))
+        self.assertEqual(self.finishes, [])
+        self.assertEqual(self.service.request_capture({}), "disabled")
+
+    def test_origin_required_and_checked(self):
+        self.open_exam(["test.uz"])
+        status, body = self.finish(origin=None)
+        self.assertEqual((status, body["error"]), (403, "origin_required"))
+        status, body = self.finish(origin="https://evil.uz")
+        self.assertEqual((status, body["error"]), (403, "origin_not_allowed"))
+        self.assertEqual(self.finishes, [])
+
+    def test_wildcard_origin_allows_curl(self):
+        self.service._extra_origins = ["*"]
+        self.open_exam(["test.uz"])
+        self.assertEqual(self.finish(origin=None)[0], 202)
+
+    def test_pinfl_must_match_current_candidate(self):
+        self.open_exam(["test.uz"], pinfl=PINFL)
+        status, body = self.finish(json.dumps({"imie": OTHER_PINFL}).encode())
+        self.assertEqual((status, body["error"]), (409, "candidate_mismatch"))
+        self.assertEqual(self.finishes, [])
+        # Rad javobi holatni buzmaydi - to'g'ri so'rov o'tadi.
+        status, _ = self.finish(json.dumps({"imie": int(PINFL)}).encode())
+        self.assertEqual(status, 202)
+        self.assertEqual(self.finishes, [{"pinfl": PINFL}])
+
+    def test_pinfl_as_form_and_invalid(self):
+        self.open_exam(["test.uz"], pinfl=PINFL)
+        status, body = self.finish(b"imie=123", content_type="application/x-www-form-urlencoded")
+        self.assertEqual((status, body["error"]), (400, "invalid_pinfl"))
+        status, _ = self.finish(
+            f"pinfl={PINFL}".encode(), content_type="application/x-www-form-urlencoded"
+        )
+        self.assertEqual(status, 202)
+
+
+class FinishPayloadTests(unittest.TestCase):
+    def test_shapes(self):
+        parse = ls.parse_finish_payload
+        self.assertEqual(parse(b""), {})
+        self.assertEqual(parse(b"{}"), {})
+        self.assertEqual(parse(b'{"status": "done"}'), {})
+        self.assertEqual(parse(b'{"imie": " 32705901230024 "}'), {"pinfl": PINFL})
+        self.assertEqual(parse(b"", "", f"pinfl={PINFL}"), {"pinfl": PINFL})
+        for body in (b'{"imie": "3270590123002"}', b'{"imie": true}', b'{"imie": "abc"}',
+                     b'{"pinfl": [1]}', b"[1]", b"{bad"):
+            with self.subTest(body=body):
+                with self.assertRaises(ls.PayloadError):
+                    parse(body, "application/json")

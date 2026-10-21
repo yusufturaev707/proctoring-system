@@ -524,11 +524,34 @@ class Setting(SoftDeleteModel):
     # SKRINSHOT TAYMER BILAN OLINMAYDI - faqat test platformasi buyurganda
     # (javob belgilandi -> client lokal xizmatiga `POST /api/capture_screen`).
     # Shuning uchun interval ham, dedup ham yo'q (`controls.0013`): har
-    # kadr ma'noli lahza. Kadr mashinada HAR DOIM saqlanadi; bu bayroq
-    # faqat "serverga ham yuborilsinmi" savoli (trafik, server diski).
+    # kadr ma'noli lahza.
+    #
+    # SAQLASH JOYI - IKKI MUSTAQIL BAYROQ (panelda uch variant):
+    #
+    #   local  upload
+    #   True   False   faqat mashinada (trafik yo'q)
+    #   True   True    mashinada + serverga (standart)
+    #   False  True    faqat serverda (mashina diskida talabgor ekrani qolmaydi)
+    #
+    # Bitta tanlov maydoni EMAS, chunki `is_screenshot_upload` ni eski
+    # clientlar o'qiydi (`capture.upload`), yangi bayroqning standarti
+    # (`True`) esa mavjud profillarni ma'lumot ko'chirishsiz avvalgi
+    # xulqda qoldiradi - migratsiyadagi `RunPython` serverga yetib
+    # bormaydi (`CLAUDE.md`: migratsiyalar git'da yo'q). Ikkalasi
+    # o'chiq - kadr hech qayerga yozilmaydi: bazada cheklov
+    # (`setting_screenshot_has_destination`) va serializer rad etadi.
     is_screenshot_upload = models.BooleanField(
         _("Skrinshotni serverga yuborish"), default=True,
         help_text=_("O'chiq bo'lsa skrinshot faqat client mashinasida saqlanadi"),
+    )
+    # "Faqat serverda" rejimida yuborilmagan kadrning YAGONA nusxasi -
+    # client RAM navbati (`SCREENSHOT_RETRY_QUEUE`): uzoq uzilishda yoki
+    # navbat to'lganda u yo'qoladi. Bu imtihon egasining ongli tanlovi
+    # va panel uni aytadi. Eski client bu bayroqni bilmaydi va
+    # mashinada saqlashda davom etadi (xavfsiz tomonga).
+    is_screenshot_local = models.BooleanField(
+        _("Skrinshotni mashinada saqlash"), default=True,
+        help_text=_("O'chiq bo'lsa skrinshot faqat serverga yuboriladi, mashina diskida qolmaydi"),
     )
     # 1920/80: ekran o'z o'lchamida qoladi. Ilgari 960/65 edi va 1920 li
     # ekranda test matni ~6 px harfga aylanib, O'QILMASDI — skrinshot
@@ -667,6 +690,15 @@ class Setting(SoftDeleteModel):
                 fields=["name"],
                 condition=models.Q(deleted_at__isnull=True),
                 name="unique_setting_name",
+            ),
+            # Skrinshot kamida bitta joyga yoziladi: ikkala bayroq
+            # o'chiq bo'lsa dalil jimgina yo'qolardi.
+            models.CheckConstraint(
+                condition=models.Q(is_screenshot_local=True) | models.Q(is_screenshot_upload=True),
+                name="setting_screenshot_has_destination",
+                violation_error_message=_(
+                    "Skrinshot kamida bitta joyda saqlanishi kerak (mashinada yoki serverda)"
+                ),
             ),
         ]
 

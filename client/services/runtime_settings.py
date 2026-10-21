@@ -93,8 +93,9 @@ SPECS: dict[str, Spec] = {
     "capture.record_pip_percent": Spec(
         "SCREEN_RECORD_PIP_RATIO", float, scale=0.01, minimum=0.05, maximum=0.30
     ),
-    # --- Skrinshot: serverga ham yuboriladimi (imtihon profili) ---
+    # --- Skrinshot saqlash joyi (imtihon profili): server / mashina ---
     "capture.upload": Spec("SCREENSHOT_UPLOAD", bool),
+    "capture.local": Spec("SCREENSHOT_LOCAL", bool),
     # --- Skrinshot kamera tasmasi (imtihon profili) ---
     "capture.camera_overlay": Spec("SCREENSHOT_CAMERA_OVERLAY", bool),
     "capture.camera_overlay_percent": Spec(

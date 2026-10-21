@@ -181,12 +181,33 @@ yo'liga o'tadi. Bu shartnomani buzmang.
 **Skrinshot taymersiz — test platformasi buyurganda** (`controls.0013`
 `screenshot_interval`/`dedup_threshold` ni olib tashladi). Talabgor javob
 belgilaganda platforma `POST http://localhost:8050/api/capture_screen`
-yuboradi. Buyruq kadri DEDUP QILINMAYDI. Kadr mashinada HAR DOIM
-saqlanadi; serverga yuborish — `Setting.is_screenshot_upload`.
+yuboradi. Buyruq kadri DEDUP QILINMAYDI.
+
+**Saqlash joyi — ikki MUSTAQIL bayroq, panelda uch variant** («Skrinshot
+va yozuv» → «Saqlash joyi»):
+
+| Variant | `is_screenshot_local` | `is_screenshot_upload` |
+|---|---|---|
+| Faqat mashinada | `True` | `False` |
+| Mashinada + serverga (standart) | `True` | `True` |
+| Faqat serverda | `False` | `True` |
+
+* Ikkalasi `False` — bazada `setting_screenshot_has_destination` +
+  `SettingSerializer.validate` (400, qisman PATCH saqlangan qiymat bilan);
+  client baribir shunday olsa arxivni yoqadi (`CaptureConfig.from_server`).
+* Bitta tanlov maydoniga AYLANTIRMANG: eski client `capture.upload` ni
+  o'qiydi, yangi bayroqning standarti mavjud profillarni ma'lumot
+  ko'chirishsiz saqlaydi. Client'ga `capture.local` (eski client uni
+  bilmaydi va mashinada saqlayveradi).
+* «Faqat serverda» da yuborilmagan kadrning yagona nusxasi — RAM navbati:
+  yakun undan OLDIN `ScreenshotService.wait_idle` bilan bo'shatiladi
+  (`_finish_with_recording`, oddiy yakunda ≤ 8 s, chiqishda ≤ 2 s; backoff
+  paytida kutilmaydi); yo'qolgan kadr — ERROR log (`_log_dropped`).
 
 `screen_capture.py` da uch mustaqil bosqich: olish (UI thread, kamera kadri
 bilan bir lahzada) → kodlash + mahalliy arxiv (fon) → yuklash (fon, bitta
-uchuvchi so'rov, xatoda 15 s dan keyin qayta). Kadr hech qachon tashlanmaydi.
+uchuvchi so'rov, xatoda 15 s dan keyin qayta). Kadr hech qachon tashlanmaydi
+(«faqat serverda» rejimida — navbat to'lmaguncha).
 Arxiv konteksti BUYRUQ paytida olinadi (`local_archive.context()`).
 
 **Savol kadri — savolga bitta, qayta belgilansa almashadi.** Tana
@@ -214,6 +235,22 @@ Arxiv konteksti BUYRUQ paytida olinadi (`local_archive.context()`).
 |---|---|
 | `GET /api/device_info` | `{"machine_uuid", "ip", "mac", "number"}` — SHARTNOMA, kalitlarni o'zgartirmang |
 | `POST /api/capture_screen` | 202 darhol; 400 yaroqsiz tana; 409 `no_active_exam`; 429 >20/s |
+| `POST /api/finished_session` | 202 darhol (takrorida `already: true`); 400 `invalid_pinfl`; 403 `origin_required`; 409 `no_active_exam` / `candidate_mismatch` |
+
+* **`finished_session` = «Yakunlash» tugmasi** (`ExamWebViewPage.
+  _on_platform_finished` → `finish(completed=True)`): dalil, hodisalar,
+  yozuv, `session/finish/`, joy bo'shaydi, JSHSHIR sahifasi. Tasdiq
+  so'ralmaydi; ochiq sahifa dialogi (`_run_dialog`) va proktor
+  ogohlantirishi yopiladi. Signal sessiyaga BIR MARTA (`request_finish`
+  qulf ostida; tugma bosilgan bo'lsa ham — `begin_finish`). Tana ixtiyoriy
+  `{"imie": "<jshshir>"}` (yoki `pinfl`) — joriy talabgor bilan
+  solishtiriladi. `Origin` MAJBURIY (`*` dev'dan tashqari) — qaytarib
+  bo'lmaydigan amal. Oxirgi kadr kerak bo'lsa platforma `capture_screen`
+  javobini KUTIB, keyin yakunni yuboradi.
+* **Ikki holat alohida**: `set_exam_target` (platforma ochilgandan
+  `stop()` gacha — Origin domenlari, yakun) va `set_capture_target`
+  (dalil oynasi tugasa o'chadi — imtihon esa davom etadi, yakun
+  baribir qabul qilinadi).
 
 * `machine_uuid` — SMBIOS 1-tur, hech qachon bo'sh emas, doim
   `normalize_machine_uuid` dan o'tgan. Manbalar zanjiri
@@ -632,7 +669,7 @@ admin, client tekshiruvi):
 
 | Yakun | Joy |
 |---|---|
-| «Yakunlash» (client, `completed`) | bo'shaydi |
+| «Yakunlash» yoki platformaning `finished_session` (client, `completed`) | bo'shaydi |
 | chetlashtirish (PANEL) | bo'shaydi |
 | dasturdan chiqish (Ctrl+Q), `expired`, "shaxs rad etildi" | band |
 
@@ -1270,7 +1307,7 @@ SVG `viewBox` kadr o'lchamida, `preserveAspectRatio="xMidYMid meet"`
 
 | | Skrinshot | Kamera klipi | Ekran yozuvi |
 |---|---|---|---|
-| Qayerda | mashina + server (`is_screenshot_upload`) | faqat mashina | faqat mashina |
+| Qayerda | mashina va/yoki server (`is_screenshot_local`, `is_screenshot_upload`) | faqat mashina | faqat mashina |
 | Serverga | fayl | manzil | manzil |
 | Hajm | ~150 KB / javob | ~1-3 MB / hodisa | ~0.55-0.7 GB / 3 soat |
 | Model | `ProctoringScreenshot` | `LocalRecording` | `LocalRecording` |

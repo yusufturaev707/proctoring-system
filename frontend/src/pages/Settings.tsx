@@ -17,6 +17,7 @@ import RouterIcon from '@mui/icons-material/RouterOutlined'
 import CheckBoxIcon from '@mui/icons-material/CheckBox'
 import ComputerOutlinedIcon from '@mui/icons-material/DesktopWindowsOutlined'
 import CloudUploadOutlinedIcon from '@mui/icons-material/CloudUploadOutlined'
+import CloudDoneOutlinedIcon from '@mui/icons-material/CloudDoneOutlined'
 import CheckBoxBlankIcon from '@mui/icons-material/CheckBoxOutlineBlank'
 
 import { listAll } from '../components/data/useResource'
@@ -51,6 +52,33 @@ const READ_ONLY = [
 
 /** Yuz detektori o'lchamlari: 32 ga karrali (`controls.models.validate_det_size`). */
 const DET_SIZES = [320, 416, 480, 512, 640, 800, 960, 1024, 1280]
+
+/**
+ * Skrinshot saqlash joyi — panelda uch variant, modelda ikki bayroq
+ * (`controls.Setting.is_screenshot_local` / `is_screenshot_upload`).
+ * Ikkala bayroq o'chiq holat variantlarda yo'q: server uni rad etadi
+ * (`setting_screenshot_has_destination`).
+ */
+type ShotStorage = 'local' | 'both' | 'server'
+
+const SHOT_STORAGE_FLAGS: Record<ShotStorage, ApiRecord> = {
+  local: { is_screenshot_local: true, is_screenshot_upload: false },
+  both: { is_screenshot_local: true, is_screenshot_upload: true },
+  server: { is_screenshot_local: false, is_screenshot_upload: true },
+}
+
+const SHOT_STORAGE_SUMMARY: Record<ShotStorage, string> = {
+  local: ' — faqat client mashinasida saqlanadi, serverga yuborilmaydi.',
+  both: ' — mashinada saqlanadi va fonda serverga yuboriladi.',
+  server: ' — faqat serverga yuboriladi, mashinada saqlanmaydi.',
+}
+
+// `is_screenshot_local` ni bilmaydigan eski server javobida maydon yo'q —
+// `false` emas, standart (`true`) deb o'qiladi.
+const shotStorage = (form: ApiRecord): ShotStorage => {
+  if (!form.is_screenshot_upload) return 'local'
+  return form.is_screenshot_local === false ? 'server' : 'both'
+}
 
 const stripReadOnly = (obj: ApiRecord) =>
   Object.fromEntries(Object.entries(obj).filter(([key]) => !READ_ONLY.includes(key)))
@@ -437,9 +465,7 @@ export default function Settings() {
       <Alert severity="info" sx={{ mb: 2.5 }}>
         Skrinshot talabgor <strong>javob belgilaganda</strong> olinadi (test platformasi buyrug‘i).
         100 ta javobli testda bitta talabgorga ~<strong>{perCandidateMb} MB</strong>
-        {form.is_screenshot_upload
-          ? ' — mashinada saqlanadi va fonda serverga yuboriladi.'
-          : ' — faqat client mashinasida saqlanadi, serverga yuborilmaydi.'}
+        {SHOT_STORAGE_SUMMARY[shotStorage(form)]}
       </Alert>
 
       <Card>
@@ -615,24 +641,32 @@ export default function Settings() {
               <Grid item xs={12} md={6}>
                 {/* Skrinshot TAYMERSIZ: test platformasi javob belgilanganda
                     client'ning lokal xizmatiga buyruq yuboradi
-                    (`client/services/local_service.py`). Kadr mashinada
-                    HAR DOIM qoladi — tanlov faqat serverga yuborish. */}
+                    (`client/services/local_service.py`). Saqlash joyi —
+                    ikki mustaqil bayroq (`is_screenshot_local`,
+                    `is_screenshot_upload`), ikkalasi birdan o'chiq
+                    bo'lmaydi (server cheklovi); `shotStorage` ga qarang. */}
                 <Section title="Saqlash joyi">
                   <Typography variant="body2" color="text.secondary">
-                    Kadr javob belgilangan lahzada olinadi va client mashinasida har doim saqlanadi.
+                    Kadr javob belgilangan lahzada olinadi.
                   </Typography>
                   <ChoiceCards
-                    value={form.is_screenshot_upload ? 'server' : 'local'}
+                    value={shotStorage(form)}
                     disabled={!canManage}
-                    onChange={(value) => setForm((prev) => ({ ...(prev as ApiRecord), is_screenshot_upload: value === 'server' }))}
+                    onChange={(value) => setForm((prev) => ({
+                      ...(prev as ApiRecord), ...SHOT_STORAGE_FLAGS[value as ShotStorage],
+                    }))}
                     options={[
                       {
                         value: 'local', icon: <ComputerOutlinedIcon />, title: 'Faqat mashinada',
                         text: 'Serverga trafik yo‘q. Proktor skrinshotni panelda ko‘rmaydi — komissiya uni mashinadan oladi.',
                       },
                       {
-                        value: 'server', icon: <CloudUploadOutlinedIcon />, title: 'Mashinada + serverga',
+                        value: 'both', icon: <CloudUploadOutlinedIcon />, title: 'Mashinada + serverga',
                         text: 'Fonda, imtihonga xalaqit bermasdan yuboriladi. Proktor panelda real vaqtda ko‘radi.',
+                      },
+                      {
+                        value: 'server', icon: <CloudDoneOutlinedIcon />, title: 'Faqat serverda',
+                        text: 'Mashina diskida talabgor ekrani qolmaydi. Uzoq aloqa uzilishida yuborilmagan kadrlar yo‘qolishi mumkin — nusxasi yo‘q.',
                       },
                     ]}
                   />
