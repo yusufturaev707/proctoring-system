@@ -31,6 +31,7 @@ const Roles = lazy(ROUTE_LOADERS['/roles'])
 const Settings = lazy(ROUTE_LOADERS['/settings'])
 const AllowedIpsPage = lazy(ROUTE_LOADERS['/allowed-ips'])
 const ClientExitPasswordsPage = lazy(ROUTE_LOADERS['/exit-passwords'])
+const OffersPage = lazy(ROUTE_LOADERS['/offers'])
 const RdpObjectsPage = lazy(ROUTE_LOADERS['/rdp-objects'])
 const HotkeysPage = lazy(ROUTE_LOADERS['/hotkeys'])
 const CocoObjectsPage = lazy(ROUTE_LOADERS['/coco-objects'])
@@ -110,6 +111,7 @@ const ROUTES = [
   { path: '/settings', element: <Settings />, permission: 'controls.view' },
   { path: '/allowed-ips', element: <AllowedIpsPage />, permission: 'controls.ip_view' },
   { path: '/exit-passwords', element: <ClientExitPasswordsPage />, permission: 'controls.exit_password_view' },
+  { path: '/offers', element: <OffersPage />, permission: 'controls.view' },
   { path: '/rdp-objects', element: <RdpObjectsPage />, permission: 'controls.view' },
   { path: '/hotkeys', element: <HotkeysPage />, permission: 'controls.view' },
   { path: '/coco-objects', element: <CocoObjectsPage />, permission: 'controls.view' },

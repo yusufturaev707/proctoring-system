@@ -17,11 +17,20 @@ testniki.
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ui.styles import COLORS, badge_style, surface_container_style
 from ui.widgets.brand import BrandLogo, SeatBadge
 from ui.widgets.icons import RefreshButton
+from ui.widgets.md3 import FlowStepper
 from version import COMPANY_NAME
 
 
@@ -115,8 +124,14 @@ class PageHeader(QWidget):
         show_back: bool = False,
         show_logout: bool = True,
         chips=None,
+        stepper: bool = False,
         parent=None,
     ) -> None:
+        """
+        `stepper=True` - "2 / 4" nishoni o'rniga butun yo'l nomlari bilan
+        (`md3.FlowStepper`), ajratuvchi chiziq ostida. Talabgor "qayerda
+        turibman va keyin nima bo'ladi" ni o'qiydi, raqamdan emas.
+        """
         super().__init__(parent)
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -140,7 +155,7 @@ class PageHeader(QWidget):
 
         top.addStretch()
 
-        if step:
+        if step and not stepper:
             top.addWidget(StepBadge(step, total_steps))
 
         if chips:
@@ -175,6 +190,10 @@ class PageHeader(QWidget):
         divider.setFixedHeight(1)
         divider.setStyleSheet("background-color: {};".format(COLORS["border"]))
         root.addWidget(divider)
+
+        self.stepper = FlowStepper(step) if stepper and step else None
+        if self.stepper is not None:
+            root.addWidget(self.stepper, 0, Qt.AlignmentFlag.AlignHCenter)
 
     def set_subtitle(self, text: str) -> None:
         self.subtitle_label.setText(text)
@@ -226,6 +245,60 @@ def ip_chip_hints(addresses) -> tuple:
     )
 
 
+class _ElidedValue(QLabel):
+    """
+    Uzun qiymat ("…Qoraqalpog'iston Respublikasidagi binosi") "…" bilan
+    qisqaradi, to'liq matn tooltip'da.
+
+    Oddiy `QLabel` minimal kengligini to'liq matndan oladi: panelda
+    kiritilgan uzun bino nomi butun sahifani 1366 px dan kengaytirib
+    yuborardi (jonli smoke: 1458 / 1703 px) va o'ng chet - kompyuter
+    raqami, «Davom etish» - ekrandan chiqib qolardi.
+    """
+
+    _MIN_WIDTH = 90
+
+    def __init__(self, text: str = "") -> None:
+        super().__init__(text)
+        self._full = text
+        self._tip = ""
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+
+    def setText(self, text: str) -> None:  # noqa: N802 - Qt API
+        self._full = text or ""
+        self._elide()
+
+    def setToolTip(self, text: str) -> None:  # noqa: N802 - Qt API
+        self._tip = text or ""
+        self._elide()
+
+    def full_text(self) -> str:
+        return self._full
+
+    def sizeHint(self):  # noqa: N802 - Qt API
+        hint = super().sizeHint()
+        hint.setWidth(self.fontMetrics().horizontalAdvance(self._full) + 4)
+        return hint
+
+    def minimumSizeHint(self):  # noqa: N802 - Qt API
+        hint = super().minimumSizeHint()
+        hint.setWidth(min(self._MIN_WIDTH, self.sizeHint().width()))
+        return hint
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API
+        super().resizeEvent(event)
+        self._elide()
+
+    def _elide(self) -> None:
+        shown = self.fontMetrics().elidedText(
+            self._full, Qt.TextElideMode.ElideRight, max(self._MIN_WIDTH, self.width())
+        )
+        QLabel.setText(self, shown)
+        # Qisqargan bo'lsa to'liq nom tooltip'da (chaqiruvchi o'z
+        # tooltip'ini bergan bo'lsa - o'shanisi).
+        QLabel.setToolTip(self, self._tip or (self._full if shown != self._full else ""))
+
+
 class ContextChips(QFrame):
     """
     Ish o'rni konteksti: viloyat, bino, kompyuter, MAC, IP.
@@ -251,6 +324,10 @@ class ContextChips(QFrame):
     bilan belgilab, telefonda aytish o'rniga xabarga qo'yib
     yuborishi mumkin.
     """
+
+    #: Qisqarishi mumkin bo'lgan kataklar (nomlar - panelda erkin matn).
+    #: MAC va IP hech qachon qisqarmaydi: ular aynan nusxalanadi.
+    ELIDED = frozenset({"region", "zone"})
 
     #: Mumkin bo'lgan kataklar. Tartib ma'noli: kattadan kichikka -
     #: viloyat, bino, xonadagi o'rin, keyin mashinaning o'zi.
@@ -302,7 +379,7 @@ class ContextChips(QFrame):
             cell.addWidget(title)
             self._captions[key] = (title, caption)
 
-            value = QLabel("—")
+            value = _ElidedValue("—") if key in self.ELIDED else QLabel("—")
             value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             value.setStyleSheet(
                 "font-size: 14px; font-weight: 600; color: {};".format(COLORS["text"])
@@ -310,7 +387,9 @@ class ContextChips(QFrame):
             cell.addWidget(value)
 
             self._labels[key] = value
-            root.addLayout(cell)
+            # Bo'sh joy nomlarga beriladi (bino eng uzuni) - qisqarish
+            # faqat haqiqatan sig'masa.
+            root.addLayout(cell, 1 if key in self.ELIDED else 0)
 
     @staticmethod
     def _separator() -> QFrame:
@@ -388,11 +467,11 @@ class WorkstationHeader(QWidget):
 
     reload_requested = pyqtSignal()
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent=None, *, step: int = 0) -> None:
         super().__init__(parent)
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(12)
+        root.setSpacing(10)
 
         top = QHBoxLayout()
         top.setSpacing(20)
@@ -427,6 +506,11 @@ class WorkstationHeader(QWidget):
         divider.setFixedHeight(1)
         divider.setStyleSheet("background-color: {};".format(COLORS["border"]))
         root.addWidget(divider)
+
+        # Oqim bosqichlari (`PageHeader(stepper=True)` bilan bir xil).
+        self.stepper = FlowStepper(step) if step else None
+        if self.stepper is not None:
+            root.addWidget(self.stepper, 0, Qt.AlignmentFlag.AlignHCenter)
 
     # ------------------------------------------------------------------
     def set_subtitle(self, text: str) -> None:

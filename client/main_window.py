@@ -588,15 +588,11 @@ class MainWindow(QMainWindow):
             # talabgorning aybi emas. Sahifani yopish test platformasini,
             # ekran yozuvini va kuzatuvni o'sha zahoti uzardi. Chiqish
             # imtihon yakunlangach bajariladi (`_after_exam_closed`).
+            # Ekranga XABAR CHIQMAYDI: oldida talabgor, bu esa operatorning
+            # ishi - yakundan keyin login sahifasi sababni o'zi aytadi.
             if not self._auth_expired_pending:
                 log.warning("Xodim sessiyasi muddati tugadi - imtihon yakunlangach "
                             "login sahifasiga qaytiladi")
-                snackbar = getattr(self._webview_page, "message", None)
-                if snackbar is not None and hasattr(snackbar, "show_message"):
-                    snackbar.show_message(
-                        "Operator sessiyasi muddati tugadi — imtihon davom etmoqda. "
-                        "Yakunlangach qaytadan kiring.", "warning",
-                    )
             self._auth_expired_pending = True
             return
         self._auth_expired_pending = False
@@ -1025,25 +1021,20 @@ class MainWindow(QMainWindow):
         """
         Tutilmagan xato - dastur ISHLASHDA DAVOM ETADI.
 
-        Imtihon sahifasida modal oyna EMAS, Snackbar: talabgorning
-        ekrani to'silmaydi va kiritish to'xtamaydi. Qolgan sahifalarda
-        - `NoticeDialog` (20 s da o'zi yopiladi). Takrorlanish
+        IMTIHON SAHIFASIDA EKRANGA HECH NARSA CHIQMAYDI. Ekran oldida
+        talabgor: «ichki xato» xabari uni chalg'itadi va u bunga hech
+        narsa qila olmaydi (fon thread'idagi xato ham shu yerga keladi -
+        masalan, skaner yoki yuklash). Xato log'da to'liq izi bilan
+        (`crash_guard._excepthook`). Qolgan sahifalarda - operatorga
+        `NoticeDialog` (20 s da o'zi yopiladi). Takrorlanish
         `crash_guard.ErrorThrottle` da cheklangan.
         """
         if self._closing:
             return
         repeat = " ({} marta takrorlandi)".format(count) if count > 1 else ""
-        try:
-            if self._stack.currentIndex() == self.PAGE_WEBVIEW and self._webview_page is not None:
-                snackbar = getattr(self._webview_page, "message", None)
-                if snackbar is not None and hasattr(snackbar, "show_message"):
-                    snackbar.show_message(
-                        "Dasturda ichki xato qayd etildi, imtihon davom etmoqda{}.".format(repeat),
-                        "warning",
-                    )
-                return
-        except Exception:
-            log.debug("Snackbar ko'rsatilmadi", exc_info=True)
+        if self._stack.currentIndex() == self.PAGE_WEBVIEW:
+            log.warning("Imtihon paytidagi ichki xato ekranga chiqarilmadi: %s%s",
+                        signature, repeat)
             return
         self._show_notice(
             "Dasturda ichki xato",

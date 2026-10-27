@@ -691,6 +691,11 @@ class CameraManager(QObject):
                 lambda: self._retired.remove(stream) if stream in self._retired else None
             )
 
+    @property
+    def has_running_streams(self) -> bool:
+        """`stop()` dan keyin hali tugamagan oqim bormi (`_retired`)."""
+        return any(stream.isRunning() for stream in self._retired)
+
     def shutdown(self, timeout_ms: int = 10000) -> None:
         """Dastur yopilishidan oldingi oxirgi tozalash."""
         self.stop()

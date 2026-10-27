@@ -9,6 +9,7 @@ import KeyIcon from '@mui/icons-material/VpnKeyOutlined'
 import TuneIcon from '@mui/icons-material/TuneOutlined'
 import ImageIcon from '@mui/icons-material/ImageOutlined'
 import InfoIcon from '@mui/icons-material/InfoOutlined'
+import GavelIcon from '@mui/icons-material/GavelOutlined'
 
 import DetailDialog, { InfoNote, StatTiles } from '../data/DetailDialog'
 import type { DetailProblem } from '../data/DetailDialog'
@@ -68,6 +69,17 @@ export default function ExamDetailDialog({ row, onEdit, onClose }: DetailDialogB
         text: 'Platforma sarlavhasi (token) o‘rnatilmagan: platforma talab qilsa JSHSHIR tekshiruvi 401 bilan rad etiladi.',
       })
     }
+    if (!exam.offer_title) {
+      problems.push({
+        severity: 'info',
+        text: 'Oferta biriktirilmagan — talabgordan shaxsga doir ma’lumotlarni qayta ishlashga rozilik so‘ralmaydi.',
+      })
+    } else if (!exam.offer_is_active) {
+      problems.push({
+        severity: 'warning',
+        text: `«${exam.offer_title}» ofertasi nofaol — talabgordan rozilik so‘ralmaydi. «Oferta» sahifasida yoqing.`,
+      })
+    }
     if (schedulesPage && !schedulesCount) {
       problems.push({
         severity: 'info',
@@ -103,7 +115,8 @@ export default function ExamDetailDialog({ row, onEdit, onClose }: DetailDialogB
     >
       <StatTiles
         items={[
-          { label: 'Davomiylik', value: durationText(exam.duration_minutes) },
+          // Davomiylik sarlavha chipida va «Sozlamalar» da bor — o'rniga oferta holati.
+          { label: 'Oferta', value: exam.offer_title ? (exam.offer_is_active ? 'Bor' : 'Nofaol') : 'Yo‘q' },
           { label: 'Seanslar', value: schedulesLoading ? undefined : schedulesCount },
           { label: 'Sessiyalar', value: exam.sessions_count ?? 0 },
           { label: 'Resurs domenlari', value: domains.length },
@@ -121,6 +134,12 @@ export default function ExamDetailDialog({ row, onEdit, onClose }: DetailDialogB
 
           <Section title="Sozlamalar">
             <Field icon={<TuneIcon fontSize="small" />} label="Proktorlik profili" value={exam.setting_name} hint="Global standart qo‘llanadi" />
+            <Field
+              icon={<GavelIcon fontSize="small" />}
+              label="Oferta — yuz tekshiruvidan oldin rozilik"
+              value={exam.offer_title ? `${exam.offer_title}${exam.offer_is_active ? '' : ' (nofaol)'}` : ''}
+              hint="Biriktirilmagan — rozilik so‘ralmaydi"
+            />
             <Field label="Test davomiyligi — platforma vaqt bermasa shu ishlatiladi" value={durationText(exam.duration_minutes)} />
             <Field label="Yaratilgan" value={dateText(exam.created_at)} />
             <Field label="ID" value={exam.id} mono />

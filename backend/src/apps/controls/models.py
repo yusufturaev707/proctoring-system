@@ -973,3 +973,83 @@ class EventRiskWeight(TimeStampedModel):
         verbose_name = _("Hodisa og'irligi")
         verbose_name_plural = _("Hodisa og'irliklari")
         ordering = ["-weight", "event_type"]
+
+
+# --------------------------------------------------------------------------
+# Oferta — shaxsga doir ma'lumotlar bilan ishlashga rozilik
+# --------------------------------------------------------------------------
+class Offer(SoftDeleteModel):
+    """
+    Oferta matni — panelda muharrir bilan yoziladi, client'da talabgorga ko'rsatiladi.
+
+    OFERTA TESTGA TEGISHLI: har test o'z shartlari bilan (`Exam.offer`).
+    Bog'lanish imtihon tomonida — imtihonda ofertaning bittadan ortig'i
+    bo'lmasligini bazaning o'zi kafolatlaydi, bitta matn esa bir nechta
+    testga xizmat qila oladi. Testda oferta yo'q yoki u nofaol
+    (`is_active`) bo'lsa rozilik so'ralmaydi
+    (`controls.offers.current_revision`).
+
+    MATN TAHRIRLANADI, ROZILIK ESA O'ZGARMAS NUSXAGA BERILADI. Har matn
+    yoki sarlavha o'zgarishi yangi `OfferRevision` yaratadi
+    (`controls.offers.save_offer`) va `version` oshadi. Rozilik qatori
+    (`proctoring.OfferConsent`) versiyaga bog'lanadi: apellyatsiyada
+    "talabgor AYNAN qaysi matnga rozi bo'lgan?" degan savolga keyingi
+    tahrirlar ta'sir qilmaydi.
+
+    `content` — TOZALANGAN HTML (`common.html_sanitizer`), xom emas.
+    """
+
+    title = models.CharField(_("Sarlavha"), max_length=200)
+    content = models.TextField(_("Matn (HTML)"))
+    #: Oxirgi `OfferRevision.version` — faqat `save_offer` yozadi.
+    version = models.PositiveIntegerField(_("Versiya"), default=0, editable=False)
+    #: Nofaol oferta biriktirilgan testlarda ham SO'RALMAYDI — qoralama
+    #: yoki vaqtincha to'xtatish uchun (biriktiruvni buzmasdan).
+    is_active = models.BooleanField(_("Faol"), default=True, db_index=True)
+    updated_by = models.ForeignKey(
+        "users.User", on_delete=models.SET_NULL, blank=True, null=True,
+        related_name="+", verbose_name=_("Oxirgi tahrir"),
+    )
+
+    def __str__(self):
+        return f"{self.title} (v{self.version}){'' if self.is_active else ' — nofaol'}"
+
+    class Meta:
+        verbose_name = _("Oferta")
+        verbose_name_plural = _("Ofertalar")
+        db_table = "offer"
+        ordering = ["-is_active", "-updated_at"]
+
+
+class OfferRevision(models.Model):
+    """
+    Oferta matnining O'ZGARMAS nusxasi — rozilik aynan shunga beriladi.
+
+    Qator hech qachon yangilanmaydi va o'chirilmaydi (`PROTECT`): unga
+    bog'langan rozilik bo'lmasa ham, u "qaysi kuni qanday matn amalda
+    edi" degan savolning yagona javobi.
+    """
+
+    offer = models.ForeignKey(Offer, on_delete=models.PROTECT, related_name="revisions")
+    version = models.PositiveIntegerField(_("Versiya"))
+    title = models.CharField(_("Sarlavha"), max_length=200)
+    content = models.TextField(_("Matn (HTML)"))
+    #: `common.html_sanitizer.content_hash(content)` — client ko'rsatgan
+    #: matnni shu bilan tasdiqlaydi (`session.accept_offer`).
+    content_hash = models.CharField(_("Matn izi"), max_length=64)
+    created_by = models.ForeignKey(
+        "users.User", on_delete=models.SET_NULL, blank=True, null=True, related_name="+",
+    )
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    def __str__(self):
+        return f"{self.title} v{self.version}"
+
+    class Meta:
+        verbose_name = _("Oferta versiyasi")
+        verbose_name_plural = _("Oferta versiyalari")
+        db_table = "offer_revision"
+        ordering = ["-version"]
+        constraints = [
+            models.UniqueConstraint(fields=["offer", "version"], name="unique_offer_version"),
+        ]

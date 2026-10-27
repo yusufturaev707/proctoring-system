@@ -130,6 +130,7 @@ export interface UseResourceOptions {
   syncUrl?: boolean
   urlNamespace?: string
   refetchInterval?: number | false
+  relatedKeys?: string[]
 }
 
 /** CRUD API — faqat o'qiladigan ro'yxatda (`ListApi`) mutatsiyalar chaqirilmaydi. */
@@ -157,6 +158,12 @@ export function useResource({
    * mumkin emas.
    */
   refetchInterval = false,
+  /**
+   * Yozuv saqlanganda QO'SHIMCHA eskiradigan kalitlar: mutatsiya boshqa
+   * resursni ham o'zgartirsa (oferta saqlanganda testlarning `offer` i),
+   * aks holda u sahifa va uning variantlari 5 daqiqagacha eski qolardi.
+   */
+  relatedKeys,
 }: UseResourceOptions) {
   const queryClient = useQueryClient()
   const { notify, notifyError } = useUi()
@@ -359,9 +366,14 @@ export function useResource({
     }
   }, [query.error, cursor, paginationModel.page])
 
+  // Massiv inline berilishi mumkin — bog'liqlik qiymat bo'yicha.
+  const relatedList = (relatedKeys || []).join(',')
   const invalidate = useCallback(
-    () => queryClient.invalidateQueries({ queryKey: [key] }),
-    [queryClient, key],
+    () => {
+      const keys = relatedList ? [key, ...relatedList.split(',')] : [key]
+      return Promise.all(keys.map((item) => queryClient.invalidateQueries({ queryKey: [item] })))
+    },
+    [queryClient, key, relatedList],
   )
 
   const createMutation = useMutation({

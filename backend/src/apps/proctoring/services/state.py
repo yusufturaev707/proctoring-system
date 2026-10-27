@@ -103,6 +103,20 @@ def peek_pending(challenge: str) -> dict | None:
     return json.loads(raw) if raw else None
 
 
+def update_pending(challenge: str, payload: dict) -> bool:
+    """
+    Tirik pending'ni almashtiradi, muddatiga TEGMAYDI.
+
+    `xx` — kalit hali bor bo'lsagina: oraliqda sarflangan (sessiya
+    ochilgan) yoki muddati tugagan challenge qayta tirilmasligi kerak.
+    `keepttl` — rozilik challenge umrini uzaytirmaydi. `False` —
+    challenge yo'q.
+    """
+    return bool(
+        get_redis().set(pending_key(challenge), json.dumps(payload), xx=True, keepttl=True)
+    )
+
+
 def consume_pending(challenge: str) -> dict | None:
     """Bir martalik: o'qiydi va darhol o'chiradi."""
     client = get_redis()

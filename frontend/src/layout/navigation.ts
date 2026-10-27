@@ -27,6 +27,7 @@ import PolicyIcon from '@mui/icons-material/PolicyOutlined'
 import RiskIcon from '@mui/icons-material/SpeedOutlined'
 import SeatIcon from '@mui/icons-material/EventSeatOutlined'
 import ServerIcon from '@mui/icons-material/DnsOutlined'
+import GavelIcon from '@mui/icons-material/GavelOutlined'
 
 /**
  * Marshrut -> lazy import.
@@ -61,6 +62,7 @@ export const ROUTE_LOADERS: Record<string, () => Promise<PageModule>> = {
   '/settings': () => import('../pages/Settings'),
   '/allowed-ips': () => import('../pages/crud/AllowedIpsPage'),
   '/exit-passwords': () => import('../pages/crud/ClientExitPasswordsPage'),
+  '/offers': () => import('../pages/crud/OffersPage'),
   '/rdp-objects': () => import('../pages/crud/RdpObjectsPage'),
   '/hotkeys': () => import('../pages/crud/HotkeysPage'),
   '/coco-objects': () => import('../pages/crud/CocoObjectsPage'),
@@ -207,6 +209,10 @@ export const NAVIGATION: NavGroup[] = [
       {
         label: 'Chiqish parollari', path: '/exit-passwords', icon: LockIcon, permission: 'controls.exit_password_view',
         description: 'Client dasturini yopish uchun viloyat paroli (Ctrl+Q)',
+      },
+      {
+        label: 'Oferta', path: '/offers', icon: GavelIcon, permission: 'controls.view',
+        description: 'Talabgor yuz tekshiruvidan oldin shaxsga doir ma’lumotlar bilan ishlashga rozilik beradigan matn',
       },
       {
         label: 'Taqiqlangan dasturlar', path: '/rdp-objects', icon: ShieldIcon, permission: 'controls.view',

@@ -105,6 +105,20 @@ class Exam(SoftDeleteModel):
         related_name="exams",
         help_text=_("Bo'sh bo'lsa — global faol sozlama ishlatiladi"),
     )
+    # Talabgor yuz tekshiruvidan OLDIN rozilik beradigan matn — har testda
+    # o'zi. `PROTECT`: oferta yumshoq o'chiriladi va biriktirilgan bo'lsa
+    # rad etiladi (`controls.offers.delete_offer`); fizik o'chirish rozilik
+    # qadamini jimgina olib tashlamasin.
+    offer = models.ForeignKey(
+        "controls.Offer",
+        verbose_name=_("Oferta"),
+        on_delete=models.PROTECT,
+        blank=True,
+        null=True,
+        related_name="exams",
+        limit_choices_to={"deleted_at__isnull": True},
+        help_text=_("Bo'sh bo'lsa — talabgordan rozilik so'ralmaydi"),
+    )
     is_active = models.BooleanField(_("Faol"), default=True, db_index=True)
 
     def __str__(self):

@@ -394,6 +394,8 @@ class DeviceWatcher(QObject):
 
         #: Bloklangan tugmalar: kod -> (oxirgi xabar vaqti, sanoq).
         self._hotkey_state: dict = {}
+        #: `stop()` da vaqtida tugamagan skanerlar (`_retire`).
+        self._retired: list = []
 
     # ------------------------------------------------------------------
     def start(self, config: Optional[dict], *, window=None) -> None:
@@ -507,13 +509,9 @@ class DeviceWatcher(QObject):
         if self._scanner is not None:
             self._scanner.stop()
             # Skaner 250 ms lik bo'laklarda uxlaydi, ya'ni bu kutish
-            # amalda qisqa. Tugamasa `terminate()`: ishlab turgan
-            # QThread bilan chiqish Qt'da qulash demak
-            # (`main_window._await` da ham xuddi shu qoida).
-            if not self._scanner.wait(3000):
-                log.warning("Jarayon skaneri tugamadi - terminate")
-                self._scanner.terminate()
-                self._scanner.wait(1000)
+            # amalda qisqa - lekin skanerlash yoki `neutralize` (xizmat
+            # to'xtashini 8 s gacha kutadi) o'rtasida bo'lishi mumkin.
+            self._retire(self._scanner, "Jarayon skaneri")
             self._scanner = None
 
         if self._peripherals is not None:
@@ -525,14 +523,52 @@ class DeviceWatcher(QObject):
                 pass
             self._peripherals.stop()
             # Skaner `wake` bilan darhol uyg'onadi; bitta o'qish ~0.1 s.
-            if not self._peripherals.wait(3000):
-                log.warning("Qurilma skaneri tugamadi - terminate")
-                self._peripherals.terminate()
-                self._peripherals.wait(1000)
+            self._retire(self._peripherals, "Qurilma skaneri")
             self._peripherals = None
 
         self._hotkey_state.clear()
         log.info("Qurilma kuzatuvi to'xtadi")
+
+    def _retire(self, thread: QThread, label: str) -> None:
+        """
+        Skaner thread'ini to'xtatadi. Vaqtida tugamasa - O'LDIRILMAYDI.
+
+        Bu imtihon YAKUNIDA (UI thread'ida) chaqiriladi. Ilgari 3 s dan
+        keyin `terminate()` bo'lardi: thread Python kodida (GIL yoki
+        `logging` qulfi ushlangan) uzilsa, butun dastur abadiy qotardi -
+        talabgor «Yakunlanmoqda» ekranida qolardi. Endi thread fonda
+        o'zi tugaydi (bayroq tushgan, keyingi tekshiruvda chiqadi),
+        signali uziladi - keyingi sessiyaga eski topilma tushmasin.
+        Majburiy to'xtatish faqat dasturdan chiqishda (`shutdown`).
+        """
+        if thread.wait(3000):
+            thread.deleteLater()
+            return
+        log.warning("%s 3 s ichida tugamadi - fonda tugaydi", label)
+        try:
+            thread.found.disconnect()
+        except (RuntimeError, TypeError):
+            pass
+        self._retired.append(thread)
+        thread.finished.connect(lambda: self._drop_retired(thread))
+
+    def _drop_retired(self, thread: QThread) -> None:
+        """Fonda tugagan skaner: ro'yxatdan olinadi VA o'chiriladi (otasi - watcher)."""
+        if thread in self._retired:
+            self._retired.remove(thread)
+        thread.deleteLater()
+
+    def shutdown(self) -> None:
+        """Dasturdan chiqish: vaqtida tugamagan skanerlar oxirgi marta kutiladi."""
+        self.stop()
+        for thread in list(self._retired):
+            if thread.isRunning() and not thread.wait(5000):
+                # Jarayon baribir tugayapti, ishlab turgan QThread bilan
+                # chiqish esa Qt'da qulash demak.
+                log.error("Skaner thread'i to'xtamadi - terminate")
+                thread.terminate()
+                thread.wait(1000)
+        self._retired.clear()
 
     # ------------------------------------------------------------------
     # Oyna fokusi
@@ -610,12 +646,18 @@ class DeviceWatcher(QObject):
             from config import DISABLE_EXTRA_MONITORS
 
             if DISABLE_EXTRA_MONITORS:
-                report = display_control.disable_clones()
-                disabled = bool(report.disabled)
-                for item in report.disabled:
-                    log.warning("Duplicate monitor o'chirildi: %s", item.describe())
-                for item in report.failed:
-                    log.error("Duplicate monitor o'chmadi: %s", item.describe())
+                try:
+                    report = display_control.disable_clones()
+                except Exception:  # noqa: BLE001 - hodisa baribir yuboriladi
+                    # Taymer slotida (har 3 s): xato hodisani ham yo'qotardi.
+                    log.exception("Duplicate monitorni o'chirib bo'lmadi")
+                    report = None
+                if report is not None:
+                    disabled = bool(report.disabled)
+                    for item in report.disabled:
+                        log.warning("Duplicate monitor o'chirildi: %s", item.describe())
+                    for item in report.failed:
+                        log.error("Duplicate monitor o'chmadi: %s", item.describe())
             else:
                 log.warning("Duplicate monitor bor, o'chirish o'chiq (DISABLE_EXTRA_MONITORS=0)")
         self._emit_multi_monitor(

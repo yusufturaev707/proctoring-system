@@ -233,6 +233,13 @@ export const settings = {
   activate: (id: Id): Data => api.post(`/settings/${id}/activate/`).then((r) => r.data),
 }
 
+/** Oferta matnlari; har tahrir o'zgarmas versiya yaratadi (`controls.offers`). */
+export const offers = {
+  ...crud('/offers/'),
+  revisions: (id: Id): Promise<ApiRecord[]> =>
+    api.get<ApiRecord[]>(`/offers/${id}/revisions/`).then((r) => r.data),
+}
+
 export const allowedIps = crud('/allowed-ips/')
 export const proctoringPolicies = crud('/proctoring-policies/')
 export const riskWeights = crud('/risk-weights/')

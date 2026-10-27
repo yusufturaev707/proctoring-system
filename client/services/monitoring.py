@@ -185,8 +185,15 @@ class SessionMonitor(QObject):
         # oldingi 5 soniyadagi hodisalar yo'qoladi. Backoff va "bitta
         # uchuvchi" qoidasi bu yerda CHETLAB o'tiladi: bu oxirgi imkon.
         self._flush_events(force=True)
-        self._workers.wait_all(10_000)
+        # `terminate=False`: imtihon yakunida osilgan so'rov o'ldirilmaydi
+        # (`WorkerHolder.wait_all`) - majburiy to'xtatish faqat `shutdown` da.
+        self._workers.wait_all(10_000, terminate=False)
         log.info("Sessiya nazorati to'xtadi")
+
+    def shutdown(self) -> None:
+        """Dasturdan chiqish: qolgan so'rovlar oxirgi marta kutiladi."""
+        self.stop()
+        self._workers.wait_all(3_000)
 
     def drain_for_finish(self) -> list:
         """

@@ -11,7 +11,7 @@ import ChipListInput from '../../components/controls/ChipListInput'
 import type { CellParams, CustomFieldProps, RowDetail } from '../../components/data/types'
 import ExamDetailDialog from '../../components/exams/ExamDetailDialog'
 import { durationText } from '../../components/exams/examText'
-import { countCell, useExamTypeOptions, useSettingOptions } from './shared'
+import { countCell, useExamTypeOptions, useOfferOptions, useSettingOptions } from './shared'
 import { exams as examsApi } from '../../api/endpoints'
 import { useAuth } from '../../context/AuthContext'
 
@@ -31,12 +31,19 @@ const FORM_SECTIONS = {
     icon: LinkIcon,
     description: 'Server JSHSHIR’ni shu manzil orqali tekshiradi — client platformaga o‘zi murojaat qilmaydi',
   },
-  'Sozlamalar': { icon: TuneIcon, description: 'Test vaqti va proktorlik profili (FaceID, skrinshot, bron rejimi)' },
+  'Sozlamalar': {
+    icon: TuneIcon,
+    description: 'Test vaqti, proktorlik profili (FaceID, skrinshot, bron rejimi) va talabgor rozilik beradigan oferta',
+  },
 }
+
+// Testning ofertasi o'zgarsa «Oferta» sahifasidagi «Testlar» ham o'zgaradi.
+const RELATED_KEYS = ['offers']
 
 export default function ExamsPage() {
   const { options: settingOptions } = useSettingOptions()
   const { options: examTypeOptions } = useExamTypeOptions()
+  const { options: offerOptions } = useOfferOptions()
   const { canShared } = useAuth()
   const canManage = canShared('exams.manage')
   // Qator bosilganda — imtihonning to'liq kartasi; «Tahrirlash» sahifaning
@@ -51,6 +58,7 @@ export default function ExamsPage() {
       title="Imtihonlar"
       subtitle="Tashqi test platformasidagi testlar bilan bog‘lanish. Qatorni bosing, to‘liq karta ochiladi"
       queryKey="exams"
+      relatedKeys={RELATED_KEYS}
       restorable
       api={examsApi}
       permission="exams.manage"
@@ -140,11 +148,26 @@ export default function ExamsPage() {
           align: 'right', headerAlign: 'right', renderCell: rightCount,
         },
         {
-          field: 'setting_name', headerName: 'Profil', width: 115, sortable: false,
+          // Profil va oferta — ikki qator (alohida ustun 1440 px da jadvalni surardi).
+          field: 'setting_name', headerName: 'Profil / oferta', width: 180, sortable: false,
+          exportValue: (value, row) => `${value || 'Global standart'} / ${row.offer_title || 'oferta yo‘q'}`,
           renderCell: (params) => (
-            params.value
-              ? <Typography variant="body2" sx={cell} noWrap>{params.value}</Typography>
-              : <Typography variant="body2" color="text.disabled" sx={cell}>Global standart</Typography>
+            <Stack sx={{ height: '100%', justifyContent: 'center', minWidth: 0 }}>
+              <Typography variant="body2" color={params.value ? 'text.primary' : 'text.disabled'} noWrap sx={{ lineHeight: 1.35 }}>
+                {params.value || 'Global standart'}
+              </Typography>
+              <Typography
+                variant="caption"
+                color={params.row.offer_title && params.row.offer_is_active ? 'text.secondary' : 'text.disabled'}
+                noWrap
+                sx={{ lineHeight: 1.35 }}
+                title={params.row.offer_title || undefined}
+              >
+                {params.row.offer_title
+                  ? `${params.row.offer_title}${params.row.offer_is_active ? '' : ' (nofaol)'}`
+                  : 'Oferta yo‘q'}
+              </Typography>
+            </Stack>
           ),
         },
       ]}
@@ -152,6 +175,7 @@ export default function ExamsPage() {
       exportName="imtihonlar"
       filters={[
         { name: 'exam_type', label: 'Turi', type: 'select', options: examTypeOptions },
+        { name: 'offer', label: 'Oferta', type: 'select', options: offerOptions },
         {
           name: 'is_active', label: 'Holat', type: 'select',
           options: [{ value: 'true', label: 'Faol' }, { value: 'false', label: 'Nofaol' }],
@@ -236,6 +260,14 @@ export default function ExamsPage() {
           name: 'setting', label: 'Proktorlik profili', type: 'select',
           options: settingOptions, colSpan: 6, section: 'Sozlamalar',
           helperText: 'Bo‘sh qoldirilsa — global standart',
+        },
+        {
+          // Bog'lanish shu yerda saqlanadi (`Exam.offer`); «Oferta» sahifasidagi
+          // «Testlar» ham aynan shu maydonni yozadi.
+          name: 'offer', label: 'Oferta', type: 'select',
+          options: offerOptions, colSpan: 12, section: 'Sozlamalar',
+          emptyOptionsText: 'Oferta yo‘q — «Oferta» sahifasida yarating',
+          helperText: 'Talabgor JSHSHIR bo‘yicha topilgach, yuz tekshiruvidan oldin shu matnga rozilik beradi. Bo‘sh — rozilik so‘ralmaydi',
         },
         {
           name: 'is_active', label: 'Faol', type: 'boolean', colSpan: 12, section: 'Sozlamalar',

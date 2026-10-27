@@ -77,6 +77,10 @@ class ProctoringSupervisor(QObject):
         self._workers = WorkerHolder()
         self._manager = None
         self._pipeline = None
+        #: Sessiya yakunida vaqtida to'xtamagan pipeline/kamera
+        #: menejerlari: ular fonda o'zi tugaydi, `shutdown` esa
+        #: dasturdan chiqishda oxirgi marta kutadi (`stop` ga qarang).
+        self._retired: list = []
         self._profile = None
         self._queue: list = []
         #: Dalil yig'ish oynasi ochiqmi (`set_capture_enabled`).
@@ -314,12 +318,34 @@ class ProctoringSupervisor(QObject):
         cho'zilardi.
         """
         self._active = False
+        # SESSIYA ICHIDA HECH NARSA `terminate()` QILINMAYDI: osilgan
+        # thread (qotgan inferensiya, DirectShow) GIL yoki `logging`
+        # qulfini ushlab turgan bo'lsa, uni uzish butun dasturni
+        # imtihon yakunida qotirib qo'yardi. Vaqtida tugamagani fonda
+        # o'zi tugaydi, majburiy to'xtatish - faqat `shutdown` da.
+        self._prune_retired()
         if self._pipeline is not None:
-            self._pipeline.stop_pipeline()
-            self._pipeline = None
+            pipeline, self._pipeline = self._pipeline, None
+            pipeline.stop_pipeline()
+            if pipeline.isRunning():
+                # Ochiq hodisalar yuqorida yopildi; kechikkan sikl endi
+                # KEYINGI sessiyaga hodisa chiqarmasligi kerak.
+                self._disconnect_all(pipeline, (
+                    "event_ready", "risk_changed", "evidence_ready",
+                    "module_failed", "stats_ready",
+                ))
+                self._retired.append(pipeline)
+            else:
+                pipeline.deleteLater()
         if self._manager is not None:
-            self._manager.shutdown()
-            self._manager = None
+            manager, self._manager = self._manager, None
+            # `stop` (`shutdown` emas): tugamagan oqim `_retired` da qoladi.
+            manager.stop()
+            if self._still_running(manager):
+                self._disconnect_all(manager, ("state_changed",))
+                self._retired.append(manager)
+            else:
+                manager.deleteLater()
         # Yuborilmagan dalillar TASHLANADI: sessiya tugadi va ularni
         # bog'laydigan hodisa allaqachon yozilgan. Ularni ushlab
         # turish dasturning yopilishini kechiktirardi.
@@ -327,6 +353,58 @@ class ProctoringSupervisor(QObject):
         self._retry_timer.stop()
         self._retry_items.clear()
         self._retry_backoff.success()
+        self._workers.wait_all(4_000, terminate=False)
+
+    def _prune_retired(self) -> None:
+        """
+        Fonda tugaganlari O'CHIRILADI (`deleteLater`), faqat ro'yxatdan
+        olinmaydi: ularning otasi supervisor va pipeline yuklangan
+        modellarni ushlab turadi - aks holda har osilgan sessiya
+        xotirada qolardi.
+        """
+        alive = []
+        for item in self._retired:
+            if self._still_running(item):
+                alive.append(item)
+                continue
+            try:
+                item.deleteLater()
+            except RuntimeError:
+                pass  # C++ obyekti allaqachon o'chirilgan
+        self._retired = alive
+
+    @staticmethod
+    def _disconnect_all(item, names) -> None:
+        for name in names:
+            try:
+                getattr(item, name).disconnect()
+            except (AttributeError, RuntimeError, TypeError):
+                pass
+
+    @staticmethod
+    def _still_running(item) -> bool:
+        """Pipeline thread'i yoki menejerning to'xtamagan oqimi bormi."""
+        try:
+            if hasattr(item, "has_running_streams"):
+                return item.has_running_streams
+            return item.isRunning()
+        except RuntimeError:
+            return False  # C++ obyekti allaqachon o'chirilgan
+
+    def shutdown(self) -> None:
+        """Dasturdan chiqish: qolgan thread'lar oxirgi marta kutiladi."""
+        self.stop()
+        for item in self._retired:
+            try:
+                if hasattr(item, "has_running_streams"):
+                    item.shutdown()
+                elif item.isRunning() and not item.wait(5000):
+                    log.error("Kuzatuv sikli to'xtamadi - terminate")
+                    item.terminate()
+                    item.wait(1000)
+            except RuntimeError:
+                pass
+        self._retired.clear()
         self._workers.wait_all(4_000)
 
     # ------------------------------------------------------------------

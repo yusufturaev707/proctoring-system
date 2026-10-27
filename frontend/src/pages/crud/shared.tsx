@@ -6,7 +6,7 @@ import { useAuth } from '../../context/AuthContext'
 import {
   cameras as camerasApi, cocoGroups as cocoGroupsApi, computers as computersApi,
   examSchedules as examSchedulesApi, examTypes as examTypesApi,
-  exams as examsApi, permissions as permissionsApi, regions as regionsApi,
+  exams as examsApi, offers as offersApi, permissions as permissionsApi, regions as regionsApi,
   roles as rolesApi, settings as settingsApi, users as usersApi, zones as zonesApi,
 } from '../../api/endpoints'
 import { COMPUTER_STATUS_LABEL, formatDateTime, fromNow } from '../../utils/labels'
@@ -109,6 +109,26 @@ export const useZoneOptions = () => {
 
 export const useExamOptions = () =>
   useOptions('exams', examsApi, (item): Option => ({ value: item.id, label: item.name }))
+
+/**
+ * Testlar — oferta formasi uchun: har birining HOZIRGI ofertasi bilan.
+ * Boshqa ofertadagi test tanlansa u ko'chadi, forma buni yorliqda aytadi.
+ */
+export const useExamOfferOptions = () =>
+  useOptions('exams', examsApi, (item): Option => ({
+    value: item.id,
+    label: item.name,
+    offer: item.offer,
+    offerTitle: item.offer_title,
+    isActive: item.is_active,
+  }))
+
+/** Ofertalar — imtihon formasi uchun; nofaol (qoralama) ham tanlanadi, lekin so'ralmaydi. */
+export const useOfferOptions = () =>
+  useOptions('offers', offersApi, (item): Option => ({
+    value: item.id,
+    label: item.is_active ? `${item.title} · v${item.version}` : `${item.title} · v${item.version} (nofaol)`,
+  }))
 
 /**
  * Test sessiyalari (imtihon jadvali) — bron sahifasi uchun.

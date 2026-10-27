@@ -71,6 +71,7 @@ export interface ResourcePageProps {
   defaultSort?: GridSortItem
   staticParams?: QueryParams
   refetchInterval?: number | false
+  relatedKeys?: string[]
   height?: number | string
   getRowHeight?: (params: GridRowHeightParams) => GridRowHeightReturnValue
   rowActions?: (row: ApiRecord, resource: ResourceState) => ReactNode
@@ -132,6 +133,8 @@ export default function ResourcePage({
   staticParams,
   /** Ro'yxatni o'zi yangilash oralig'i (ms) — `useResource` ga uzatiladi. */
   refetchInterval = false,
+  /** Saqlashda qo'shimcha yangilanadigan so'rov kalitlari — `useResource` ga uzatiladi. */
+  relatedKeys,
   height = 620,
   /**
    * Qator balandligi (`DataGrid getRowHeight`, piksel). Standart zich
@@ -211,6 +214,7 @@ export default function ResourcePage({
     staticParams,
     searchable,
     refetchInterval,
+    relatedKeys,
     urlNamespace: '',
   })
   const showSkeleton = useDeferredLoading(resource.isLoading)

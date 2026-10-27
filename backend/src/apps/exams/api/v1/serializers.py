@@ -3,6 +3,7 @@ from rest_framework.validators import UniqueValidator
 
 from apps.common.region_scope import ensure_in_region, zone_region
 from apps.exams import services as exam_services
+from apps.controls.models import Offer
 from apps.devices.models import Computer
 from apps.exams.models import ComputerBooking, Exam, ExamSchedule, ExamType
 
@@ -52,6 +53,14 @@ class ExamSerializer(serializers.ModelSerializer):
     exam_type = serializers.PrimaryKeyRelatedField(
         queryset=ExamType.objects.alive(), required=False, allow_null=True
     )
+    # Testning ofertasi (talabgor yuz tekshiruvidan oldin rozilik beradi).
+    # `alive()` — o'chirilgan ofertani biriktirib bo'lmaydi; nofaol
+    # (qoralama) oferta biriktiriladi, lekin so'ralmaydi.
+    offer = serializers.PrimaryKeyRelatedField(
+        queryset=Offer.objects.alive(), required=False, allow_null=True
+    )
+    offer_title = serializers.SerializerMethodField()
+    offer_is_active = serializers.SerializerMethodField()
     sessions_count = serializers.IntegerField(read_only=True)
     # Cheklov shartli (`deleted_at IS NULL`) — DRF undan validator yasamaydi.
     name = serializers.CharField(
@@ -86,13 +95,29 @@ class ExamSerializer(serializers.ModelSerializer):
         fields = (
             "id", "name", "key", "exam_type", "exam_type_name", "external_code",
             "site_url", "site_header", "site_header_masked", "resource_domains",
-            "duration_minutes", "setting",
-            "setting_name", "is_active", "sessions_count", "created_at", "deleted_at",
+            "duration_minutes", "setting", "setting_name",
+            "offer", "offer_title", "offer_is_active",
+            "is_active", "sessions_count", "created_at", "deleted_at",
         )
         read_only_fields = ("id", "created_at", "deleted_at")
 
     def get_site_header_masked(self, obj) -> str:
         return exam_services.mask_site_header(obj)
+
+    def _live_offer(self, obj):
+        # Ofertaning o'chirilishi biriktiruvda rad etiladi, lekin eski
+        # yozuv yoki tiklangan imtihon o'chirilganiga ishora qilishi mumkin —
+        # u client'da so'ralmaydi, panelda ham "yo'q" ko'rinsin.
+        offer = obj.offer
+        return offer if offer is not None and offer.deleted_at is None else None
+
+    def get_offer_title(self, obj) -> str:
+        offer = self._live_offer(obj)
+        return offer.title if offer else ""
+
+    def get_offer_is_active(self, obj) -> bool | None:
+        offer = self._live_offer(obj)
+        return offer.is_active if offer else None
 
     def validate_resource_domains(self, value):
         # Qoida bitta joyda (`apps/exams/domains.py`) - Django admin ham

@@ -170,6 +170,20 @@ class FaceVerifySerializer(serializers.Serializer):
         return attrs
 
 
+class OfferAcceptSerializer(serializers.Serializer):
+    """
+    Ofertaga rozilik — JSHSHIR tekshiruvidan keyin, yuz tekshiruvidan OLDIN.
+
+    `revision_id` va `content_hash` — JSHSHIR javobidagi `offer` dan,
+    o'zgartirilmasdan: server ularni aynan shu challenge'ga berilgan
+    matn bilan solishtiradi (`session.accept_offer`).
+    """
+
+    challenge = serializers.CharField(max_length=128)
+    revision_id = serializers.IntegerField(min_value=1)
+    content_hash = serializers.RegexField(r"^[0-9a-f]{64}$")
+
+
 class FaceAttemptSerializer(serializers.Serializer):
     """
     Kirishda MOS KELMAGAN urinish.

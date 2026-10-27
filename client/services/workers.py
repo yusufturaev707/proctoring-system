@@ -118,9 +118,16 @@ class WorkerHolder:
     def busy(self) -> bool:
         return any(worker.isRunning() for worker in self._workers)
 
-    def wait_all(self, msec: int = 8_000) -> None:
+    def wait_all(self, msec: int = 8_000, *, terminate: bool = True) -> None:
         """
         Ishlab turgan worker'larni tugatadi - dastur yopilayotganda.
+
+        `terminate=False` - SESSIYA ICHIDAGI to'xtash (imtihon yakuni):
+        chegaradan oshgan worker o'ldirilmaydi, fonda o'zi tugaydi
+        (referens `_workers` da, otasi tirik). `QThread.terminate()`
+        Python thread'ini istalgan nuqtada uzadi: u GIL yoki `logging`
+        qulfini ushlab turgan bo'lsa, butun dastur abadiy qotadi -
+        imtihon yakunida, talabgor ekran oldida turganda.
 
         Uch qaror va uchalasi ham chiqish tezligi uchun:
 
@@ -150,6 +157,9 @@ class WorkerHolder:
                         QEventLoop.ProcessEventsFlag.AllEvents, 25
                     )
             if not finished:
+                if not terminate:
+                    log.warning("Worker tugamadi (%s ms) - fonda tugaydi", msec)
+                    continue
                 log.warning("Worker tugamadi (%s ms) - terminate", msec)
                 worker.terminate()
                 worker.wait(1000)

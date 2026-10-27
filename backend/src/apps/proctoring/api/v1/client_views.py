@@ -67,6 +67,7 @@ from apps.proctoring.api.v1.client_serializers import (
     EvidenceUploadSerializer,
     LocalRecordingSerializer,
     ExitVerifySerializer,
+    OfferAcceptSerializer,
     FaceAttemptSerializer,
     FaceVerifySerializer,
     HandshakeSerializer,
@@ -928,6 +929,40 @@ class CandidateLookupView(ScopeDetailsThrottleMixin, ClientBaseView):
             actor=request.user,
         )
         return Response(result)
+
+
+class OfferAcceptView(ClientBaseView):
+    """
+    Talabgor ofertaga rozi bo'ldi (client dialogi «Roziman»).
+
+    Sessiya hali YO'Q — rozilik `challenge` ga bog'lanadi va sessiya
+    ochilganda unga o'tadi. Throttle sessiya ochish bilan bitta byudjetda
+    (`SessionStartThrottle`): normal oqimda talabgorga bitta so'rov.
+    """
+
+    throttle_classes = [SessionStartThrottle]
+
+    @extend_schema(request=OfferAcceptSerializer, responses={201: None})
+    def post(self, request):
+        device = self.device
+        serializer = OfferAcceptSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        computer = device.computer if device else None
+        zone = computer.zone if computer else None
+        ip_address = self.check_source_ip(zone.pk if zone else None)
+
+        result = session_service.accept_offer(
+            challenge=data["challenge"],
+            revision_id=data["revision_id"],
+            content_hash=data["content_hash"],
+            device=device,
+            computer=computer,
+            actor=request.user,
+            ip_address=ip_address,
+        )
+        return Response(result, status=status.HTTP_201_CREATED)
 
 
 # --------------------------------------------------------------------------

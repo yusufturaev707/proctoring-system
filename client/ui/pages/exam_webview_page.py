@@ -32,7 +32,7 @@ import time
 from typing import Optional
 from urllib.parse import urlparse
 
-from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import QCoreApplication, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtWebEngineCore import (
     QWebEngineLoadingInfo,
     QWebEnginePage,
@@ -258,6 +258,21 @@ class DomainAllowlistInterceptor(QWebEngineUrlRequestInterceptor):
         self._on_blocked(host, main_frame)
 
 
+#: `beforeunload` so'rovining Qt'dagi matni (`QWebEnginePage` konteksti).
+_UNLOAD_PROMPT = (
+    "Are you sure you want to leave this page? Changes that you made may not be saved."
+)
+
+
+def is_unload_prompt(message: str) -> bool:
+    """`javaScriptConfirm` ga kelgan matn Chromium'ning chiqish so'rovimi."""
+    text = str(message or "")
+    return text in (
+        _UNLOAD_PROMPT,
+        QCoreApplication.translate("QWebEnginePage", _UNLOAD_PROMPT),
+    )
+
+
 class LockedWebPage(QWebEnginePage):
     """Yangi oyna ochmaydigan, dialoglarni rad etadigan sahifa."""
 
@@ -270,8 +285,21 @@ class LockedWebPage(QWebEnginePage):
         log.info("Yangi oyna so'rovi bloklandi")
         return None
 
-    def javaScriptConfirm(self, _url, _message) -> bool:
-        return False
+    def javaScriptConfirm(self, _url, message) -> bool:
+        """
+        Platformaning `confirm()` i - rad etiladi. `beforeunload` - QABUL.
+
+        Qt Chromium'ning «sahifadan chiqasizmi?» (`beforeunload`) so'rovini
+        ham SHU metodga, o'z matni bilan beradi (Qt 6.11 da tekshirilgan).
+        Rad javobi navigatsiyani BEKOR qiladi: platforma bunday himoya
+        qo'ygan va talabgor sahifani bir marta bosgan bo'lsa, client
+        sahifani yopa olmasdi - yakundagi `about:blank`, «Sahifani
+        yangilash» va KEYINGI talabgorning test havolasi jimgina
+        o'tmasdi (ekranda oldingi talabgorning testi qolardi). Chiqishni
+        qabul qilish xavfsiz: qayerga o'tish mumkinligini allowlist
+        (`DomainAllowlistInterceptor`) hal qiladi, «Back» esa yo'q.
+        """
+        return is_unload_prompt(message)
 
     def certificateError(self, error) -> bool:
         # Sertifikat xatosi - MITM belgisi bo'lishi mumkin. Imtihon
@@ -964,8 +992,9 @@ class ExamWebViewPage(QWidget):
             # Platforma sahifasi yuklanishidan OLDIN: uning birinchi
             # so'rovi ham Origin tekshiruvidan o'tishi kerak. Origin
             # qoidasi WebView allowlist'i bilan BIR XIL (`webview_policy`).
-            self._local_service.set_exam_target(
-                True, policy.get("allowed_domains") or [], pinfl=self._state.pinfl
+            self._guarded(
+                "lokal xizmat", self._local_service.set_exam_target,
+                True, policy.get("allowed_domains") or [], pinfl=self._state.pinfl,
             )
 
         # AI kuzatuv KAMERANI EGALLAYDI. Bitta qurilmani ikki
@@ -986,19 +1015,44 @@ class ExamWebViewPage(QWidget):
         # (`before_open`). Teskari tartibda ikkala tomon bitta
         # qurilmani ushlab, oqim "kamera band" xatosi bilan qayta
         # ulanish kutishiga tushardi.
-        if self._supervisor.start(
-            config=self._state.config,
-            layout=self._state.cameras,
-            session_id=getattr(self._state.session, "public_id", "") or "",
-            before_open=lambda: self._release_camera(camera),
-        ):
-            self._supervisor.set_reference(reference)
-        else:
-            self._attach_camera(camera)
+        released = []
 
-        self._monitor.start(self._state.config)
+        def release_camera() -> None:
+            released.append(True)
+            self._release_camera(camera)
+
+        try:
+            ai_started = self._supervisor.start(
+                config=self._state.config,
+                layout=self._state.cameras,
+                session_id=getattr(self._state.session, "public_id", "") or "",
+                before_open=release_camera,
+            )
+        except Exception:
+            # AI qatlami (ONNX, model, kamera menejeri) yiqilsa imtihon
+            # AI'siz davom etadi. Ilgari xato shu metoddan chiqib ketardi
+            # va undan keyingi HAMMASI - heartbeat, skrinshot, yozuv,
+            # proktor kanali, qurilma kuzatuvi - ishga tushmasdi.
+            log.exception("AI kuzatuv ishga tushmadi - imtihon AI'siz davom etadi")
+            self._guarded("AI kuzatuvni to'xtatish", self._supervisor.stop)
+            ai_started = False
+            self._monitor.push_event(
+                "proctoring_degraded", severity=2,
+                payload={"module": "supervisor", "reason": "start_failed"},
+            )
+        if ai_started:
+            self._guarded("yuz etaloni", self._supervisor.set_reference, reference)
+        else:
+            # Kamera allaqachon bo'shatilgan bo'lsa (AI ochilish
+            # o'rtasida yiqildi) - davriy FaceID kamerasiz qoladi
+            # (`_run_face_check` buni "mos emas" deb sanamaydi).
+            self._attach_camera(None if released else camera)
+
+        # SESSIYA NAZORATI (heartbeat) - eng muhim qadam, qolganlari
+        # undan keyin va har biri alohida himoyada (`_guarded`).
+        self._guarded("sessiya nazorati", self._monitor.start, self._state.config)
         self._face_episodes = FaceEpisodes.from_config(self._state.config)
-        self._report_startup_threats()
+        self._guarded("ishga tushishdagi tahdidlar", self._report_startup_threats)
         self._face_checks = 0
         self._passed_since_last = 0
         # ORALIQ IMTIHON PROFILIDAN (`face.interval`, soniyada).
@@ -1012,24 +1066,44 @@ class ExamWebViewPage(QWidget):
         self._face_timer.start()
         # Sozlama imtihon profilidan: sifat, kenglik, serverga yuborish.
         # Kadr bu yerda OLINMAYDI - faqat platforma buyrug'i bilan.
-        if self._screenshots.start(
-            self._state.config, camera_provider=self._screenshot_cameras
+        if self._guarded(
+            "skrinshot xizmati", self._screenshots.start,
+            self._state.config, camera_provider=self._screenshot_cameras,
         ) and self._local_service is not None:
             self._local_service.set_capture_target(True)
-        self._start_recording()
+        self._guarded("ekran yozuvi", self._start_recording)
 
         session = self._state.session
-        self._channel.start(session.token if session else "")
+        self._guarded("proktor kanali", self._channel.start, session.token if session else "")
 
         # `self.window()` - sahifa emas, uni o'z ichiga olgan
         # `MainWindow`: to'liq ekran holati o'sha yerda.
-        self._watcher.start(self._state.config, window=self.window())
+        self._guarded(
+            "qurilma kuzatuvi", self._watcher.start, self._state.config, window=self.window()
+        )
         # Bloklangan tugma bosilgani hodisa oqimiga tushadi. Observer
         # SESSIYA davomida qo'yiladi va yakunda olib tashlanadi:
         # qulflashning o'zi dastur bo'yicha ishlaydi (login sahifasida
         # ham), lekin hodisa yozadigan sessiya faqat shu yerda bor.
         lockdown.set_observer(self._watcher.report_blocked_key)
         lockdown.set_issue_observer(self._watcher.report_keyboard_issue)
+
+    @staticmethod
+    def _guarded(label: str, func, *args, **kwargs):
+        """
+        Imtihon boshidagi bitta qadam: xatosi QOLGAN qadamlarni to'xtatmaydi.
+
+        `_begin` slotdan chaqiriladi va undagi har qadam mustaqil
+        (heartbeat, skrinshot, yozuv, kanal, kuzatuv). Bittasi yiqilsa
+        qolganlari baribir ishga tushishi kerak - aks holda sessiya
+        serverda "aloqasiz" bo'lib, dalilsiz qolardi. Xato faqat log'ga:
+        talabgor ekraniga chiqmaydi. `None` - qadam bajarilmadi.
+        """
+        try:
+            return func(*args, **kwargs)
+        except Exception:
+            log.exception("Imtihon boshida «%s» ishga tushmadi - imtihon davom etadi", label)
+            return None
 
     def prewarm_browser(self) -> None:
         """
@@ -1667,6 +1741,11 @@ class ExamWebViewPage(QWidget):
         return self._warning
 
     def _on_proctor_warning(self, message: str, severity: int) -> None:
+        if self._session_closed:
+            # Yakun ketmoqda: ogohlantirish keyingi sahifada (JSHSHIR)
+            # qolib, keyingi talabgorga ko'rinardi.
+            log.info("Proktor ogohlantirishi yakun paytida keldi - ko'rsatilmadi")
+            return
         timeout = 5
         try:
             timeout = int(
@@ -1696,6 +1775,13 @@ class ExamWebViewPage(QWidget):
         tsiklda (30 s gacha). Chetlashtirilgan talabgor shuncha vaqt
         test ustida ishlab turishi mumkin emas.
         """
+        if self._session_closed:
+            # Yakun allaqachon ketmoqda (tugma, platforma) yoki sessiya
+            # yopilgan: ikkinchi yo'l sahifani ikki marta almashtirib,
+            # ikki xabar chiqarardi. Yakun natijasi baribir keladi.
+            log.info("Proktor to'xtatdi, lekin sessiya allaqachon yopilmoqda: %s",
+                     reason or "-")
+            return
         log.warning("Proktor sessiyani to'xtatdi: %s", reason or "-")
         self._warning_dialog().show_warning(
             reason or "Imtihoningiz nazoratchi tomonidan to'xtatildi.", 4, timeout_s=0
@@ -2324,6 +2410,12 @@ class ExamWebViewPage(QWidget):
         self.session_finished.emit(result)
 
     def _on_session_lost(self, reason: str) -> None:
+        if self._session_closed:
+            # Yakun paytida yo'lda qolgan heartbeat `should_stop` olishi
+            # tabiiy (server sessiyani yopgan) - bu yangi hodisa emas.
+            log.info("Sessiya yopilgani haqida takroriy xabar (%s) - e'tiborsiz",
+                     reason or "-")
+            return
         self._session_closed = True
         self.stop()
         self.session_lost.emit(reason)
@@ -2332,6 +2424,12 @@ class ExamWebViewPage(QWidget):
     def stop(self) -> None:
         """Nazoratni to'xtatadi va WebView'ni tozalaydi."""
         self._exam_open = False
+        # Sahifa dialogi (yakunlash, qayta yuklash, texnik muammo) ochiq
+        # qolsa, u KEYINGI sahifa ustida turardi: sessiyani proktor
+        # to'xtatdi yoki muddati tugadi, operator esa eski «Yakunlash»
+        # oynasini ko'rib qolardi. `_run_dialog` imtihon yopilganini biladi.
+        if self._modal_dialog is not None:
+            self._modal_dialog.reject()
         # Platforma buyruqlari (yakun, skrinshot) endi 409 oladi - keyingi
         # talabgorgacha hech narsa qabul qilinmaydi.
         if self._local_service is not None:
@@ -2448,5 +2546,16 @@ class ExamWebViewPage(QWidget):
 
     def shutdown(self) -> None:
         self.stop()
+        # `stop()` sessiya ichidagi to'xtash - osilgan thread'larni
+        # o'ldirmaydi; dasturdan chiqishda ular oxirgi marta kutiladi.
+        for name, component in (
+            ("kuzatuv", self._supervisor),
+            ("sessiya nazorati", self._monitor),
+            ("qurilma kuzatuvi", self._watcher),
+        ):
+            try:
+                component.shutdown()
+            except Exception:
+                log.exception("%s yopilmadi", name)
         self._screenshots.shutdown()
         self._workers.wait_all()

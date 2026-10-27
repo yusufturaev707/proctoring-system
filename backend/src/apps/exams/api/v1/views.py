@@ -69,7 +69,7 @@ class ExamViewSet(
 ):
     queryset = (
         Exam.objects
-        .select_related("setting", "exam_type")
+        .select_related("setting", "exam_type", "offer")
         .annotate(sessions_count=Count("sessions", distinct=True))
         .order_by("name")  # annotate() Meta.ordering ni bekor qiladi
     )
@@ -80,7 +80,7 @@ class ExamViewSet(
     audit_object_type = "Exam"
     # Imtihon barcha viloyatlar uchun bitta yozuv (`RepublicLevelWrite`).
     republic_write_only = True
-    filterset_fields = ["is_active", "setting", "exam_type"]
+    filterset_fields = ["is_active", "setting", "exam_type", "offer"]
     # Tur nomi bo'yicha ham qidiriladi: ro'yxatda ustun sifatida
     # ko'rinib turgan qiymat qidiruvga tushmasligi kutilmagan xulq.
     search_fields = ["name", "key", "external_code", "exam_type__name"]

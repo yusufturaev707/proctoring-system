@@ -41,9 +41,22 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QImage, QPixmap
+import time
+
+from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import (
+    QBrush,
+    QColor,
+    QFont,
+    QFontMetrics,
+    QImage,
+    QLinearGradient,
+    QPainter,
+    QPainterPath,
+    QPixmap,
+)
 from PyQt6.QtWidgets import (
+    QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -59,13 +72,21 @@ from proctoring.camera import measure as camera_measure
 from proctoring.camera import roles as camera_roles
 from services.workers import ApiWorker, WorkerHolder
 from ui.styles import (
-    badge_style,
-    preview_surface_style,
+    COLORS,
     primary_button_style,
     segmented_button_style,
     surface_container_style,
     text_button_style,
     tonal_button_style,
+)
+from ui.widgets.md3 import (
+    STATUS_TONES,
+    IconBadge,
+    RippleButton,
+    StatusChip,
+    StatusIcon,
+    draw_glyph,
+    live_phase,
 )
 
 log = logging.getLogger(__name__)
@@ -83,6 +104,31 @@ log = logging.getLogger(__name__)
 #: o'zgartirsa, ostidagi tugmalar siljiydi va operator bosayotgan
 #: tugmasini yo'qotadi.
 _PREVIEW_HEIGHT = 208
+
+#: Kamera ochilmagan kadrdagi ko'rsatma (tugma karta sarlavhasida).
+_IDLE_TEXT = "Kadr uchun «Kamerani ishga tushirish» ni bosing"
+
+
+def _preview_height() -> int:
+    """
+    Kadr balandligi EKRANGA qarab - sessiya davomida o'zgarmaydi.
+
+    1366x768 da `_PREVIEW_HEIGHT` (sahifa sig'ishi kerak), 1080 px va
+    undan katta ekranda kattaroq: kamera burchagini baholash kichik
+    kadrda qiyin, katta ekranda esa joy bo'sh turardi.
+    """
+    screen = QApplication.primaryScreen()
+    if screen is None:
+        return _PREVIEW_HEIGHT
+    height = screen.availableGeometry().height()
+    if height < 900:
+        return _PREVIEW_HEIGHT
+    return min(420, int(height * 0.38))
+
+
+#: Kadr balandligi / kengligi (16:9 va 4:3 orasida): haqiqiy balandlik
+#: karta kengligidan, yuqori chegarasi `_preview_height()` dan.
+_PREVIEW_ASPECT = 0.66
 
 #: Bitta qatordagi kamera kartalari soni (Bootstrap `col-md-6`
 #: kabi — har biri kenglikning yarmi).
@@ -118,16 +164,25 @@ _CHECKS_MIN_HEIGHT = 96
 _WARMUP_MS = 4000
 
 
-class CameraPreview(QLabel):
+class CameraPreview(QWidget):
     """
-    Jonli kadr yoki tushuntiruvchi bo'shliq.
+    Jonli kadr yoki tushuntiruvchi bo'shliq — ustida MD3 qatlamlar.
 
     `CameraView` dan ALOHIDA: u FaceID uchun va yuz ramkasi, ball,
     holat matnini chizadi. Bu yerda esa hech qanday tahlil yo'q -
     faqat "kamera ishlayaptimi" degan savolga javob. Ikkalasini
     birlashtirish bu vidjetga kerak bo'lmagan yuz mantig'ini olib
     kirardi.
+
+    KADR USTIDA (alohida qatorlar o'rniga - 1366x768 da joy tejaladi):
+    chap yuqorida «JONLI» (kadr kelayotgan bo'lsa, nuqta "nafas oladi"),
+    o'ng yuqorida qurilma holati, pastda shaffof gradient ustida kamera
+    nomi va tafsiloti. Hammasi `paintEvent` da - bola vidjet va
+    `QGraphicsEffect` YO'Q (har kadrda butun daraxtni qayta chizardi).
     """
+
+    #: Kadr shuncha soniya kelmasa «JONLI» belgisi o'chadi.
+    _LIVE_TTL_S = 1.5
 
     def __init__(self, height: int, parent=None) -> None:
         super().__init__(parent)
@@ -136,15 +191,49 @@ class CameraPreview(QLabel):
         #: holida - ag'darilgan xona operatorni chalg'itardi. Faqat
         #: chizish: tekshiruv va kuzatuv asl kadrni oladi.
         self.mirrored = False
+        self._pixmap = QPixmap()
+        self._text = ""
+        self._live_at = 0.0
+        #: Kadr kelmay qolsa «JONLI» o'chishi uchun BITTA qayta chizish.
+        #: Chizish faqat kadr bilan bo'ladi: oqim to'xtab, holat hali
+        #: `failed` ga o'tmagan oraliqda (o'lik oqim 5 s da aniqlanadi)
+        #: muzlagan kadr ustida «JONLI» turib qolardi. Kadr oqib
+        #: turganda taymer har kadrda qayta boshlanadi - ortiqcha chizish yo'q.
+        self._stale = QTimer(self)
+        self._stale.setSingleShot(True)
+        self._stale.setInterval(int(self._LIVE_TTL_S * 1000) + 100)
+        self._stale.timeout.connect(self.update)
+        self._title = ""
+        self._details = ""
+        self._status = ("", "pending")
+        #: Balandlik chegarasi - ekranga qarab (`_preview_height`). Haqiqiy
+        #: balandlik KENGLIKDAN (`resizeEvent`): katta ekranda kadr kattaroq,
+        #: kadr kelishi esa o'lchamni o'zgartirmaydi (tugmalar sakramaydi).
+        self._max_height = height
         self.setFixedHeight(height)
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setWordWrap(True)
-        self.setStyleSheet(preview_surface_style())
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API
+        super().resizeEvent(event)
+        target = max(160, min(self._max_height, int(self.width() * _PREVIEW_ASPECT)))
+        if target != self.height():
+            self.setFixedHeight(target)
+
+    # --- tashqi API (avvalgi `QLabel` asosidagi bilan bir xil) ---------
+    def text(self) -> str:
+        return self._text
+
+    def set_overlay(self, title: str, details: str, status_text: str, status: str) -> None:
+        self._title, self._details = title, details
+        self._status = (status_text, status)
+        self.update()
+
     def show_placeholder(self, text: str) -> None:
-        self.setPixmap(QPixmap())
-        self.setText(text)
+        self._pixmap = QPixmap()
+        self._text = text
+        self._live_at = 0.0
+        self._stale.stop()
+        self.update()
 
     def show_frame(self, frame) -> None:
         height, width = frame.shape[:2]
@@ -157,13 +246,128 @@ class CameraPreview(QLabel):
         # tomonga qarab turardi.
         rgb = (frame[:, ::-1, ::-1] if self.mirrored else frame[:, :, ::-1]).copy()
         image = QImage(rgb.data, width, height, 3 * width, QImage.Format.Format_RGB888)
-        self.setText("")
-        self.setPixmap(
-            QPixmap.fromImage(image).scaled(
-                self.size(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
+        # Kadr TO'LIQ ko'rinadi (qirqilmaydi): operator kamera burchagini
+        # aynan shu yerda baholaydi.
+        self._pixmap = QPixmap.fromImage(image).scaled(
+            self.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self._text = ""
+        self._live_at = time.monotonic()
+        self._stale.start()
+        self.update()
+
+    # --- chizish -------------------------------------------------------
+    def paintEvent(self, _event) -> None:  # noqa: N802 - Qt API
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        rect = QRectF(self.rect())
+        clip = QPainterPath()
+        clip.addRoundedRect(rect, 16, 16)
+        painter.setClipPath(clip)
+        painter.fillRect(rect, QColor(COLORS["preview_surface"]))
+
+        if not self._pixmap.isNull():
+            x = (self.width() - self._pixmap.width()) / 2
+            y = (self.height() - self._pixmap.height()) / 2
+            painter.drawPixmap(int(x), int(y), self._pixmap)
+        else:
+            self._paint_placeholder(painter, rect)
+
+        self._paint_footer(painter, rect)
+        if not self._pixmap.isNull() and time.monotonic() - self._live_at < self._LIVE_TTL_S:
+            self._paint_live(painter)
+        self._paint_status(painter, rect)
+
+    def _paint_placeholder(self, painter: QPainter, rect: QRectF) -> None:
+        muted = QColor(COLORS["outline_variant"])
+        icon = QRectF(rect.center().x() - 20, rect.center().y() - 46, 40, 40)
+        draw_glyph(painter, "camera", icon, muted)
+        font = QFont(self.font())
+        font.setPixelSize(13)
+        font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(font)
+        painter.setPen(muted)
+        painter.drawText(
+            QRectF(rect.left() + 24, rect.center().y() + 2, rect.width() - 48, 44),
+            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextWordWrap,
+            self._text,
+        )
+
+    def _paint_footer(self, painter: QPainter, rect: QRectF) -> None:
+        if not self._title:
+            return
+        band = QRectF(rect.left(), rect.bottom() - 52, rect.width(), 52)
+        gradient = QLinearGradient(band.topLeft(), band.bottomLeft())
+        gradient.setColorAt(0.0, QColor(0, 0, 0, 0))
+        gradient.setColorAt(1.0, QColor(0, 0, 0, 170))
+        painter.fillRect(band, QBrush(gradient))
+        title_font = QFont(self.font())
+        title_font.setPixelSize(13)
+        title_font.setWeight(QFont.Weight.Bold)
+        detail_font = QFont(self.font())
+        detail_font.setPixelSize(11)
+        width = int(rect.width() - 28)
+        painter.setFont(title_font)
+        painter.setPen(QColor(255, 255, 255))
+        painter.drawText(
+            QRectF(rect.left() + 14, band.top() + 14, width, 18),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            QFontMetrics(title_font).elidedText(self._title, Qt.TextElideMode.ElideRight, width),
+        )
+        if self._details:
+            painter.setFont(detail_font)
+            painter.setPen(QColor(255, 255, 255, 190))
+            painter.drawText(
+                QRectF(rect.left() + 14, band.top() + 32, width, 16),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                QFontMetrics(detail_font).elidedText(
+                    self._details, Qt.TextElideMode.ElideRight, width
+                ),
             )
+
+    def _paint_live(self, painter: QPainter) -> None:
+        font = QFont(self.font())
+        font.setPixelSize(11)
+        font.setWeight(QFont.Weight.Bold)
+        chip = QRectF(12, 12, QFontMetrics(font).horizontalAdvance("JONLI") + 30, 22)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 140))
+        painter.drawRoundedRect(chip, 11, 11)
+        # Puls kadr kelganda chiziladi - alohida taymer yo'q.
+        dot = QColor(COLORS["error"]).lighter(140)
+        dot.setAlphaF(0.55 + 0.45 * live_phase())
+        painter.setBrush(dot)
+        painter.drawEllipse(QPointF(chip.left() + 12, chip.center().y()), 4, 4)
+        painter.setFont(font)
+        painter.setPen(QColor(255, 255, 255))
+        painter.drawText(
+            chip.adjusted(21, 0, -8, 0),
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, "JONLI",
+        )
+
+    def _paint_status(self, painter: QPainter, rect: QRectF) -> None:
+        text, status = self._status
+        if not text:
+            return
+        tone, ink, glyph = STATUS_TONES.get(status, STATUS_TONES["pending"])
+        font = QFont(self.font())
+        font.setPixelSize(11)
+        font.setWeight(QFont.Weight.Bold)
+        width = QFontMetrics(font).horizontalAdvance(text) + 32
+        chip = QRectF(rect.right() - 12 - width, 12, width, 22)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(COLORS[tone]))
+        painter.drawRoundedRect(chip, 11, 11)
+        draw_glyph(painter, glyph, QRectF(chip.left() + 7, chip.top() + 5, 12, 12),
+                   QColor(COLORS[ink]))
+        painter.setFont(font)
+        painter.setPen(QColor(COLORS[ink]).darker(130))
+        painter.drawText(
+            chip.adjusted(23, 0, -8, 0),
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, text,
         )
 
 
@@ -273,7 +477,6 @@ class CameraSlotView(QFrame):
     #: Shu kamerani tekshirish so'raldi (rol nomi).
     check_requested = pyqtSignal(str)
 
-    _STATE_BADGE = {"ready": "success", "warning": "warning", "failed": "error"}
     _STATE_TEXT = {
         "ready": "Tekshiruvdan o'tdi",
         "warning": "Ogohlantirish bilan",
@@ -306,7 +509,7 @@ class CameraSlotView(QFrame):
         )
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(12, 12, 12, 12)
+        root.setContentsMargins(10, 10, 10, 12)
         root.setSpacing(10)
 
         self.preview = CameraPreview(height)
@@ -314,43 +517,13 @@ class CameraSlotView(QFrame):
         # o'rnatiladi) - bayroq ham yangi rol bilan qaytadan qo'yiladi.
         self.preview.mirrored = camera.role == "primary"
         self.preview.show_placeholder(
-            "Kadr uchun pastdagi tugmani bosing" if camera.available else "Kamera ishlamaydi"
+            _IDLE_TEXT if camera.available
+            else camera.reason or "Kamera ishlamaydi"
         )
-        root.addWidget(self.preview)
 
-        top = QHBoxLayout()
-        top.setSpacing(10)
-
-        if can_choose:
-            # Nishon o'rnida TANLOV: rol taxmin qilingan va uni
-            # tuzatish mumkin. Ikkalasini birga ko'rsatish bir xil
-            # ma'lumotni ikki marta yozardi.
-            control = RoleSegmentedControl(camera, can_spare=can_spare)
-            control.chosen.connect(self.role_chosen)
-            top.addWidget(control, 1)
-        else:
-            purpose = QLabel(camera.purpose_label)
-            purpose.setStyleSheet(
-                badge_style("success" if camera.available and camera.in_use else "muted")
-            )
-            purpose.setFixedHeight(24)
-            top.addWidget(purpose)
-            top.addStretch(1)
-
-        status = QLabel("Tayyor" if camera.available else "Ishlamaydi")
-        status.setStyleSheet(badge_style("success" if camera.available else "error"))
-        status.setFixedHeight(24)
-        top.addWidget(status)
-        root.addLayout(top)
-
-        name = QLabel(camera.label or "Nomsiz kamera")
-        name.setStyleSheet("font-size: 14px; font-weight: 600;")
-        name.setWordWrap(True)
-        root.addWidget(name)
-
-        # Tafsilot HAR DOIM ko'rsatiladi: aynan u "nega ishlamayapti"
-        # degan savolga javob beradi va operator uni administratorga
-        # aytadi.
+        # Tafsilot HAR DOIM ko'rinadi (kadr ustidagi pastki qatorda):
+        # aynan u "nega ishlamayapti" degan savolga javob beradi va
+        # operator uni administratorga aytadi. To'liq matn tooltip'da.
         details = [camera.reason]
         if camera.source == "ip" and camera.address:
             details.append(camera.address)
@@ -360,21 +533,45 @@ class CameraSlotView(QFrame):
             details.append(camera.resolution)
         if camera.is_virtual:
             details.append("virtual kamera")
+        detail_text = "  •  ".join(part for part in details if part)
+        self.preview.set_overlay(
+            camera.label or "Nomsiz kamera",
+            detail_text,
+            "Tayyor" if camera.available else "Ishlamaydi",
+            "ready" if camera.available else "failed",
+        )
+        self.preview.setToolTip(
+            "{}\n{}".format(camera.label or "Nomsiz kamera", detail_text).strip()
+        )
+        root.addWidget(self.preview)
 
-        caption = QLabel("  •  ".join(part for part in details if part))
-        caption.setProperty("role", "caption")
-        caption.setWordWrap(True)
-        root.addWidget(caption)
+        if can_choose:
+            # Nishon o'rnida TANLOV: rol taxmin qilingan va uni
+            # tuzatish mumkin. Ikkalasini birga ko'rsatish bir xil
+            # ma'lumotni ikki marta yozardi.
+            control = RoleSegmentedControl(camera, can_spare=can_spare)
+            control.chosen.connect(self.role_chosen)
+            root.addWidget(control)
 
         bottom = QHBoxLayout()
         bottom.setSpacing(8)
-        self.check_btn = QPushButton("Tekshirish")
-        self.check_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        if not can_choose:
+            # Tanlov yo'q (bitta kamera) - vazifa nishon bilan.
+            purpose = StatusChip(
+                "ready" if camera.available and camera.in_use else "pending",
+                camera.purpose_label,
+            )
+            bottom.addWidget(purpose, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.check_badge = StatusChip("pending", "Tekshirilmagan")
+        bottom.addWidget(self.check_badge, 0, Qt.AlignmentFlag.AlignVCenter)
+        bottom.addStretch(1)
+
+        self.check_btn = RippleButton("Tekshirish")
         # TO'LDIRILGAN tugma, matnli (text button) emas: kartadagi yagona
-        # amal shu, matnli tugma esa holat nishonlari va kamera nomi
-        # orasida oddiy yozuvdek ko'rinib, operator uni topolmasdi.
-        self.check_btn.setStyleSheet(primary_button_style(38))
-        self.check_btn.setMinimumWidth(150)
+        # amal shu, matnli tugma esa holat nishonlari orasida oddiy
+        # yozuvdek ko'rinib, operator uni topolmasdi.
+        self.check_btn.setStyleSheet(primary_button_style(36))
+        self.check_btn.setMinimumWidth(132)
         self.check_btn.setToolTip("Faqat shu kamerani o'lchab, serverga baholatadi")
         # ZAXIRADAGI kamera tekshirilmaydi: server faqat vazifasi bor
         # kameralarni baholaydi va imtihonda faqat ular ishlaydi.
@@ -385,12 +582,6 @@ class CameraSlotView(QFrame):
             lambda: self.check_requested.emit(self.role)
         )
         bottom.addWidget(self.check_btn)
-        bottom.addStretch(1)
-
-        self.check_badge = QLabel("Tekshirilmagan")
-        self.check_badge.setStyleSheet(badge_style("muted"))
-        self.check_badge.setFixedHeight(24)
-        bottom.addWidget(self.check_badge)
         root.addLayout(bottom)
 
     def set_check_state(self, summary: dict) -> None:
@@ -402,13 +593,12 @@ class CameraSlotView(QFrame):
         tekshiruv o'tganini bilishga imkon bermasdi.
         """
         if not summary or not summary.get("checked"):
-            self.check_badge.setText("Tekshirilmagan")
-            self.check_badge.setStyleSheet(badge_style("muted"))
+            self.check_badge.set_status("pending", "Tekshirilmagan")
             return
         status = summary.get("status", "ready")
-        self.check_badge.setText(self._STATE_TEXT.get(status, "Tekshirildi"))
-        self.check_badge.setStyleSheet(
-            badge_style(self._STATE_BADGE.get(status, "muted"))
+        self.check_badge.set_status(
+            status if status in self._STATE_TEXT else "pending",
+            self._STATE_TEXT.get(status, "Tekshirildi"),
         )
 
     def set_busy(self, busy: bool, *, mine: bool = True) -> None:
@@ -431,9 +621,7 @@ class CheckRow(QFrame):
     "FPS past" deb hisoblab, ekranda "hammasi joyida" turardi.
     """
 
-    _TONE = {"ready": "low", "warning": "low", "failed": "error"}
-    _BADGE = {"ready": "success", "warning": "warning", "failed": "error"}
-    _MARK = {"ready": "OK", "warning": "!", "failed": "X"}
+    _TONE = {"ready": "low", "warning": "warning", "failed": "error"}
 
     def __init__(self, check: dict, index: int, parent=None) -> None:
         super().__init__(parent)
@@ -445,15 +633,11 @@ class CheckRow(QFrame):
         )
 
         root = QHBoxLayout(self)
-        root.setContentsMargins(12, 8, 12, 8)
-        root.setSpacing(10)
+        root.setContentsMargins(12, 8, 14, 8)
+        root.setSpacing(12)
 
-        mark = QLabel(self._MARK.get(status, "?"))
-        mark.setStyleSheet(badge_style(self._BADGE.get(status, "muted")))
-        mark.setFixedHeight(22)
-        mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        mark.setMinimumWidth(38)
-        root.addWidget(mark)
+        # Belgi SHAKLI holatni aytadi (✓ / ! / ✕), faqat rang emas.
+        root.addWidget(StatusIcon(status, 24), 0, Qt.AlignmentFlag.AlignTop)
 
         text_box = QVBoxLayout()
         text_box.setSpacing(1)
@@ -531,14 +715,45 @@ class CameraPanel(QFrame):
     # ------------------------------------------------------------------
     def _setup_ui(self, show_reload: bool) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(20, 18, 20, 20)
+        root.setContentsMargins(20, 18, 20, 18)
         root.setSpacing(12)
 
+        # MD3 karta sarlavhasi: belgi + nom + izoh, AMALLAR O'NGDA. Ilgari
+        # ikkita katta tugma kartaning pastida alohida qatorda edi va
+        # 1366x768 da sahifa ekrandan chiqib ketardi (819 px).
         header = QHBoxLayout()
-        header.setSpacing(8)
+        header.setSpacing(12)
+        header.addWidget(IconBadge("camera", 40), 0, Qt.AlignmentFlag.AlignVCenter)
+        titles = QVBoxLayout()
+        titles.setSpacing(0)
         title = QLabel("Kuzatuv kameralari")
-        title.setProperty("role", "value")
-        header.addWidget(title, 1)
+        title.setStyleSheet(
+            "font-size: 17px; font-weight: 700; color: {};".format(COLORS["on_surface"])
+        )
+        titles.addWidget(title)
+        subtitle = QLabel("Kadrni ko'ring, vazifani tanlang va tekshiring")
+        subtitle.setStyleSheet(
+            "font-size: 12px; color: {};".format(COLORS["on_surface_variant"])
+        )
+        titles.addWidget(subtitle)
+        header.addLayout(titles, 1)
+
+        self.action_btn = RippleButton("Kamerani ishga tushirish", light=False)
+        self.action_btn.setStyleSheet(tonal_button_style(40))
+        self.action_btn.clicked.connect(self._toggle_preview)
+        self.action_btn.setEnabled(False)
+        header.addWidget(self.action_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self.check_btn = RippleButton("Hammasini tekshirish", light=False)
+        self.check_btn.setStyleSheet(tonal_button_style(40))
+        self.check_btn.setToolTip(
+            "Barcha kameralarni o'lchab, natijani serverga yuboradi va uning "
+            "xulosasini ko'rsatadi. Har bir kamerani ALOHIDA tekshirish uchun "
+            "kadr ostidagi tugmadan foydalaning"
+        )
+        self.check_btn.clicked.connect(lambda: self.run_check())
+        self.check_btn.setEnabled(False)
+        header.addWidget(self.check_btn, 0, Qt.AlignmentFlag.AlignVCenter)
 
         if show_reload:
             self.reload_btn = QPushButton("Yangilash")
@@ -613,30 +828,6 @@ class CameraPanel(QFrame):
 
         root.addStretch()
 
-        buttons = QHBoxLayout()
-        buttons.setSpacing(10)
-
-        self.action_btn = QPushButton("Kamerani ishga tushirish")
-        self.action_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.action_btn.setStyleSheet(tonal_button_style(46))
-        self.action_btn.clicked.connect(self._toggle_preview)
-        self.action_btn.setEnabled(False)
-        buttons.addWidget(self.action_btn, 1)
-
-        self.check_btn = QPushButton("Hammasini tekshirish")
-        self.check_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.check_btn.setStyleSheet(tonal_button_style(46))
-        self.check_btn.setToolTip(
-            "Barcha kameralarni o'lchab, natijani serverga yuboradi va uning "
-            "xulosasini ko'rsatadi. Har bir kamerani ALOHIDA tekshirish uchun "
-            "kadr ostidagi tugmadan foydalaning"
-        )
-        self.check_btn.clicked.connect(lambda: self.run_check())
-        self.check_btn.setEnabled(False)
-        buttons.addWidget(self.check_btn, 1)
-
-        root.addLayout(buttons)
-
     # ------------------------------------------------------------------
     # Tashqi API
     # ------------------------------------------------------------------
@@ -694,7 +885,7 @@ class CameraPanel(QFrame):
         for role, view in self._views.items():
             camera = self._layout_result.get(role)
             view.preview.show_placeholder(
-                "Kadr uchun pastdagi tugmani bosing"
+                _IDLE_TEXT
                 if camera is not None and camera.available
                 else "Kamera ishlamaydi"
             )
@@ -754,6 +945,7 @@ class CameraPanel(QFrame):
             view.set_busy(True, mine=wanted is None or view.role in wanted)
         self._clear_checks()
         self.hint.setText("Kamera ishga tushirilmoqda...")
+        self._tint_hint()
 
         # FAQAT KERAKLI kamera ochiladi: ikkinchisini bekorga ochish
         # operatorni ~2 soniya kutishga majbur qilardi va qurilmani
@@ -810,6 +1002,7 @@ class CameraPanel(QFrame):
         self._clear_checks()
         self._update_slot_states()
         self.hint.setText("Tekshirib bo'lmadi: {}".format(message))
+        self._tint_hint("error")
         log.warning("Kamera tekshiruvi muvaffaqiyatsiz (%s): %s", code or "-", message)
         self.check_completed.emit({})
 
@@ -825,6 +1018,9 @@ class CameraPanel(QFrame):
         checks = result.get("checks") or []
         for index, check in enumerate(checks):
             self.checks_box.addWidget(CheckRow(check, index))
+        # Qatorlar o'z balandligida qoladi: katta ekranda scroll maydoni
+        # bo'sh joyni qatorlarni CHO'ZIB to'ldirardi.
+        self.checks_box.addStretch(1)
         # Bo'sh scroll maydoni YASHIRILADI: aks holda tekshiruvdan
         # oldin kartada tushuntirib bo'lmaydigan bo'sh oraliq turardi.
         self.checks_area.setVisible(bool(checks))
@@ -836,8 +1032,25 @@ class CameraPanel(QFrame):
                 if status == "ready"
                 else "Tekshiruvdan o'tdi — ogohlantirishlar bilan."
             )
+            self._tint_hint("primary_dark" if status == "ready" else "warning")
         else:
             self.hint.setText("Tekshiruvdan o'tmadi — imtihonni boshlab bo'lmaydi.")
+            self._tint_hint("error")
+
+    def _tint_hint(self, color: str = "", *, bold: bool = True) -> None:
+        """
+        Xulosa qatori rangi: natija RANG va QALINLIK bilan ham ajraladi.
+
+        Bo'sh `color` - oddiy izoh (rollar haqida, jarayon bosqichi).
+        """
+        if not color:
+            self.hint.setStyleSheet("")
+            return
+        self.hint.setStyleSheet(
+            "font-size: 13px; font-weight: {}; color: {};".format(
+                700 if bold else 400, COLORS[color]
+            )
+        )
 
     # ------------------------------------------------------------------
     # Ma'lumot yig'ish
@@ -957,7 +1170,7 @@ class CameraPanel(QFrame):
             for camera in chunk:
                 view = CameraSlotView(
                     camera,
-                    height=_PREVIEW_HEIGHT,
+                    height=_preview_height(),
                     # Tanlov faqat ikkita va undan ko'p ishlaydigan
                     # kamerada (`CameraLayout.can_choose`).
                     can_choose=can_choose and camera.available,
@@ -981,6 +1194,7 @@ class CameraPanel(QFrame):
             self.slots_box.addWidget(row)
 
         self.hint.setText(self._hint_text())
+        self._tint_hint()
         self._update_slot_states()
         usable = bool(self._layout_result.usable)
         self.action_btn.setEnabled(usable)
@@ -1124,7 +1338,7 @@ class CameraPanel(QFrame):
             # "kamera ishlab turibdi" degan yolg'on xabar bo'lardi.
             for slot_id, view in self._views.items():
                 if slot_id not in {camera.slot_id for camera in usable}:
-                    view.preview.show_placeholder("Kadr uchun pastdagi tugmani bosing")
+                    view.preview.show_placeholder(_IDLE_TEXT)
 
         self._previewing = True
         self._update_action_label()

@@ -2,6 +2,8 @@ from rest_framework import serializers
 from rest_framework.validators import UniqueValidator
 
 from apps.common.region_scope import ensure_in_region, region_pk, zone_region
+from apps.controls import offers as offer_services
+from apps.exams.models import Exam
 from apps.controls.models import (
     AllowedPublicIp,
     ClientExitPassword,
@@ -10,6 +12,8 @@ from apps.controls.models import (
     EventRiskWeight,
     HotKeyboardKey,
     ModelVersion,
+    Offer,
+    OfferRevision,
     ProctoringPolicy,
     RdpObject,
     Setting,
@@ -449,3 +453,110 @@ class EventRiskWeightSerializer(serializers.ModelSerializer):
                 + " ..."
             )
         return value
+
+
+class OfferSerializer(serializers.ModelSerializer):
+    """
+    Oferta (panel). Yozish faqat `offers.save_offer` orqali — versiya qoidasi.
+
+    `content` kirishda TOZALANADI (`offers.clean_content`) va javobda
+    tozalangan shaklda qaytadi: muharrir saqlangandan keyin AYNAN bazadagi
+    matnni ko'rsatadi (olib tashlangan teg panelda ham yo'qoladi).
+
+    `exams` — shu ofertani so'raydigan testlar (bog'lanish `Exam.offer`
+    da). Ro'yxat to'liq almashtiriladi: boshqa ofertadagi test tanlansa
+    shu ofertaga ko'chadi (`offers.assign_exams`).
+    """
+
+    updated_by_name = serializers.SerializerMethodField()
+    #: `OfferViewSet.get_queryset` annotatsiyasi; ro'yxatda N+1 bo'lmasin.
+    consents_count = serializers.IntegerField(read_only=True, default=0)
+    exams = serializers.PrimaryKeyRelatedField(
+        many=True, required=False, queryset=Exam.objects.alive(),
+    )
+    exam_list = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Offer
+        fields = (
+            "id", "title", "content", "version", "is_active", "exams", "exam_list",
+            "updated_by_name", "consents_count", "created_at", "updated_at", "deleted_at",
+        )
+        read_only_fields = ("id", "version", "created_at", "updated_at", "deleted_at")
+
+    def _alive_exams(self, obj) -> list:
+        # `OfferViewSet` faqat tirik imtihonlarni oldindan yuklaydi
+        # (`alive_exams`); boshqa joydan chaqirilsa — so'rov bilan.
+        cached = getattr(obj, "alive_exams", None)
+        if cached is not None:
+            return cached
+        return list(obj.exams.alive().order_by("name")) if obj.pk else []
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # Standart `exams` o'chirilgan imtihonlarni ham qaytarardi — forma
+        # ularni ko'rmaydi va saqlashda jimgina ajratib yuborardi.
+        data["exams"] = [exam.pk for exam in self._alive_exams(instance)]
+        return data
+
+    def get_exam_list(self, obj) -> list[dict]:
+        return [
+            {"id": exam.pk, "name": exam.name, "is_active": exam.is_active}
+            for exam in self._alive_exams(obj)
+        ]
+
+    def get_updated_by_name(self, obj) -> str:
+        user = obj.updated_by
+        if user is None:
+            return ""
+        return user.get_full_name() or user.username
+
+    def validate_title(self, value):
+        value = (value or "").strip()
+        if not value:
+            raise serializers.ValidationError("Sarlavha bo'sh bo'lmasligi kerak")
+        return value
+
+    def validate_content(self, value):
+        try:
+            return offer_services.clean_content(value)
+        except offer_services.OfferContentError as exc:
+            raise serializers.ValidationError(str(exc))
+
+    def _save(self, instance, validated_data):
+        offer = offer_services.save_offer(
+            offer=instance,
+            title=validated_data.get("title", getattr(instance, "title", "")),
+            content=validated_data.get("content", getattr(instance, "content", "")),
+            is_active=validated_data.get("is_active"),
+            exams=validated_data.get("exams"),
+            actor=self.context["request"].user,
+        )
+        # Oldindan yuklangan ro'yxat endi eski — javob bazadan o'qisin.
+        offer.__dict__.pop("alive_exams", None)
+        return offer
+
+    def create(self, validated_data):
+        return self._save(None, validated_data)
+
+    def update(self, instance, validated_data):
+        return self._save(instance, validated_data)
+
+
+class OfferRevisionSerializer(serializers.ModelSerializer):
+    created_by_name = serializers.SerializerMethodField()
+    consents_count = serializers.IntegerField(read_only=True, default=0)
+
+    class Meta:
+        model = OfferRevision
+        fields = (
+            "id", "version", "title", "content", "content_hash",
+            "created_by_name", "consents_count", "created_at",
+        )
+        read_only_fields = fields
+
+    def get_created_by_name(self, obj) -> str:
+        user = obj.created_by
+        if user is None:
+            return ""
+        return user.get_full_name() or user.username

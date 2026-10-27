@@ -562,6 +562,50 @@ talqin qilinadi.
 `integrations/exam_platform.py` da faqat `report_result` va
 `platform_health` qoldi.
 
+### Oferta — yuz tekshiruvidan OLDIN rozilik
+
+Talabgor topilgach (JSHSHIR javobi), FaceID'dan OLDIN shaxsga doir
+ma'lumotlar bilan ishlashga rozilik beradi: FaceID biometrik ma'lumotni
+(kadr, hujjat rasmi) serverga yuboradi.
+
+| Qatlam | Qayerda |
+|---|---|
+| matn | `controls.Offer`, panel «Oferta» (TipTap, `components/offers/`) |
+| versiya | `controls.OfferRevision` — O'ZGARMAS; matn/sarlavha o'zgarsa yangisi (`controls/offers.py:save_offer`) |
+| test | `Exam.offer` (FK, `PROTECT`) — so'raladi: biriktirilgan VA `Offer.is_active` VA o'chirilmagan (`offers.current_revision(exam)`) |
+| rozilik | `proctoring.OfferConsent` (versiya + `content_hash`, sessiyadan OLDIN, keyin `session` bog'lanadi) |
+| client | `candidate_page._on_next` → `ui/dialogs/offer_dialog.py` → `client/offer/accept/` |
+
+* **Oferta TESTGA tegishli** — har testning o'z shartlari. Bog'lanish imtihon
+  tomonida: testda bittadan ortiq oferta bo'lmasligini baza kafolatlaydi, bitta
+  matn bir nechta testga xizmat qiladi. Panelda IKKI kirish, bitta maydon:
+  oferta formasidagi «Testlar» (`exams` — ro'yxat TO'LIQ almashtiriladi, boshqa
+  ofertadagi test KO'CHADI; `offers.assign_exams`, auditda `added`/`removed`/
+  `moved`) va imtihon formasidagi «Oferta». "Bitta amaldagi oferta" yoki
+  profil kaliti (`is_offer_required`) QAYTARMANG — test ofertasini global
+  matn bosib ketardi. Biriktirilgan ofertani o'chirish — 409 `offer_in_use`
+  (jim ajratish rozilik qadamini sezdirmay olib tashlardi).
+* **Server majburlaydi**: pending'da `offer_revision_id` bor, `offer_consent_id`
+  yo'q — `face/verify/` va `face/attempt/` 403 `offer_not_accepted`, challenge
+  SARFLANMAYDI (`_require_offer_consent`, `peek` dan keyin).
+* **Ofertani faqat `save_offer` yozadi** (serializer ham) — aks holda rozilik
+  bog'langan matn jimgina o'zgarardi. Django admin'da ATAYLAB ro'yxatdan
+  o'tmagan.
+* **HTML serverda oq ro'yxat bilan tozalanadi** (`common/html_sanitizer.py`,
+  yangi bog'liqliksiz): havola, rasm, jadval YO'Q (kiosk). Tekislash `style`
+  VA `align` bilan (Qt atributni o'qiydi). Muharrir imkoniyatlari ro'yxat bilan
+  BIR XIL bo'lishi shart.
+* Rozilik aynan JSHSHIR javobidagi versiya + izga (`OfferOutdated` 409 aks
+  holda); oraliqda tahrir — talabgor KO'RGAN versiyaga yoziladi. Takror —
+  idempotent. Bugungi (12 soat) SHU TEST + shu versiyaga rozilik qayta
+  qidiruvda `accepted_at` bilan qaytadi — dialog ochilmaydi (boshqa testda
+  bir xil matn bo'lsa ham qayta so'raladi).
+* `OfferConsent` ANONIMLASHTIRILMAYDI — qayta ishlashning huquqiy asosi.
+* Client dialogi: matn oxirigacha ko'rilmaguncha belgi o'chiq, belgisiz
+  «Roziman» o'chiq; so'rov ketayotganda yopilmaydi. Aylantirgich handleri
+  `_alive` bilan himoyalangan (o'chirilayotgan `QTextBrowser` `rangeChanged`
+  chiqaradi — access violation).
+
 ### Kompyuter raqami va inventar kodi — IKKI BOSHQA SAVOL
 
 | | `Computer.number` | `inventory_code` |
@@ -1489,7 +1533,15 @@ Qobiq bitta — `base.py:CardDialog` (ramkasiz, shaffof fon, 28 px karta, soya).
   yozuvi, FaceID foizi, xavf balli, "kuzatuv ishga tushdi", texnik nomlar
   (QtWebEngineProcess, DNS). Amallar tugmasining tooltip'i — faqat
   aloqa (`_update_status_tooltip`; qolgani `_status` da, ekranga chiqmaydi).
-  "Proktor" o'rniga "nazoratchi". Texnik sabab — log'ga.
+  "Proktor" o'rniga "nazoratchi". Texnik sabab — log'ga. Tutilmagan
+  ichki xato va operator login muddati ham imtihon sahifasida ekranga
+  CHIQMAYDI (`MainWindow._on_unhandled_error`, `_on_auth_expired`).
+* **Imtihon boshi — har qadam alohida himoyada** (`ExamWebViewPage._begin`
+  → `_guarded`): AI kuzatuv, skrinshot, yozuv, kanal yoki kuzatuvchi
+  yiqilsa ham heartbeat va qolganlari ishga tushadi; AI yiqilsa —
+  `proctoring_degraded` (`module: supervisor`). Yakun ketayotganda
+  kelgan `session_lost` / `terminate` / ogohlantirish e'tiborsiz
+  (`_session_closed`), `stop()` ochiq sahifa dialogini yopadi.
 
 ### Klaviatura tili — faqat Alt+Shift
 
@@ -2064,6 +2116,30 @@ deploy'ni (`deploy.sh`) yangi `dist` almashtirilishidan OLDIN to'xtatadi.
 * **(client) Windows tizim binarlarining PE resursi `.mui` dan** —
   `OriginalFilename` `mstsc.exe.mui` bo'ladi (`process_identity._strip_mui`).
 * **(client) Imtihon sahifasida `Notice` emas, `Snackbar`.**
+* **(client) MD3 komponentlari — `ui/widgets/md3.py`** (`FlowStepper`,
+  `IconBadge`, `StatusIcon`/`StatusChip`, `SegmentProgress`, `RippleButton`,
+  `elevate`/`reveal`/`shake`); kamera/test va JSHSHIR sahifalari shulardan,
+  ikkalasi 1366x768 ga SIG'ADI (talabgor topilganda «TEKSHIRISH» va sarlavha
+  yig'iladi, kamera amallari karta sarlavhasida). Bir martalik animatsiya
+  vidjetning BOLASI EMAS (`md3._RUNNING`): bola bo'lsa `deleteLater` paytida
+  `finished` yarim o'chirilgan vidjetga murojaat qilib jarayonni qulatardi.
+  Jonli video bor kartaga `QGraphicsEffect` (soya) QO'YMANG — har kadrda
+  butun daraxt qayta chiziladi; kadr ustidagi belgilar `CameraPreview.paintEvent` da.
+  Sarlavhadagi bino/viloyat nomi «…» bilan QISQARADI (`header._ElidedValue`,
+  to'liq nom tooltip'da): paneldagi uzun bino nomi sahifani 1366 px dan
+  kengaytirib, o'ng chetni ekrandan chiqarardi. 1366 ni soxta qisqa nom
+  bilan emas, haqiqiy bino nomi bilan tekshiring.
+* **(client) Sessiya ichida `QThread.terminate()` YO'Q** — Python
+  thread'i GIL yoki `logging` qulfini ushlab turganda uzilsa dastur
+  imtihon yakunida abadiy qotadi. Vaqtida tugamagani fonda o'zi tugaydi
+  (`WorkerHolder.wait_all(terminate=False)`, `DeviceWatcher._retire`,
+  `ProctoringSupervisor.stop`); `terminate` — faqat `shutdown` da
+  (dasturdan chiqish).
+* **(client) `LockedWebPage.javaScriptConfirm` `beforeunload` ni QABUL
+  qiladi** (`is_unload_prompt`; Qt 6.11 «sahifadan chiqasizmi?» ni shu
+  metodga beradi). Rad etilsa platformaning bu himoyasi yakundagi
+  `about:blank`, «Sahifani yangilash» va KEYINGI talabgorning havolasini
+  to'sadi. Platformaning oddiy `confirm()` i — `False`.
 * **Tezkor tugma lug'ati UCH joyda**: client `services/lockdown.py`
   (manba), server `controls/hotkeys.py` (saqlashda tekshiradi, kanonik
   shakl; testda client bilan solishtiriladi), panel `utils/hotkeys.ts`.

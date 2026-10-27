@@ -95,6 +95,9 @@ COLORS = {
     # aralashtirish har vidjetning ota fonga bog'liq bo'lib qolardi).
     "disabled_container": "#E1E4E0",
     "disabled_content": "#9FA49E",
+    # Video oldindan ko'rish maydoni (MD3 "surface dim", to'q): kadr
+    # chegaralari va kamera yo'q holati shu fonda ko'rinadi.
+    "preview_surface": "#0B1220",
 }
 
 FONT_FAMILY = "'Segoe UI', 'Inter', 'Roboto', sans-serif"
@@ -718,7 +721,7 @@ def surface_container_style(object_name: str, *, tone: str = "low") -> str:
 def preview_surface_style() -> str:
     """Video oldindan ko'rish maydoni — MD3 "surface dim" ustida."""
     return """
-        background-color: #0B1220;
+        background-color: {preview_surface};
         border-radius: 20px;
         color: {text_muted};
         font-size: 13px;

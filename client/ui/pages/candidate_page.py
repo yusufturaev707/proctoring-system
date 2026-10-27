@@ -52,11 +52,11 @@ import logging
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
+    QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QPushButton,
     QVBoxLayout,
     QWidget,
 )
@@ -74,9 +74,19 @@ from ui.styles import (
     primary_button_style,
     surface_container_style,
 )
+from ui.dialogs.offer_dialog import OfferDialog
 from ui.widgets.camera_view import PhotoView
 from ui.widgets.header import PageHeader, ip_chip_hints
 from ui.widgets.indicators import BusyOverlay, Card
+from ui.widgets.md3 import (
+    IconBadge,
+    RippleButton,
+    SegmentProgress,
+    StatusIcon,
+    elevate,
+    reveal,
+    shake,
+)
 from ui.widgets.notice import Notice
 from ui.widgets.seat_notice import SEAT_CODES, SeatNotice
 
@@ -90,7 +100,7 @@ PINFL_LENGTH = 14
 #: raqam va uch qatorli natija adashib qoladi - ko'z bir chetidan
 #: ikkinchisiga yuguradi. Bu qiymat o'qish uchun qulay satr
 #: uzunligiga (~60-70 belgi) mos.
-_COLUMN_WIDTH = 620
+_COLUMN_WIDTH = 640
 
 #: Hujjat rasmi - bu sahifada KICHIK.
 #:
@@ -160,6 +170,11 @@ class CandidatePage(QWidget):
         #: byudjetini sarflardi va ekrandagi natijani hech narsa
         #: o'zgartirmasdan qaytadan chizardi.
         self._found_pinfl = ""
+        #: Ochiq oferta dialogi (`None` — yopiq) va uni yopgan sabab: server
+        #: kodi (`offer_outdated`, `session_not_found`) bo'lsa talabgor
+        #: qaytadan qidiriladi.
+        self._offer_dialog = None
+        self._offer_restart = ""
         self._setup_ui()
         network_status().changed.connect(self._on_network_changed)
         self._check_timer = QTimer(self)
@@ -172,15 +187,18 @@ class CandidatePage(QWidget):
     # ------------------------------------------------------------------
     def _setup_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(48, 28, 48, 32)
-        root.setSpacing(18)
+        root.setContentsMargins(48, 24, 48, 24)
+        root.setSpacing(14)
 
+        # Bosqich nomi bilan (`FlowStepper`), "2 / 4" raqami emas: ekran
+        # oldida talabgor turadi va u butun yo'lni ko'rishi kerak.
         self.header = PageHeader(
-            "2-qadam · Talabgorni JSHSHIR bo'yicha tekshirish",
+            "Talabgorni JSHSHIR bo'yicha tekshirish",
             step=2,
             show_back=False,
             show_logout=False,
             chips=("region", "zone", "ip"),
+            stepper=True,
         )
         root.addWidget(self.header)
 
@@ -199,8 +217,9 @@ class CandidatePage(QWidget):
         # o'z joyida turmasdi.
         column.setFixedWidth(_COLUMN_WIDTH)
         self._column = QVBoxLayout(column)
-        self._column.setContentsMargins(0, 0, 0, 0)
-        self._column.setSpacing(16)
+        # Chetlar - kartalar soyasi (`md3.elevate`) uchun joy.
+        self._column.setContentsMargins(6, 0, 6, 8)
+        self._column.setSpacing(14)
         self._column.addWidget(self._build_search_card())
         self._column.addWidget(self._build_result_card())
 
@@ -215,31 +234,59 @@ class CandidatePage(QWidget):
 
     def _build_search_card(self) -> Card:
         card = Card()
+        card.body.setContentsMargins(28, 24, 28, 24)
+        card.body.setSpacing(12)
+        elevate(card)
 
-        title = QLabel("JSHSHIR")
-        title.setProperty("role", "value")
-        card.body.addWidget(title)
-
-        caption = QLabel("Talabgorning 14 xonali identifikatorini kiriting")
-        caption.setProperty("role", "caption")
-        card.body.addWidget(caption)
-        card.body.addSpacing(6)
+        # MD3 sarlavha: tonal belgi + sarlavha + izoh. Matn TALABGORGA
+        # ham tushunarli: "identifikator" emas, hujjatdagi raqam.
+        # Topilgan talabgor ko'rinib turganda bu qism YIG'ILADI
+        # (`_update_pinfl_state`): 1366x768 da natija kartasi bilan sig'ishi
+        # uchun. Maydonning o'zi va hisoblagich qoladi.
+        self._intro = QWidget()
+        # Global `QWidget { background }` qoidasi oq karta ichida sahifa
+        # fonini chizib qo'yardi.
+        self._intro.setStyleSheet("background: transparent;")
+        top = QHBoxLayout(self._intro)
+        top.setContentsMargins(0, 0, 0, 4)
+        top.setSpacing(14)
+        top.addWidget(IconBadge("id", 48), 0, Qt.AlignmentFlag.AlignTop)
+        titles = QVBoxLayout()
+        titles.setSpacing(2)
+        title = QLabel("JSHSHIR raqami")
+        title.setStyleSheet(
+            "font-size: 20px; font-weight: 700; color: {};".format(COLORS["on_surface"])
+        )
+        titles.addWidget(title)
+        caption = QLabel("Pasport yoki ID-kartadagi 14 xonali shaxsiy raqamni kiriting")
+        caption.setWordWrap(True)
+        caption.setStyleSheet(
+            "font-size: 13px; color: {};".format(COLORS["on_surface_variant"])
+        )
+        titles.addWidget(caption)
+        top.addLayout(titles, 1)
+        card.body.addWidget(self._intro)
 
         self.pinfl_input = QLineEdit()
-        self.pinfl_input.setPlaceholderText("••••••••••••••")
+        self.pinfl_input.setPlaceholderText("_ _ _ _ _ _ _ _ _ _ _ _ _ _")
         self.pinfl_input.setMaxLength(PINFL_LENGTH)
         self.pinfl_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # Tozalash tugmasi maydonning ICHIDA: xato kiritilgan raqamni
         # 14 marta Backspace bosib o'chirish operatorning har
         # talabgorda takrorlanadigan ishi bo'lardi.
         self.pinfl_input.setClearButtonEnabled(True)
-        self.pinfl_input.setStyleSheet(code_field_style())
+        self.pinfl_input.setStyleSheet(code_field_style(66))
         self.pinfl_input.textChanged.connect(self._on_pinfl_changed)
         self.pinfl_input.returnPressed.connect(self._on_lookup)
         card.body.addWidget(self.pinfl_input)
 
+        # Nechta raqam qolgani BIR QARASHDA (hisoblagich o'qishni talab
+        # qiladi): 14 segment, to'lganda bir lahza yorishadi.
+        self.progress = SegmentProgress(PINFL_LENGTH)
+        card.body.addWidget(self.progress)
+
         helper = QHBoxLayout()
-        helper.setContentsMargins(4, 0, 4, 0)
+        helper.setContentsMargins(2, 0, 2, 0)
         self.hint_label = QLabel("Enter tugmasi bilan ham qidirish mumkin")
         self.hint_label.setProperty("role", "caption")
         helper.addWidget(self.hint_label)
@@ -252,9 +299,8 @@ class CandidatePage(QWidget):
         helper.addWidget(self.counter_label)
         card.body.addLayout(helper)
 
-        card.body.addSpacing(4)
-        self.lookup_btn = QPushButton("TEKSHIRISH")
-        self.lookup_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        card.body.addSpacing(2)
+        self.lookup_btn = RippleButton("TEKSHIRISH")
         self.lookup_btn.setStyleSheet(primary_button_style(52))
         self.lookup_btn.setEnabled(False)
         self.lookup_btn.clicked.connect(self._on_lookup)
@@ -280,6 +326,34 @@ class CandidatePage(QWidget):
 
     def _build_result_card(self) -> Card:
         self.result_card = Card()
+        self.result_card.body.setContentsMargins(24, 20, 24, 22)
+        self.result_card.body.setSpacing(12)
+        elevate(self.result_card, 2)
+
+        # Holat qatori: "topildi" ATAYLAB matn bilan ham (faqat yashil
+        # rang emas) - talabgor ham, operator ham bir qarashda o'qiydi.
+        status = QHBoxLayout()
+        status.setSpacing(8)
+        status.addWidget(StatusIcon("ready", 22), 0, Qt.AlignmentFlag.AlignVCenter)
+        found = QLabel("Talabgor topildi")
+        found.setStyleSheet(
+            "font-size: 13px; font-weight: 700; letter-spacing: 0.3px; color: {};".format(
+                COLORS["primary_dark"]
+            )
+        )
+        status.addWidget(found, 0, Qt.AlignmentFlag.AlignVCenter)
+        status.addStretch(1)
+        # Oferta holati — qisqa matn: qator 1366x768 da hujjat nishoni
+        # ("Hujjat rasmi yo'q — operator tasdiqlaydi") bilan sig'ishi kerak.
+        self.offer_badge = QLabel("")
+        self.offer_badge.setFixedHeight(26)
+        self.offer_badge.setVisible(False)
+        status.addWidget(self.offer_badge, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.reference_badge = QLabel("")
+        self.reference_badge.setFixedHeight(26)
+        status.addWidget(self.reference_badge, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.result_card.body.addLayout(status)
+
         row = QHBoxLayout()
         row.setSpacing(18)
 
@@ -295,7 +369,7 @@ class CandidatePage(QWidget):
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
         self.name_label.setStyleSheet(
-            "font-size: 21px; font-weight: 700; color: {};".format(COLORS["text"])
+            "font-size: 22px; font-weight: 700; color: {};".format(COLORS["text"])
         )
         info.addWidget(self.name_label)
 
@@ -310,7 +384,7 @@ class CandidatePage(QWidget):
         self.platform_label.setVisible(False)
         info.addWidget(self.platform_label)
 
-        info.addSpacing(6)
+        info.addSpacing(8)
         meta = QHBoxLayout()
         meta.setSpacing(22)
         self._value_labels: dict = {}
@@ -333,32 +407,59 @@ class CandidatePage(QWidget):
         info.addLayout(meta)
 
         info.addSpacing(10)
-        self.reference_badge = QLabel("")
-        self.reference_badge.setFixedHeight(24)
-        info.addWidget(self.reference_badge, 0, Qt.AlignmentFlag.AlignLeft)
+        # Joy va vaqt — rasm yonidagi ustunda, alohida qatorda EMAS:
+        # 1366x768 ekranda natija kartasi qidiruv kartasi bilan birga
+        # sig'ishi kerak (ilgari 884 px bo'lib, «Yuzni tekshirish»
+        # ekrandan chiqib ketardi).
+        tiles = QHBoxLayout()
+        tiles.setSpacing(10)
+        tiles.addWidget(self._build_seat_panel(), 1)
+        tiles.addWidget(self._build_duration_panel(), 1)
+        info.addLayout(tiles)
         info.addStretch(1)
 
         row.addLayout(info, 1)
         self.result_card.body.addLayout(row)
 
-        self.result_card.body.addSpacing(14)
-        info_row = QHBoxLayout()
-        info_row.setSpacing(12)
-        info_row.addWidget(self._build_seat_panel(), 1)
-        info_row.addWidget(self._build_duration_panel(), 1)
-        self.result_card.body.addLayout(info_row)
-
-        self.result_card.body.addSpacing(10)
-        self.next_btn = QPushButton("YUZNI TEKSHIRISH")
-        self.next_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.result_card.body.addSpacing(4)
+        self.next_btn = RippleButton("YUZNI TEKSHIRISH")
         self.next_btn.setStyleSheet(primary_button_style(52))
         self.next_btn.clicked.connect(self._on_next)
         self.result_card.body.addWidget(self.next_btn)
         return self.result_card
 
+    @staticmethod
+    def _tile(object_name: str, caption_text: str) -> tuple:
+        """
+        Tonal katak: tepada kichik yorliq, ostida yirik qiymat.
+
+        Yorliq va qiymat USTMA-UST (yonma-yon emas): rasm yonidagi tor
+        ustunda ikkita katak sig'ishi kerak.
+        """
+        panel = QFrame()
+        panel.setObjectName(object_name)
+        panel.setStyleSheet(surface_container_style(object_name, tone="high"))
+        box = QVBoxLayout(panel)
+        box.setContentsMargins(14, 8, 14, 9)
+        box.setSpacing(0)
+        caption = QLabel(caption_text)
+        caption.setWordWrap(True)
+        caption.setStyleSheet(
+            "font-size: 10px; font-weight: 700; letter-spacing: 0.6px; "
+            "background: transparent; color: {};".format(COLORS["primary_dark"])
+        )
+        box.addWidget(caption)
+        value = QLabel("-")
+        value.setStyleSheet(
+            "font-size: 20px; font-weight: 700; background: transparent; "
+            "color: {};".format(COLORS["primary_deep"])
+        )
+        box.addWidget(value)
+        return panel, caption, value
+
     def _build_duration_panel(self) -> QFrame:
         """
-        Test vaqti - IDENTIFIKATORLAR QATORIDA EMAS, alohida blokda.
+        Test vaqti - IDENTIFIKATORLAR QATORIDA EMAS, alohida katakda.
 
         Sabab auditoriyada: raqamlar qatorini operator o'qiydi, test
         vaqtini esa TALABGOR so'raydi va u ekranga uzoqdan qaraydi.
@@ -366,65 +467,22 @@ class CandidatePage(QWidget):
         yozuvi shu savolga javob bermasdi - u boshqa ma'lumot
         turkumiga tegishli.
         """
-        panel = QFrame()
-        panel.setObjectName("durationPanel")
-        # "high" tonal: bu karta ichidagi YAGONA ta'kidlangan blok va
-        # u ko'zga birinchi tashlanishi kerak.
-        panel.setStyleSheet(surface_container_style("durationPanel", tone="high"))
-        box = QHBoxLayout(panel)
-        box.setContentsMargins(18, 12, 18, 12)
-        box.setSpacing(12)
-
-        caption = QLabel("TESTGA AJRATILGAN VAQT")
-        caption.setStyleSheet(
-            "font-size: 11px; font-weight: 700; letter-spacing: 0.6px; "
-            "background: transparent; color: {};".format(COLORS["primary_dark"])
+        panel, _caption, self.duration_value = self._tile(
+            "durationPanel", "TESTGA AJRATILGAN VAQT"
         )
-        box.addWidget(caption, 0, Qt.AlignmentFlag.AlignVCenter)
-        box.addStretch(1)
-
-        self.duration_value = QLabel("-")
-        self.duration_value.setStyleSheet(
-            "font-size: 22px; font-weight: 700; background: transparent; "
-            "color: {};".format(COLORS["primary_deep"])
-        )
-        box.addWidget(self.duration_value, 0, Qt.AlignmentFlag.AlignVCenter)
-
         self.duration_panel = panel
         panel.setVisible(False)
         return panel
 
     def _build_seat_panel(self) -> QFrame:
         """
-        Bron bo'yicha joy TASDIQLANDI — vaqt paneli bilan yonma-yon.
+        Bron bo'yicha joy TASDIQLANDI — vaqt katagi bilan yonma-yon.
 
         Faqat bron yuritiladigan sessiyada ko'rinadi. U "to'g'ri stoldami?"
         degan savolga ijobiy javob va raqam: operator talabgorga "siz
         №12 dasiz" deb aytadi.
         """
-        panel = QFrame()
-        panel.setObjectName("seatPanel")
-        panel.setStyleSheet(surface_container_style("seatPanel", tone="high"))
-        box = QHBoxLayout(panel)
-        box.setContentsMargins(18, 12, 18, 12)
-        box.setSpacing(12)
-
-        caption = QLabel("JOY TASDIQLANDI")
-        self.seat_caption = caption
-        caption.setStyleSheet(
-            "font-size: 11px; font-weight: 700; letter-spacing: 0.6px; "
-            "background: transparent; color: {};".format(COLORS["primary_dark"])
-        )
-        box.addWidget(caption, 0, Qt.AlignmentFlag.AlignVCenter)
-        box.addStretch(1)
-
-        self.seat_value = QLabel("-")
-        self.seat_value.setStyleSheet(
-            "font-size: 22px; font-weight: 700; background: transparent; "
-            "color: {};".format(COLORS["primary_deep"])
-        )
-        box.addWidget(self.seat_value, 0, Qt.AlignmentFlag.AlignVCenter)
-
+        panel, self.seat_caption, self.seat_value = self._tile("seatPanel", "JOY TASDIQLANDI")
         self.seat_panel = panel
         panel.setVisible(False)
         return panel
@@ -511,6 +569,11 @@ class CandidatePage(QWidget):
             captions=captions,
         )
 
+        if self._offer_dialog is not None:
+            # Sahifa yangi talabgor uchun tozalanmoqda — eski talabgorning
+            # ofertasi ekranda qolmasin.
+            self._offer_dialog.set_busy(False)
+            self._offer_dialog.reject()
         self._found_pinfl = ""
         self.pinfl_input.clear()
         self.message.clear_message()
@@ -645,6 +708,7 @@ class CandidatePage(QWidget):
             self.result_card.setVisible(False)
         left = PINFL_LENGTH - len(digits)
         complete = left <= 0
+        self.progress.set_value(len(digits))
         self.counter_label.setText("{} / {}".format(len(digits), PINFL_LENGTH))
         self.counter_label.setStyleSheet(
             "font-size: 13px; font-weight: 700; color: {};".format(
@@ -660,6 +724,11 @@ class CandidatePage(QWidget):
         else:
             self.hint_label.setText("Enter tugmasi bilan ham qidirish mumkin")
         self.lookup_btn.setEnabled(complete and not self._found_pinfl)
+        # Topilgan talabgor ko'rinib turganda «TEKSHIRISH» YASHIRIN: u
+        # baribir o'chiq, joyi esa 1366x768 da natija kartasiga kerak.
+        # Raqam o'zgarsa karta yopiladi va tugma qaytadi.
+        self.lookup_btn.setVisible(not self._found_pinfl)
+        self._intro.setVisible(not self._found_pinfl)
 
     def _on_lookup(self) -> None:
         pinfl = self.pinfl_input.text().strip()
@@ -744,9 +813,13 @@ class CandidatePage(QWidget):
             self.reference_badge.setText("Hujjat rasmi yo'q — operator tasdiqlaydi")
             self.reference_badge.setStyleSheet(badge_style("warning"))
 
-        self.result_card.setVisible(True)
+        self._apply_offer(candidate)
+
         self._found_pinfl = self._state.pinfl
         self._update_pinfl_state(self._found_pinfl)
+        # Karta "ochiladi" (MD3 motion): yangi ma'lumot qayerda paydo
+        # bo'lganini ko'z kuzatadi.
+        reveal(self.result_card)
         # "Talabgor topildi" degan xabar ATAYLAB yo'q: natija
         # kartasining o'zi paydo bo'lishi ayni shu narsani aytadi
         # va uni matn bilan takrorlash ekranga ma'lumot qo'shmasdan
@@ -810,6 +883,8 @@ class CandidatePage(QWidget):
         # (kutilmagan xato) faqat matn bilan chiqadi.
         if code == "candidate_not_found":
             self.message.show_message(message, "warning", title="Talabgor topilmadi")
+            # Maydon silkinadi - tuzatish SHU YERDA (raqamni tekshirish).
+            shake(self.pinfl_input)
             return
         if code == "candidate_not_eligible":
             self.message.show_message(message, "warning", title="Platforma ruxsat bermadi")
@@ -835,9 +910,142 @@ class CandidatePage(QWidget):
         )
 
     def _on_next(self) -> None:
-        if self._state.candidate is None:
+        candidate = self._state.candidate
+        if candidate is None:
             return
-        self.candidate_ready.emit(self._state.candidate)
+        # Rozilik YUZ TEKSHIRUVIDAN OLDIN: FaceID biometrik ma'lumotni
+        # serverga yuboradi, server esa rozilikgacha uni rad etadi.
+        if candidate.offer is not None and not candidate.offer.accepted:
+            self._open_offer(candidate)
+            return
+        self.candidate_ready.emit(candidate)
+
+    # ------------------------------------------------------------------
+    # Oferta
+    # ------------------------------------------------------------------
+    def _apply_offer(self, candidate: Candidate) -> None:
+        """
+        Nishon va asosiy tugma — keyingi qadam nima ekanini aytadi.
+
+        Tugma nomi HARAKATNING O'ZI: rozilik kerak bo'lsa u ofertani
+        ochadi, ya'ni "YUZNI TEKSHIRISH" deyish operatorni chalg'itardi.
+        Rozilikdan keyin yuz tekshiruvi qo'shimcha bosishsiz ochiladi.
+        """
+        offer = candidate.offer
+        pending = offer is not None and not offer.accepted
+        self.next_btn.setText("OFERTA BILAN TANISHISH" if pending else "YUZNI TEKSHIRISH")
+        self.next_btn.setToolTip(
+            "Talabgor oferta bilan tanishib rozilik bergach, yuz tekshiruvi ochiladi"
+            if pending else ""
+        )
+        if offer is None:
+            self.offer_badge.setVisible(False)
+            return
+        self.offer_badge.setText("Rozilik berilgan" if offer.accepted else "Rozilik kerak")
+        self.offer_badge.setStyleSheet(badge_style("success" if offer.accepted else "info"))
+        self.offer_badge.setToolTip(
+            "Talabgor «{}» ({}-versiya) bilan tanishib, shaxsga doir ma'lumotlarini "
+            "qayta ishlashga rozilik {}".format(
+                offer.title or "Oferta", offer.version, "bergan" if offer.accepted else "berishi kerak"
+            )
+        )
+        self.offer_badge.setVisible(True)
+
+    def _open_offer(self, candidate: Candidate) -> None:
+        if self._offer_dialog is not None:
+            return
+        self._offer_restart = ""
+        self.message.clear_message()
+        dialog = OfferDialog(
+            self.window(),
+            offer=candidate.offer,
+            candidate_name=candidate.display_name,
+            masked_pinfl=candidate.masked_pinfl,
+        )
+        dialog.confirmed.connect(self._accept_offer)
+        dialog.finished.connect(self._on_offer_closed)
+        self._offer_dialog = dialog
+        # `open()` — `exec()` emas: ichki hodisa sikli kerak emas, natija
+        # `finished` signalida keladi.
+        dialog.open()
+
+    def _accept_offer(self) -> None:
+        candidate = self._state.candidate
+        if candidate is None or candidate.offer is None:
+            return
+        worker = ApiWorker(
+            self._repo.accept_offer,
+            challenge=candidate.challenge,
+            revision_id=candidate.offer.revision_id,
+            content_hash=candidate.offer.content_hash,
+            parent=self,
+        )
+        worker.succeeded.connect(self._on_offer_accepted)
+        worker.failed.connect(self._on_offer_failed)
+        self._workers.run(worker)
+
+    def _on_offer_accepted(self, payload) -> None:
+        candidate = self._state.candidate
+        dialog = self._offer_dialog
+        if candidate is None or candidate.offer is None or dialog is None:
+            return
+        # Vaqt serverniki (u bayonnomaga yozilgan); javobsiz holatda ham
+        # bayroq qo'yiladi — rozilik serverda yozildi (201).
+        candidate.offer.accepted_at = str((payload or {}).get("accepted_at") or "accepted")
+        dialog.set_busy(False)
+        dialog.accept()
+
+    def _on_offer_failed(self, message: str, code: str) -> None:
+        dialog = self._offer_dialog
+        if dialog is None:
+            return
+        log.info("Ofertaga rozilik rad etildi (%s): %s", code or "-", message)
+        if code in ("offer_outdated", "session_not_found"):
+            # Bu talabgor uchun berilgan challenge/matn endi yaroqsiz —
+            # dialogda qayta urinishning ma'nosi yo'q, yangisini faqat
+            # JSHSHIR tekshiruvi beradi.
+            self._offer_restart = code
+            dialog.set_busy(False)
+            dialog.reject()
+            return
+        dialog.show_error(message, title="Rozilik saqlanmadi")
+
+    def _on_offer_closed(self, result: int) -> None:
+        dialog, self._offer_dialog = self._offer_dialog, None
+        if dialog is not None:
+            dialog.deleteLater()
+        candidate = self._state.candidate
+        if candidate is None:
+            return
+        if self._offer_restart:
+            restart, self._offer_restart = self._offer_restart, ""
+            # Karta yopiladi va «TEKSHIRISH» qaytadi — operator bitta bosish
+            # bilan yangi challenge va (kerak bo'lsa) yangi matnni oladi.
+            self._found_pinfl = ""
+            self.result_card.setVisible(False)
+            self._update_pinfl_state(self.pinfl_input.text().strip())
+            self.message.show_message(
+                "«TEKSHIRISH» ni qayta bosing — talabgor yangilangan matn bilan tanishadi."
+                if restart == "offer_outdated"
+                else "«TEKSHIRISH» ni qayta bosing.",
+                "warning",
+                title="Oferta yangilangan" if restart == "offer_outdated" else "Tekshiruv muddati tugagan",
+            )
+            self.lookup_btn.setFocus()
+            return
+        if result == QDialog.DialogCode.Accepted and candidate.offer is not None and candidate.offer.accepted:
+            self._apply_offer(candidate)
+            self.candidate_ready.emit(candidate)
+            return
+        # Rad etildi: talabgor shu sahifada qoladi, qaror qaytariladigan —
+        # fikrini o'zgartirsa tugma ofertani qayta ochadi.
+        self.message.show_message(
+            "Rozilik berilmaguncha yuz tekshiruvi va imtihon boshlanmaydi. "
+            "Talabgor fikrini o'zgartirsa, tugmani qayta bosing.",
+            "warning",
+            title="Talabgor ofertaga rozilik bermadi",
+        )
+        self.next_btn.setFocus()
 
     def shutdown(self) -> None:
         self._workers.wait_all()

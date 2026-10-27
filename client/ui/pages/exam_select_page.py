@@ -39,9 +39,9 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QHBoxLayout,
+    QFrame,
     QLabel,
-    QMessageBox,
-    QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -51,21 +51,77 @@ from services import system_info
 from services.app_state import AppState, ExamOption
 from services.workers import ApiWorker, WorkerHolder
 from ui.dialogs.policy_dialog import PolicyDialog
-from ui.styles import primary_button_style
+from ui.styles import COLORS, primary_button_style
 from ui.widgets.camera_panel import CameraPanel
 from ui.widgets.header import WorkstationHeader, ip_chip_hints
 from ui.widgets.indicators import Card
+from ui.widgets.md3 import IconBadge, RippleButton, StatusIcon, elevate
 from ui.widgets.notice import Notice
 
 log = logging.getLogger(__name__)
 
-#: "Davom etish" tugmasining kengligi.
-#:
-#: To'liq kenglikdagi tugma kartaning butun pastki chetini egallab,
-#: sahifadagi eng og'ir elementga aylanardi - holbuki u oddiy
-#: navigatsiya qadami. Ixcham va markazlashtirilgan tugma o'z
-#: og'irligiga qaytadi.
-_CONTINUE_WIDTH = 280
+#: Tanlov maydoni: MD3 "outlined text field" balandligi (~52 px). Global
+#: qoidadagi `min-height: 44px` + chetlar 66 px berardi va ikki maydon
+#: 1366x768 da tayyorgarlik ro'yxatiga joy qoldirmasdi.
+_COMBO_QSS = "QComboBox { min-height: 28px; }"
+
+
+class _ReadinessRow(QFrame):
+    """
+    Tayyorgarlik qatori: holat belgisi + nom + qisqa holat matni.
+
+    Holat SHAKL va MATN bilan ham (✓ / ! / ✕ / nuqta), faqat rang emas.
+    """
+
+    def __init__(self, title: str, parent=None) -> None:
+        super().__init__(parent)
+        self.setObjectName("readinessRow")
+        self.setStyleSheet(
+            "QFrame#readinessRow {{ background-color: {}; border: none; "
+            "border-radius: 12px; }}".format(COLORS["surface_container_low"])
+        )
+        row = QHBoxLayout(self)
+        row.setContentsMargins(10, 7, 12, 7)
+        row.setSpacing(10)
+        self.icon = StatusIcon("pending", 24)
+        row.addWidget(self.icon, 0, Qt.AlignmentFlag.AlignVCenter)
+        texts = QVBoxLayout()
+        texts.setSpacing(0)
+        name = QLabel(title)
+        name.setStyleSheet("font-size: 13px; font-weight: 700; color: {};".format(COLORS["text"]))
+        texts.addWidget(name)
+        self.detail = QLabel("—")
+        self.detail.setStyleSheet(
+            "font-size: 12px; color: {};".format(COLORS["on_surface_variant"])
+        )
+        texts.addWidget(self.detail)
+        row.addLayout(texts, 1)
+
+        self._full = "—"
+        # Uzun test nomi ustunni kengaytirmasin: matn kesiladi (`_elide`),
+        # to'liqi tooltip'da.
+        self.detail.setMinimumWidth(40)
+        self.detail.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+
+    @property
+    def status(self) -> str:
+        return self.icon.status
+
+    def set_state(self, status: str, detail: str) -> None:
+        self.icon.set_status(status)
+        self._full = detail
+        self.detail.setToolTip(detail)
+        self._elide()
+
+    def _elide(self) -> None:
+        width = max(40, self.detail.width())
+        self.detail.setText(
+            self.detail.fontMetrics().elidedText(self._full, Qt.TextElideMode.ElideRight, width)
+        )
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API
+        super().resizeEvent(event)
+        self._elide()
 
 
 def _scan_machine(*, threats: bool, peripherals: bool, allow=(),
@@ -157,20 +213,23 @@ class ExamSelectPage(QWidget):
         # bo'lishi mumkin - tekshiruv esa SO'RALGAN imtihonga
         # tegishli bo'lishi kerak, ekranda ko'rinayotganiga emas.
         self._pending_exam = None
+        #: "Mashina tanilmadi" dialogi (bitta nusxa, kerak bo'lganda).
+        self._machine_dialog = None
         self._setup_ui()
 
     # ------------------------------------------------------------------
     def _setup_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(48, 28, 48, 32)
-        root.setSpacing(20)
+        root.setContentsMargins(40, 22, 40, 22)
+        root.setSpacing(14)
 
-        self.header = WorkstationHeader()
+        # 1-bosqich oqim ko'rsatkichi bilan (`md3.FlowStepper`).
+        self.header = WorkstationHeader(step=1)
         self.header.reload_requested.connect(self.reload_all)
         root.addWidget(self.header)
 
         body = QHBoxLayout()
-        body.setSpacing(20)
+        body.setSpacing(16)
 
         # --- Chap: kameralar (kengroq ustun) ---
         # `show_reload=False` - yangilash sarlavhada, bitta umumiy
@@ -183,10 +242,32 @@ class ExamSelectPage(QWidget):
         # --- O'ng: tanlov ---
         body.addWidget(self._build_form_card(), 2)
 
-        root.addLayout(body)
+        root.addLayout(body, 1)
 
     def _build_form_card(self) -> Card:
-        card = Card("Test ma'lumotlari")
+        card = Card()
+        card.body.setContentsMargins(22, 18, 22, 20)
+        card.body.setSpacing(10)
+        # Soya FAQAT shu kartada: kamera kartasida jonli video bor va
+        # `QGraphicsEffect` uni har kadrda qayta chizardi (`md3.elevate`).
+        elevate(card)
+
+        top = QHBoxLayout()
+        top.setSpacing(12)
+        top.addWidget(IconBadge("exam", 40), 0, Qt.AlignmentFlag.AlignVCenter)
+        titles = QVBoxLayout()
+        titles.setSpacing(0)
+        title = QLabel("Test ma'lumotlari")
+        title.setStyleSheet(
+            "font-size: 17px; font-weight: 700; color: {};".format(COLORS["on_surface"])
+        )
+        titles.addWidget(title)
+        caption = QLabel("Imtihon turini va testni tanlang")
+        caption.setStyleSheet("font-size: 12px; color: {};".format(COLORS["on_surface_variant"]))
+        titles.addWidget(caption)
+        top.addLayout(titles, 1)
+        card.body.addLayout(top)
+        card.body.addSpacing(4)
 
         # Maydonlar YONMA-YON emas, USTMA-UST. Ikki select bir qatorda
         # turganda ularning yorlig'i qisqarib ("Test turi" / "Test")
@@ -194,38 +275,82 @@ class ExamSelectPage(QWidget):
         # tepadagi pastdagini boshqaradi.
         card.body.addWidget(self._field_label("Test turi"))
         self.type_combo = QComboBox()
+        self.type_combo.setStyleSheet(_COMBO_QSS)
         self.type_combo.currentIndexChanged.connect(self._on_type_changed)
         card.body.addWidget(self.type_combo)
 
-        card.body.addSpacing(8)
+        card.body.addSpacing(2)
         card.body.addWidget(self._field_label("Test"))
         self.exam_combo = QComboBox()
+        self.exam_combo.setStyleSheet(_COMBO_QSS)
         self.exam_combo.currentIndexChanged.connect(self._on_exam_changed)
         card.body.addWidget(self.exam_combo)
 
-        self.message = Notice()
-        card.body.addSpacing(6)
+        # TAYYORGARLIK: «Davom etish» nimaga bog'liqligi BIR QARASHDA.
+        # Ilgari faqat o'chiq tugma va bitta xabar bor edi - operator
+        # qolgan shartlar bajarilganmi, bilmasdi.
+        card.body.addSpacing(8)
+        card.body.addWidget(self._field_label("Tayyorgarlik"))
+        self._readiness = {}
+        for key, label in (
+            ("computer", "Kompyuter"),
+            ("camera", "Kamera tekshiruvi"),
+            ("exam", "Test"),
+        ):
+            row = _ReadinessRow(label)
+            self._readiness[key] = row
+            card.body.addWidget(row)
+
+        self.message = Notice(compact=True)
+        card.body.addSpacing(4)
         card.body.addWidget(self.message)
 
-        # Tugma qolgan bo'shliqning MARKAZIDA: tepada va pastda teng
-        # cho'zilma. Pastga mahkamlangan to'liq kenglikdagi tugma
-        # kartaning butun chetini egallab, oddiy navigatsiya qadamini
-        # sahifadagi eng og'ir elementga aylantirardi.
         card.body.addStretch(1)
 
-        button_row = QHBoxLayout()
-        button_row.addStretch(1)
-        self.continue_btn = QPushButton("DAVOM ETISH")
-        self.continue_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.continue_btn = RippleButton("DAVOM ETISH")
         self.continue_btn.setStyleSheet(primary_button_style(50))
-        self.continue_btn.setFixedWidth(_CONTINUE_WIDTH)
         self.continue_btn.clicked.connect(self._on_continue)
-        button_row.addWidget(self.continue_btn)
-        button_row.addStretch(1)
-        card.body.addLayout(button_row)
-
-        card.body.addStretch(1)
+        card.body.addWidget(self.continue_btn)
         return card
+
+    def _render_readiness(self, *, has_exam: bool, is_open: bool) -> None:
+        """
+        Tayyorgarlik ro'yxati — `_update_continue_state` bilan BIR XIL
+        shartlar (u qaror qiladi, bu faqat ko'rsatadi).
+        """
+        device = self._state.device
+        if not self._has_computer:
+            self._readiness["computer"].set_state("failed", "Bazada ro'yxatga olinmagan")
+        elif not self._machine_ok:
+            self._readiness["computer"].set_state("failed", "Tasdiqlanmadi")
+        else:
+            self._readiness["computer"].set_state(
+                "ready", device.computer_label or device.inventory_code or "Tanildi"
+            )
+
+        result = self.camera_panel.check_result
+        left = self._state.camera_check_left()
+        if not result:
+            required = policy_check.camera_check_required(self._state.config)
+            self._readiness["camera"].set_state(
+                "pending", "Tekshirilmagan" + ("" if required else " (ixtiyoriy)")
+            )
+        elif left is not None and left <= 0:
+            self._readiness["camera"].set_state("warning", "Muddati tugagan — qayta tekshiring")
+        elif not result.get("can_start", True):
+            self._readiness["camera"].set_state("failed", "Tekshiruvdan o'tmadi")
+        elif result.get("status") == "warning":
+            self._readiness["camera"].set_state("warning", "O'tdi, ogohlantirishlar bilan")
+        else:
+            self._readiness["camera"].set_state("ready", "Tekshiruvdan o'tdi")
+
+        exam = self.exam_combo.currentData()
+        if not has_exam:
+            self._readiness["exam"].set_state("pending", "Ochiq imtihon yo'q")
+        elif not is_open:
+            self._readiness["exam"].set_state("warning", "Kirish oynasi yopiq")
+        else:
+            self._readiness["exam"].set_state("ready", exam.name if exam else "Tanlandi")
 
     @staticmethod
     def _field_label(text: str) -> QLabel:
@@ -294,7 +419,7 @@ class ExamSelectPage(QWidget):
         """Handshake'dan keyin chaqiriladi - ro'yxatlarni to'ldiradi."""
         device = self._state.device
 
-        self.header.set_subtitle("1-qadam · Imtihonni tanlang")
+        self.header.set_subtitle("Kameralarni tekshiring va testni tanlang")
         self._render_context()
         if not self._identity:
             self._resolve_identity()
@@ -360,13 +485,19 @@ class ExamSelectPage(QWidget):
         if self._machine_ok:
             return
         device = self._state.device
-        QMessageBox.warning(
-            self.window(),
+        # MD3 dialog (`QMessageBox` emas - tizim oynasi kiosk uslubidan
+        # chiqib turardi va CLAUDE.md qoidasi).
+        if self._machine_dialog is None:
+            from ui.dialogs.notice_dialog import NoticeDialog
+
+            self._machine_dialog = NoticeDialog(self.window())
+        self._machine_dialog.show_notice(
             "Mashina tanilmadi",
             "{}\n\nBu kompyuterda imtihonni boshlab bo'lmaydi.".format(
                 device.machine_message
                 or "Bu mashina bazadagi ro'yxat bilan mos kelmadi."
             ),
+            kind="error",
         )
 
     def _resolve_identity(self) -> None:
@@ -497,6 +628,7 @@ class ExamSelectPage(QWidget):
         # `exam/config/` so'rovi ketardi.
         if self._pending_exam is None:
             self.continue_btn.setEnabled(bool(allowed))
+        self._render_readiness(has_exam=has_exam, is_open=is_open)
 
         if not self._has_computer:
             self.message.show_message(

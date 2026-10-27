@@ -1153,3 +1153,80 @@ class AuditLog(models.Model):
                 fields=["object_type", "object_id", "-created_at"], name="idx_audit_object"
             ),
         ]
+
+
+class OfferConsent(models.Model):
+    """
+    Talabgorning ofertaga (shaxsga doir ma'lumotlar bilan ishlashga) roziligi.
+
+    SESSIYADAN OLDIN yoziladi: rozilik JSHSHIR tekshiruvidan keyin, yuz
+    tekshiruvidan OLDIN olinadi — FaceID biometrik ma'lumotni (kadr,
+    hujjat rasmi) qayta ishlaydi va unga rozilikdan oldin kirishib
+    bo'lmaydi. Shuning uchun qator `FaceVerificationLog` kabi kontekstni
+    (`pinfl`, `exam`, `zone`) O'ZIDA saqlaydi; sessiya ochilgach `session`
+    bog'lanadi (`session.verify_initial_face`).
+
+    MATN O'ZGARMAS NUSXAGA bog'langan (`controls.OfferRevision`, `PROTECT`)
+    va client ko'rsatgan matnning izi (`content_hash`) alohida yoziladi:
+    "talabgorga qaysi matn ko'rsatildi?" degan savolga keyingi tahrirlar
+    ham, ofertaning o'chirilishi ham ta'sir qilmaydi.
+
+    ANONIMLASHTIRILMAYDI (`ExamSession.anonymize_after` dan farqli):
+    rozilikning o'zi — qayta ishlashning huquqiy asosi va u ma'lumotdan
+    UZOQROQ yashashi kerak, aks holda "nima asosda?" degan savolga javob
+    qolmasdi.
+    """
+
+    id = models.BigAutoField(primary_key=True)
+    revision = models.ForeignKey(
+        "controls.OfferRevision", on_delete=models.PROTECT, related_name="consents"
+    )
+    pinfl = models.CharField(max_length=14, db_index=True)
+    exam = models.ForeignKey(
+        "exams.Exam", on_delete=models.PROTECT, related_name="offer_consents",
+        null=True, blank=True,
+    )
+    schedule = models.ForeignKey(
+        "exams.ExamSchedule", on_delete=models.SET_NULL, related_name="offer_consents",
+        null=True, blank=True,
+    )
+    #: Yuz tekshiruvidan o'tib sessiya ochilganda to'ldiriladi.
+    session = models.ForeignKey(
+        "proctoring.ExamSession", on_delete=models.SET_NULL, related_name="offer_consents",
+        null=True, blank=True,
+    )
+    zone = models.ForeignKey(
+        "regions.Zone", on_delete=models.SET_NULL, related_name="offer_consents",
+        null=True, blank=True,
+    )
+    computer = models.ForeignKey(
+        "devices.Computer", on_delete=models.SET_NULL, related_name="offer_consents",
+        null=True, blank=True,
+    )
+    device = models.ForeignKey(
+        "devices.DeviceToken", on_delete=models.SET_NULL, related_name="offer_consents",
+        null=True, blank=True,
+    )
+    #: Client'ga kirgan xodim — rozilik uning ekranida, uning ishtirokida olindi.
+    operator = models.ForeignKey(
+        "users.User", on_delete=models.SET_NULL, related_name="offer_consents",
+        null=True, blank=True,
+    )
+    operator_username = models.CharField(max_length=255, blank=True, default="")
+    ip_address = models.GenericIPAddressField(blank=True, null=True)
+    content_hash = models.CharField(max_length=64)
+    accepted_at = models.DateTimeField(db_index=True)
+
+    def __str__(self):
+        return f"Rozilik<{self.pk}> v{self.revision_id} {self.accepted_at:%Y-%m-%d %H:%M}"
+
+    class Meta:
+        verbose_name = _("Ofertaga rozilik")
+        verbose_name_plural = _("Ofertaga roziliklar")
+        db_table = "offer_consent"
+        ordering = ["-accepted_at"]
+        indexes = [
+            # "Shu talabgor bu matnga bugun rozi bo'lganmi?" — qayta
+            # qidiruvda (FaceID'dan qaytgan talabgor) qadam takrorlanmaydi.
+            models.Index(fields=["pinfl", "revision", "-accepted_at"], name="idx_consent_pinfl_rev"),
+        ]

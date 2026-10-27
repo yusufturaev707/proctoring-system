@@ -1,4 +1,4 @@
-from django.db.models import Prefetch, Q
+from django.db.models import Count, Prefetch, Q
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import viewsets
 from rest_framework.decorators import action
@@ -8,6 +8,7 @@ from rest_framework.response import Response
 
 from apps.common.mixins import AuditLogMixin, PermissionRequiredMixin, SoftDeleteRestoreMixin
 from apps.common.permissions import HasRolePermission
+from apps.controls import offers as offer_services
 from apps.controls import services
 from apps.controls.api.v1.serializers import (
     AllowedPublicIpSerializer,
@@ -17,6 +18,8 @@ from apps.controls.api.v1.serializers import (
     EventRiskWeightSerializer,
     HotKeyboardKeyListSerializer,
     ModelVersionSerializer,
+    OfferRevisionSerializer,
+    OfferSerializer,
     ProctoringPolicySerializer,
     RdpObjectListSerializer,
     SettingSerializer,
@@ -29,10 +32,12 @@ from apps.controls.models import (
     EventRiskWeight,
     HotKeyboardKey,
     ModelVersion,
+    Offer,
     ProctoringPolicy,
     RdpObject,
     Setting,
 )
+from apps.exams.models import Exam
 
 
 class ControlsBaseViewSet(PermissionRequiredMixin, AuditLogMixin, viewsets.ModelViewSet):
@@ -118,6 +123,71 @@ class SettingViewSet(SoftDeleteRestoreMixin, ControlsBaseViewSet):
         setting.save()
         self.log_audit("setting_change", setting, {"action": "activate"})
         return Response(SettingSerializer(setting).data)
+
+
+class OfferViewSet(SoftDeleteRestoreMixin, ControlsBaseViewSet):
+    """
+    Oferta matnlari. Respublika darajasida (`republic_write_only`): test
+    barcha viloyatlar uchun bitta, uning ofertasi ham.
+
+    Ro'yxatda HTML ham qaytadi — sahifa uni ko'rish oynasida chizadi va
+    tahrirlash formasini qo'shimcha so'rovsiz ochadi (yozuvlar soni kam).
+    """
+
+    queryset = (
+        Offer.objects.select_related("updated_by")
+        .prefetch_related(
+            Prefetch(
+                "exams",
+                queryset=Exam.objects.alive().only("id", "name", "is_active", "offer_id").order_by("name"),
+                to_attr="alive_exams",
+            )
+        )
+        # `distinct` — test bo'yicha filtr/qidiruv JOIN qo'shadi va sanoqni ko'paytirardi.
+        .annotate(consents_count=Count("revisions__consents", distinct=True))
+    )
+    serializer_class = OfferSerializer
+    audit_object_type = "Offer"
+    filterset_fields = ["is_active", "exams"]
+    search_fields = ["title", "exams__name"]
+    ordering_fields = ["updated_at", "title", "version"]
+
+    def get_queryset(self):
+        return self.apply_deleted_filter(super().get_queryset())
+
+    def _audit_meta(self, offer, **extra) -> dict:
+        meta = {"version": offer.version, "is_active": offer.is_active, **extra}
+        changes = getattr(offer, "exam_changes", None)
+        if changes and (changes["added"] or changes["removed"]):
+            meta["exams"] = changes
+        return meta
+
+    def perform_create(self, serializer):
+        offer = serializer.save()
+        self.log_audit("create", offer, self._audit_meta(offer))
+
+    def perform_update(self, serializer):
+        before = serializer.instance.version
+        offer = serializer.save()
+        # Auditda matnning o'zi YO'Q (u `OfferRevision` da); versiya
+        # o'zgargani "matn tahrirlandi" ni, `exams` — qaysi testlar
+        # qo'shilgani/ajratilgani (va qaysi ofertadan ko'chgani) ni aytadi.
+        self.log_audit("update", offer, self._audit_meta(offer, new_revision=offer.version != before))
+
+    def perform_destroy(self, instance):
+        offer_services.delete_offer(instance)
+        self.log_audit("delete", instance, {"version": instance.version})
+
+    @action(detail=True, methods=["get"])
+    def revisions(self, request, pk=None):
+        """Versiyalar tarixi — har biriga nechta rozilik berilgani bilan."""
+        offer = self.get_object()
+        queryset = (
+            offer.revisions.select_related("created_by")
+            .annotate(consents_count=Count("consents"))
+            .order_by("-version")
+        )
+        return Response(OfferRevisionSerializer(queryset, many=True).data)
 
 
 class ClientExitPasswordViewSet(ControlsBaseViewSet):
