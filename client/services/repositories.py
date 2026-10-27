@@ -304,27 +304,6 @@ class ProctoringRepository:
         # (`ApiClient.request`, `error.details.scope`).
         return self._api.post("/client/candidate/lookup/", json_body=body, gate=False)
 
-    def accept_offer(self, *, challenge: str, revision_id: int, content_hash: str) -> dict:
-        """
-        Talabgor ofertaga rozi bo'ldi — yuz tekshiruvidan OLDIN.
-
-        `revision_id` va `content_hash` JSHSHIR javobidan, o'zgartirilmasdan:
-        rozilik aynan ekranda ko'rsatilgan matnga yoziladi. Takroriy
-        so'rov yangi yozuv yaratmaydi (server idempotent), shuning uchun
-        tarmoq xatosida qayta yuborish xavfsiz.
-
-        Qaytadi: `{"consent_id", "revision_id", "accepted_at"}`.
-        """
-        return self._api.post(
-            "/client/offer/accept/",
-            json_body={
-                "challenge": challenge,
-                "revision_id": int(revision_id),
-                "content_hash": content_hash,
-            },
-            idempotent=True,
-        )
-
     # --- 3. Kirishdagi FaceID ----------------------------------------
     def verify_face(self, *, challenge: str, embedding: Optional[list] = None,
                     score: Optional[int] = None, faces_detected: int = 1,

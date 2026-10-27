@@ -23,7 +23,6 @@ from apps.proctoring.api.v1.client_views import (
     HandshakeView,
     HeartbeatView,
     IdentityConfirmView,
-    OfferAcceptView,
     PeriodicFaceView,
     PresenceView,
     ProctoringStartView,
@@ -51,7 +50,6 @@ urlpatterns = [
     path("exam/config/", ExamConfigView.as_view(), name="client-exam-config"),
     path("candidate/lookup/", CandidateLookupView.as_view(), name="client-candidate-lookup"),
     # Ofertaga rozilik — yuz tekshiruvidan OLDIN (`face/*` uni talab qiladi).
-    path("offer/accept/", OfferAcceptView.as_view(), name="client-offer-accept"),
     path("face/verify/", FaceVerifyView.as_view(), name="client-face-verify"),
     # Mos kelmagan urinish: sessiya yaratmaydi, challenge'ni sarflamaydi.
     path("face/attempt/", FaceAttemptView.as_view(), name="client-face-attempt"),

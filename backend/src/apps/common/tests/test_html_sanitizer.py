@@ -8,7 +8,7 @@ bilan birga "nima HECH QACHON o'tmaydi" ni ham tekshiradi.
 
 from django.test import SimpleTestCase
 
-from apps.common.html_sanitizer import content_hash, html_text, sanitize_html
+from apps.common.html_sanitizer import html_text, sanitize_html
 
 
 class SanitizeHtmlTests(SimpleTestCase):
@@ -60,8 +60,3 @@ class SanitizeHtmlTests(SimpleTestCase):
 class TextAndHashTests(SimpleTestCase):
     def test_html_text_strips_tags_and_collapses_space(self):
         self.assertEqual(html_text("<h1>Sarlavha</h1>\n<p>  bir   ikki </p>"), "Sarlavha bir ikki")
-
-    def test_hash_is_stable_sha256(self):
-        self.assertEqual(len(content_hash("<p>x</p>")), 64)
-        self.assertEqual(content_hash("<p>x</p>"), content_hash("<p>x</p>"))
-        self.assertNotEqual(content_hash("<p>x</p>"), content_hash("<p>y</p>"))

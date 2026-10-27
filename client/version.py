@@ -23,7 +23,7 @@ Qt, onnxruntime - yuklamasdan).
 #: Semantik versiya. Windows resursi uchun faqat boshidagi raqamlar
 #: olinadi ("1.2.0-rc1" -> 1.2.0.0), shuning uchun qo'shimcha
 #: (`-rc1`) ixtiyoriy va faqat ko'rsatish uchun.
-__version__ = "1.0.0-rc5"
+__version__ = "1.0.1-rc1"
 
 APP_NAME = "BBA Proctor"
 

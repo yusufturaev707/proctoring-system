@@ -23,9 +23,9 @@ import { useExamOfferOptions, useExamOptions } from './shared'
  * bir nechta testga xizmat qiladi. Shu formadagi «Testlar» va imtihon
  * formasidagi «Oferta» BIR XIL bog'lanishni tahrirlaydi.
  *
- * VERSIYALAR. Matn yoki sarlavha har o'zgarganda server yangi o'zgarmas
- * versiya yaratadi; rozilik shu versiyaga yoziladi. Ya'ni tahrirlash
- * berilgan roziliklarni "boshqa matnga" aylantirmaydi.
+ * ROZILIK SAQLANMAYDI: client ofertani har JSHSHIR qidiruvida ko'rsatadi va
+ * «Roziman» siz davom ettirmaydi. Bazada faqat shu sahifadagi tahrirlar
+ * qoladi — har matn/sarlavha o'zgarishi yangi o'zgarmas versiya.
  *
  * Testga biriktirilmagan yoki nofaol oferta talabgorga ko'rsatilmaydi.
  */
@@ -62,7 +62,7 @@ const buildFields = (examOptions: Option[]): FieldDef[] => [
   {
     name: 'content', label: 'Matn', type: 'custom', required: true, colSpan: 12, section: 'Hujjat',
     emptyValue: '',
-    helperText: 'Saqlanganda matn yangi versiya bo‘lib yoziladi; avval berilgan roziliklar eski versiyada qoladi',
+    helperText: 'Saqlanganda matn yangi versiya bo‘lib yoziladi — keyingi JSHSHIR tekshiruvidan boshlab talabgorlar shu matnni ko‘radi',
     render: ({ value, onChange, disabled, error }: CustomFieldProps) => (
       <RichTextEditor value={value || ''} onChange={onChange} disabled={disabled} error={Boolean(error)} />
     ),
@@ -116,7 +116,7 @@ export default function OffersPage() {
         defaultSort={{ field: 'updated_at', sort: 'desc' }}
         defaults={{ title: '', content: '', exams: [], is_active: true }}
         getRowLabel={(row) => row?.title}
-        deleteDescription="Testga biriktirilgan ofertani o‘chirib bo‘lmaydi — avval testlardan ajrating. Berilgan roziliklar va versiyalar saqlanib qoladi; yozuvni «Savat» dan tiklash mumkin."
+        deleteDescription="Testga biriktirilgan ofertani o‘chirib bo‘lmaydi — avval testlardan ajrating. Versiyalar tarixi saqlanib qoladi; yozuvni «Savat» dan tiklash mumkin."
         formMaxWidth="lg"
         formIcon={<GavelIcon />}
         formTitle={(isEdit, row) => (isEdit ? `«${row?.title}» — tahrirlash` : 'Yangi oferta')}
@@ -161,15 +161,6 @@ export default function OffersPage() {
           {
             field: 'version', headerName: 'Versiya', width: 90, align: 'center', headerAlign: 'center',
             renderCell: (params) => <Box sx={{ ...cell, justifyContent: 'center' }}>v{params.value}</Box>,
-          },
-          {
-            field: 'consents_count', headerName: 'Roziliklar', width: 110, sortable: false,
-            align: 'right', headerAlign: 'right',
-            renderCell: (params) => (
-              <Box sx={{ ...cell, justifyContent: 'flex-end', fontVariantNumeric: 'tabular-nums' }}>
-                {(params.value ?? 0).toLocaleString('uz')}
-              </Box>
-            ),
           },
           {
             field: 'updated_at', headerName: 'Oxirgi tahrir', width: 200,

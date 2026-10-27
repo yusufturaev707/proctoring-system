@@ -1,7 +1,7 @@
 """
 Oferta API'si (panel): versiyalash, testga biriktirish, tozalash.
 
-Asosiy kafolat вЂ” ROZILIK BERILGAN MATN O'ZGARMAYDI: tahrir yangi
+Asosiy kafolat — TAHRIRLAR TARIXI UZILMAYDI: matn tahriri yangi
 `OfferRevision` yaratadi, eskisi joyida qoladi.
 """
 
@@ -41,7 +41,6 @@ class OfferApiTests(TestCase):
         self.assertEqual(revision.version, 1)
         self.assertEqual(revision.content, TEXT)
         self.assertEqual(revision.created_by, self.staff)
-        self.assertEqual(len(revision.content_hash), 64)
         self.assertTrue(AuditLog.objects.filter(object_type="Offer", action="create").exists())
 
     def test_content_edit_creates_new_revision_and_keeps_old(self):
@@ -64,7 +63,7 @@ class OfferApiTests(TestCase):
         self.assertEqual(Offer.objects.get().version, 1)
 
     def test_many_offers_can_be_active(self):
-        """Har testning o'z ofertasi вЂ” "bitta amaldagi" cheklovi yo'q."""
+        """Har testning o'z ofertasi — "bitta amaldagi" cheklovi yo'q."""
         first = self._create()
         second = self._create()
         self.assertEqual(Offer.objects.filter(is_active=True).count(), 2)
@@ -145,11 +144,11 @@ class OfferApiTests(TestCase):
         self.assertEqual(response.status_code, 204)
         offer = Offer.objects.get(pk=data["id"])
         self.assertIsNotNone(offer.deleted_at)
-        # Versiya joyida вЂ” unga berilgan roziliklar yetim qolmaydi.
+        # Tahrirlar tarixi joyida qoladi.
         self.assertTrue(OfferRevision.objects.filter(offer=offer).exists())
 
     def test_delete_refused_while_assigned(self):
-        """O'chirish testdan rozilik qadamini jimgina olib tashlamasin."""
+        """O'chirish testdan oferta qadamini jimgina olib tashlamasin."""
         exam = factories.make_exam(name="Kimyo")
         data = self._create(exams=[exam.pk])
         response = self.client.delete(reverse("offer-detail", args=[data["id"]]))

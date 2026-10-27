@@ -170,11 +170,8 @@ class CandidatePage(QWidget):
         #: byudjetini sarflardi va ekrandagi natijani hech narsa
         #: o'zgartirmasdan qaytadan chizardi.
         self._found_pinfl = ""
-        #: Ochiq oferta dialogi (`None` — yopiq) va uni yopgan sabab: server
-        #: kodi (`offer_outdated`, `session_not_found`) bo'lsa talabgor
-        #: qaytadan qidiriladi.
+        #: Ochiq oferta dialogi (`None` — yopiq).
         self._offer_dialog = None
-        self._offer_restart = ""
         self._setup_ui()
         network_status().changed.connect(self._on_network_changed)
         self._check_timer = QTimer(self)
@@ -572,7 +569,6 @@ class CandidatePage(QWidget):
         if self._offer_dialog is not None:
             # Sahifa yangi talabgor uchun tozalanmoqda — eski talabgorning
             # ofertasi ekranda qolmasin.
-            self._offer_dialog.set_busy(False)
             self._offer_dialog.reject()
         self._found_pinfl = ""
         self.pinfl_input.clear()
@@ -914,7 +910,8 @@ class CandidatePage(QWidget):
         if candidate is None:
             return
         # Rozilik YUZ TEKSHIRUVIDAN OLDIN: FaceID biometrik ma'lumotni
-        # serverga yuboradi, server esa rozilikgacha uni rad etadi.
+        # serverga yuboradi. Rozilik serverga yuborilmaydi — «Roziman»
+        # siz bu qadamdan o'tib bo'lmaydi, xolos.
         if candidate.offer is not None and not candidate.offer.accepted:
             self._open_offer(candidate)
             return
@@ -941,12 +938,12 @@ class CandidatePage(QWidget):
         if offer is None:
             self.offer_badge.setVisible(False)
             return
-        self.offer_badge.setText("Rozilik berilgan" if offer.accepted else "Rozilik kerak")
+        self.offer_badge.setText("Rozilik berildi" if offer.accepted else "Rozilik kerak")
         self.offer_badge.setStyleSheet(badge_style("success" if offer.accepted else "info"))
         self.offer_badge.setToolTip(
-            "Talabgor «{}» ({}-versiya) bilan tanishib, shaxsga doir ma'lumotlarini "
+            "Talabgor «{}» bilan tanishib, shaxsga doir ma'lumotlarini "
             "qayta ishlashga rozilik {}".format(
-                offer.title or "Oferta", offer.version, "bergan" if offer.accepted else "berishi kerak"
+                offer.title or "Oferta", "berdi" if offer.accepted else "berishi kerak"
             )
         )
         self.offer_badge.setVisible(True)
@@ -954,7 +951,6 @@ class CandidatePage(QWidget):
     def _open_offer(self, candidate: Candidate) -> None:
         if self._offer_dialog is not None:
             return
-        self._offer_restart = ""
         self.message.clear_message()
         dialog = OfferDialog(
             self.window(),
@@ -962,78 +958,23 @@ class CandidatePage(QWidget):
             candidate_name=candidate.display_name,
             masked_pinfl=candidate.masked_pinfl,
         )
-        dialog.confirmed.connect(self._accept_offer)
         dialog.finished.connect(self._on_offer_closed)
         self._offer_dialog = dialog
         # `open()` — `exec()` emas: ichki hodisa sikli kerak emas, natija
         # `finished` signalida keladi.
         dialog.open()
 
-    def _accept_offer(self) -> None:
-        candidate = self._state.candidate
-        if candidate is None or candidate.offer is None:
-            return
-        worker = ApiWorker(
-            self._repo.accept_offer,
-            challenge=candidate.challenge,
-            revision_id=candidate.offer.revision_id,
-            content_hash=candidate.offer.content_hash,
-            parent=self,
-        )
-        worker.succeeded.connect(self._on_offer_accepted)
-        worker.failed.connect(self._on_offer_failed)
-        self._workers.run(worker)
-
-    def _on_offer_accepted(self, payload) -> None:
-        candidate = self._state.candidate
-        dialog = self._offer_dialog
-        if candidate is None or candidate.offer is None or dialog is None:
-            return
-        # Vaqt serverniki (u bayonnomaga yozilgan); javobsiz holatda ham
-        # bayroq qo'yiladi — rozilik serverda yozildi (201).
-        candidate.offer.accepted_at = str((payload or {}).get("accepted_at") or "accepted")
-        dialog.set_busy(False)
-        dialog.accept()
-
-    def _on_offer_failed(self, message: str, code: str) -> None:
-        dialog = self._offer_dialog
-        if dialog is None:
-            return
-        log.info("Ofertaga rozilik rad etildi (%s): %s", code or "-", message)
-        if code in ("offer_outdated", "session_not_found"):
-            # Bu talabgor uchun berilgan challenge/matn endi yaroqsiz —
-            # dialogda qayta urinishning ma'nosi yo'q, yangisini faqat
-            # JSHSHIR tekshiruvi beradi.
-            self._offer_restart = code
-            dialog.set_busy(False)
-            dialog.reject()
-            return
-        dialog.show_error(message, title="Rozilik saqlanmadi")
-
     def _on_offer_closed(self, result: int) -> None:
         dialog, self._offer_dialog = self._offer_dialog, None
         if dialog is not None:
             dialog.deleteLater()
         candidate = self._state.candidate
-        if candidate is None:
+        if candidate is None or candidate.offer is None:
             return
-        if self._offer_restart:
-            restart, self._offer_restart = self._offer_restart, ""
-            # Karta yopiladi va «TEKSHIRISH» qaytadi — operator bitta bosish
-            # bilan yangi challenge va (kerak bo'lsa) yangi matnni oladi.
-            self._found_pinfl = ""
-            self.result_card.setVisible(False)
-            self._update_pinfl_state(self.pinfl_input.text().strip())
-            self.message.show_message(
-                "«TEKSHIRISH» ni qayta bosing — talabgor yangilangan matn bilan tanishadi."
-                if restart == "offer_outdated"
-                else "«TEKSHIRISH» ni qayta bosing.",
-                "warning",
-                title="Oferta yangilangan" if restart == "offer_outdated" else "Tekshiruv muddati tugagan",
-            )
-            self.lookup_btn.setFocus()
-            return
-        if result == QDialog.DialogCode.Accepted and candidate.offer is not None and candidate.offer.accepted:
+        if result == QDialog.DialogCode.Accepted:
+            # Faqat shu qidiruv uchun: keyingi JSHSHIR qidiruvi yangi
+            # `Candidate` beradi va oferta yana so'raladi.
+            candidate.offer.accepted = True
             self._apply_offer(candidate)
             self.candidate_ready.emit(candidate)
             return

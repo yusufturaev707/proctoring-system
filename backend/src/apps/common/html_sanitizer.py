@@ -27,7 +27,6 @@ QOIDALAR:
 
 from __future__ import annotations
 
-import hashlib
 import re
 from html import escape
 from html.parser import HTMLParser
@@ -176,14 +175,3 @@ def html_text(html: str) -> str:
     parser.feed(html or "")
     parser.close()
     return " ".join(" ".join(parser.parts).split())
-
-
-def content_hash(html: str) -> str:
-    """
-    Matn izi (SHA-256, hex).
-
-    Rozilik qatori AYNAN qaysi matnga berilganini shu bilan bog'laydi:
-    client ko'rsatgan matnning izini qaytaradi va server uni versiyadagi
-    iz bilan solishtiradi.
-    """
-    return hashlib.sha256((html or "").encode("utf-8")).hexdigest()

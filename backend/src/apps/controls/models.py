@@ -986,15 +986,14 @@ class Offer(SoftDeleteModel):
     Bog'lanish imtihon tomonida — imtihonda ofertaning bittadan ortig'i
     bo'lmasligini bazaning o'zi kafolatlaydi, bitta matn esa bir nechta
     testga xizmat qila oladi. Testda oferta yo'q yoki u nofaol
-    (`is_active`) bo'lsa rozilik so'ralmaydi
+    (`is_active`) bo'lsa client uni ko'rsatmaydi
     (`controls.offers.current_revision`).
 
-    MATN TAHRIRLANADI, ROZILIK ESA O'ZGARMAS NUSXAGA BERILADI. Har matn
-    yoki sarlavha o'zgarishi yangi `OfferRevision` yaratadi
-    (`controls.offers.save_offer`) va `version` oshadi. Rozilik qatori
-    (`proctoring.OfferConsent`) versiyaga bog'lanadi: apellyatsiyada
-    "talabgor AYNAN qaysi matnga rozi bo'lgan?" degan savolga keyingi
-    tahrirlar ta'sir qilmaydi.
+    ROZILIK SAQLANMAYDI — client har JSHSHIR qidiruvida matnni ko'rsatadi
+    va «Roziman» siz davom ettirmaydi. Bazada faqat paneldagi TAHRIRLAR
+    qoladi: har matn yoki sarlavha o'zgarishi yangi `OfferRevision`
+    yaratadi (`controls.offers.save_offer`) va `version` oshadi — "qaysi
+    kuni talabgorlarga qanday matn ko'rsatilgan?" degan savolga javob.
 
     `content` — TOZALANGAN HTML (`common.html_sanitizer`), xom emas.
     """
@@ -1023,20 +1022,16 @@ class Offer(SoftDeleteModel):
 
 class OfferRevision(models.Model):
     """
-    Oferta matnining O'ZGARMAS nusxasi — rozilik aynan shunga beriladi.
+    Paneldagi bitta tahrir — oferta matnining O'ZGARMAS nusxasi.
 
-    Qator hech qachon yangilanmaydi va o'chirilmaydi (`PROTECT`): unga
-    bog'langan rozilik bo'lmasa ham, u "qaysi kuni qanday matn amalda
-    edi" degan savolning yagona javobi.
+    Qator hech qachon yangilanmaydi va o'chirilmaydi (`PROTECT`): u
+    "qaysi kuni qanday matn amalda edi" degan savolning yagona javobi.
     """
 
     offer = models.ForeignKey(Offer, on_delete=models.PROTECT, related_name="revisions")
     version = models.PositiveIntegerField(_("Versiya"))
     title = models.CharField(_("Sarlavha"), max_length=200)
     content = models.TextField(_("Matn (HTML)"))
-    #: `common.html_sanitizer.content_hash(content)` — client ko'rsatgan
-    #: matnni shu bilan tasdiqlaydi (`session.accept_offer`).
-    content_hash = models.CharField(_("Matn izi"), max_length=64)
     created_by = models.ForeignKey(
         "users.User", on_delete=models.SET_NULL, blank=True, null=True, related_name="+",
     )

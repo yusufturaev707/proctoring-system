@@ -346,18 +346,6 @@ check("challenge qaytdi", bool(challenge))
 check("JSHSHIR niqoblangan",
       "*" in data.get("data", {}).get("candidate", {}).get("masked_pinfl", ""))
 
-# Ofertaga rozilik — panelda amaldagi oferta bo'lsa (va profil talab qilsa)
-# yuz tekshiruvi undan OLDIN yopiq (`offer_not_accepted`).
-offer = data.get("data", {}).get("offer")
-if offer and not offer.get("accepted_at"):
-    # Alohida nom: pastdagi JSHSHIR validatsiyasi `path` (lookup) ni ishlatadi.
-    offer_path = "/api/v1/client/offer/accept/"
-    resp = client.post(offer_path, data=json.dumps({"challenge": challenge,
-                                                    "revision_id": offer["revision_id"],
-                                                    "content_hash": offer["content_hash"]}),
-                       content_type="application/json", **signed(offer_path))
-    check("ofertaga rozilik 201", resp.status_code == 201, f"{resp.status_code} {body(resp)}")
-
 # Noto'g'ri JSHSHIR validatsiyasi
 resp = client.post(path, data=json.dumps({"pinfl": "123", "exam_id": exam.pk}),
                    content_type="application/json", **signed(path))

@@ -1,4 +1,4 @@
-from django.db.models import Count, Prefetch, Q
+from django.db.models import Prefetch, Q
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import viewsets
 from rest_framework.decorators import action
@@ -146,8 +146,6 @@ class OfferViewSet(SoftDeleteRestoreMixin, ControlsBaseViewSet):
                 to_attr="alive_exams",
             )
         )
-        # `distinct` — test bo'yicha filtr/qidiruv JOIN qo'shadi va sanoqni ko'paytirardi.
-        .annotate(consents_count=Count("revisions__consents", distinct=True))
     )
     serializer_class = OfferSerializer
     audit_object_type = "Offer"
@@ -183,13 +181,9 @@ class OfferViewSet(SoftDeleteRestoreMixin, ControlsBaseViewSet):
 
     @action(detail=True, methods=["get"])
     def revisions(self, request, pk=None):
-        """Versiyalar tarixi — har biriga nechta rozilik berilgani bilan."""
+        """Tahrirlar tarixi — har saqlangan matn o'z versiyasi bilan."""
         offer = self.get_object()
-        queryset = (
-            offer.revisions.select_related("created_by")
-            .annotate(consents_count=Count("consents"))
-            .order_by("-version")
-        )
+        queryset = offer.revisions.select_related("created_by").order_by("-version")
         return Response(OfferRevisionSerializer(queryset, many=True).data)
 
 

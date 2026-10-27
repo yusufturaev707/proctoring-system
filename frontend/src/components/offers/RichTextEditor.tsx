@@ -142,8 +142,12 @@ export default function RichTextEditor({
 
   const state = useEditorState({ editor, selector: ({ editor: current }) => readState(current) }) ?? EMPTY_STATE
 
+  // `emitUpdate: false` SHART: `setEditable` standartda `update` chiqaradi va
+  // `onUpdate` o'rnatish paytidagi BO'SH hujjat bilan `onChange('')` ni
+  // chaqirardi — tahrirlash formasi to'ldirgan matnni bosib, maydon bo'sh
+  // ochilardi (o'zgarmagan forma ham "saqlanmagan" bo'lib qolardi).
   useEffect(() => {
-    editor?.setEditable(!disabled)
+    if (editor && editor.isEditable === disabled) editor.setEditable(!disabled, false)
   }, [editor, disabled])
 
   // Tashqaridan kelgan qiymat (forma boshqa yozuv bilan ochildi). O'zimiz

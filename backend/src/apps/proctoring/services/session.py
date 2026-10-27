@@ -38,8 +38,6 @@ from apps.common.exceptions import (
     IdentityAlreadyConfirmed,
     IdentityNotConfirmed,
     MachineNotVerified,
-    OfferNotAccepted,
-    OfferOutdated,
     SessionAlreadyActive,
     SessionNotFound,
 )
@@ -53,7 +51,6 @@ from apps.common.utils.crypto import (
 from apps.proctoring.models import (
     ExamSession,
     FaceVerificationLog,
-    OfferConsent,
     ProctoringEvent,
 )
 from apps.controls import offers as offer_services
@@ -162,10 +159,9 @@ def lookup_candidate(
         if existing.device_id and existing.device_id != device.pk:
             raise SessionAlreadyActive()
 
-    # OFERTA — platformadan KEYIN (topilmagan talabgorga matn kerak emas),
-    # challenge'dan OLDIN (talab pending'ga yoziladi va FaceID uni
-    # tekshiradi). Matn imtihonniki (`Exam.offer`).
-    offer_revision, offer_consent = _offer_for_candidate(pinfl=pinfl, exam=exam)
+    # OFERTA — platformadan KEYIN (topilmagan talabgorga matn kerak emas).
+    # Matn imtihonniki (`Exam.offer`) va HAR qidiruvda qaytadan beriladi.
+    offer_revision = offer_services.current_revision(exam)
 
     # Talabgor ma'lumoti challenge bilan birga tashiladi — sessiya
     # FaceID'dan keyin yaratiladi va shu ma'lumot unga MUZLATIB yoziladi.
@@ -212,11 +208,6 @@ def lookup_candidate(
             # boshqa joyga ko'chirilsa ham bayonnomada qayerda
             # o'tirgani qoladi.
             "seat": seat,
-            # `offer_revision_id` bor, `offer_consent_id` yo'q — FaceID
-            # yopiq (`_require_offer_consent`). Rozilik `accept_offer` da
-            # yoki shu yerda (bugungi rozilik qayta ishlatilsa) yoziladi.
-            "offer_revision_id": getattr(offer_revision, "pk", None),
-            **_consent_pending_fields(offer_consent),
         },
     )
 
@@ -293,140 +284,11 @@ def lookup_candidate(
             if schedule is not None
             else None
         ),
-        # `None` — bu imtihonda rozilik talab qilinmaydi (profil yoki
-        # amaldagi oferta yo'q). `accepted_at` bor — talabgor shu matnga
-        # bugun rozi bo'lgan, client dialogni qayta ochmaydi.
-        "offer": (
-            {
-                **offer_services.client_payload(offer_revision),
-                "accepted_at": offer_consent.accepted_at if offer_consent else None,
-            }
-            if offer_revision is not None
-            else None
-        ),
-    }
-
-
-#: Bugungi rozilik shu oyna ichida qayta ishlatiladi: FaceID'dan o'tolmay
-#: «Yangi talabgor» bilan qaytgan talabgor matnni qayta o'qimaydi. Oyna
-#: urinishlar bilan bir xil (`record_entry_face_failure`) — bir kunda ikki
-#: seans bo'lishi mumkin.
-_CONSENT_REUSE_WINDOW = timedelta(hours=12)
-
-
-def _offer_for_candidate(*, pinfl: str, exam):
-    """
-    `(revision, consent)`: imtihon ofertasining joriy versiyasi va bugungi rozilik.
-
-    Rozilik faqat AYNAN SHU versiyaga bo'lsa qayta ishlatiladi: matn
-    o'zgargan bo'lsa talabgor yangisini o'qiydi.
-    """
-    revision = offer_services.current_revision(exam)
-    if revision is None:
-        return None, None
-    consent = (
-        OfferConsent.objects.filter(
-            pinfl=pinfl,
-            exam=exam,
-            revision=revision,
-            accepted_at__gte=timezone.now() - _CONSENT_REUSE_WINDOW,
-        )
-        .order_by("-accepted_at")
-        .first()
-    )
-    return revision, consent
-
-
-def _consent_pending_fields(consent) -> dict:
-    """Pending'dagi rozilik izi — sessiyaga `meta.offer` bo'lib muzlaydi."""
-    if consent is None:
-        return {"offer_consent_id": None}
-    return {
-        "offer_consent_id": consent.pk,
-        "offer_accepted_at": consent.accepted_at.isoformat(),
-    }
-
-
-def _require_offer_consent(pending: dict) -> None:
-    """Rozilik talab qilingan, lekin berilmagan — biometrik qadam yopiq."""
-    if pending.get("offer_revision_id") and not pending.get("offer_consent_id"):
-        raise OfferNotAccepted()
-
-
-@transaction.atomic
-def accept_offer(
-    *,
-    challenge: str,
-    revision_id: int,
-    content_hash: str,
-    device=None,
-    computer=None,
-    actor=None,
-    ip_address: str = "",
-) -> dict:
-    """
-    Talabgor ofertaga rozi bo'ldi — `OfferConsent` yoziladi.
-
-    SHART: aynan JSHSHIR tekshiruvida berilgan versiya VA matn izi.
-    Oraliqda oferta almashtirilgan bo'lsa (yoki client boshqa matnni
-    ko'rsatgan bo'lsa) — `OfferOutdated`: rozilik ko'rsatilgan matnga
-    berilishi kerak, talabgor qaytadan qidiriladi.
-
-    TAKRORIY so'rov (tarmoqda qayta urinish) yangi qator yaratmaydi —
-    pending'dagi rozilik qaytariladi.
-
-    Challenge SARFLANMAYDI: u yuz tekshiruviga kerak. Pending muddati
-    ham uzaymaydi (`update_pending`). Qator tranzaksiyada: pending'ni
-    yangilab bo'lmasa (challenge oraliqda tugagan) u ham qaytadi —
-    hech qaysi sessiyaga bog'lanmaydigan rozilik qolmasin.
-    """
-    pending = session_state.peek_pending(challenge)
-    _require_pending_device(pending, device)
-
-    expected = pending.get("offer_revision_id")
-    if not expected or int(revision_id) != int(expected):
-        raise OfferOutdated()
-
-    from apps.controls.models import OfferRevision
-
-    revision = OfferRevision.objects.filter(pk=expected).first()
-    if revision is None or content_hash != revision.content_hash:
-        raise OfferOutdated()
-
-    existing_id = pending.get("offer_consent_id")
-    if existing_id:
-        consent = OfferConsent.objects.filter(pk=existing_id).first()
-        if consent is not None:
-            return _consent_result(consent)
-
-    consent = OfferConsent.objects.create(
-        revision=revision,
-        pinfl=pending.get("pinfl", ""),
-        exam_id=pending.get("exam_id"),
-        schedule_id=pending.get("schedule_id"),
-        zone=computer.zone if computer is not None else None,
-        computer=computer,
-        device=device,
-        operator=actor if getattr(actor, "is_authenticated", False) else None,
-        operator_username=getattr(actor, "username", "") or "",
-        ip_address=ip_address or None,
-        content_hash=revision.content_hash,
-        accepted_at=timezone.now(),
-    )
-    if not session_state.update_pending(challenge, {**pending, **_consent_pending_fields(consent)}):
-        raise SessionNotFound("Tekshiruv muddati tugagan, qaytadan urinib ko'ring")
-    logger.info(
-        "Ofertaga rozilik: v%s jshshir=%s qurilma=%s",
-        revision.version, mask_pinfl(consent.pinfl), getattr(device, "device_id", "-"),
-    )
-    return _consent_result(consent)
-
-
-def _consent_result(consent) -> dict:
-    return {
-        "consent_id": consent.pk,
-        "revision_id": consent.revision_id,
-        "accepted_at": consent.accepted_at,
+        # Oferta — client yuz tekshiruvidan OLDIN ko'rsatadi va «Roziman»
+        # siz davom ettirmaydi. `None` — imtihonga oferta biriktirilmagan
+        # yoki u nofaol. Rozilik serverga YUBORILMAYDI va saqlanmaydi:
+        # matn har JSHSHIR qidiruvida qaytadan beriladi va so'raladi.
+        "offer": offer_services.client_payload(offer_revision) if offer_revision is not None else None,
     }
 
 
@@ -598,10 +460,7 @@ def verify_initial_face(
     # qurilmadan kelgan so'rov haqiqiy egasining challenge'ini yo'q
     # qilib qo'ymasligi kerak. Sarflash baribir atomik (GET+DEL bitta
     # MULTI'da) — ikki parallel so'rovdan faqat bittasi sessiya ochadi.
-    # Rozilik ham SARFLASHDAN OLDIN: rad etilgan so'rov challenge'ni
-    # yo'q qilsa talabgor rozilik berib bo'lgach JSHSHIR ni qaytadan
-    # kiritishga majbur bo'lardi.
-    _require_offer_consent(_require_pending_device(session_state.peek_pending(challenge), device))
+    _require_pending_device(session_state.peek_pending(challenge), device)
     pending = session_state.consume_pending(challenge)
     if pending is None:
         raise SessionNotFound("Tekshiruv muddati tugagan, qaytadan urinib ko'ring")
@@ -648,13 +507,6 @@ def verify_initial_face(
         ip_address=ip_address,
         reference_embedding=normalize(embedding) if embedding else None,
     )
-    if pending.get("offer_consent_id"):
-        # Rozilik sessiyadan OLDIN yozilgan — endi u sessiyaga bog'lanadi
-        # (panelda sessiyadan roziligiga o'tish). Qayta ishlatilgan
-        # bugungi rozilik birinchi sessiyasida qoladi (`session IS NULL`).
-        OfferConsent.objects.filter(
-            pk=pending["offer_consent_id"], session__isnull=True
-        ).update(session=session)
 
     # AVVAL FAYL, KEYIN QATOR. Qator yozilmasa fayl darhol o'chiriladi —
     # aks holda hech kim bilmaydigan yetim fayl qolardi.
@@ -743,9 +595,6 @@ def record_entry_face_failure(
 
     pending = session_state.peek_pending(challenge)
     _require_pending_device(pending, device)
-    # Muvaffaqiyatsiz urinish ham biometrik ma'lumot (kadr + hujjat
-    # rasmi) — rozilikdan oldin saqlanmaydi.
-    _require_offer_consent(pending)
 
     from apps.exams.models import Exam
 
@@ -994,17 +843,6 @@ def _create_session(
                 "source_ip": ip_address or "",
                 "public_ip": getattr(device, "public_ip", None) or "",
             },
-            # Ofertaga rozilik — bayonnomada "qayta ishlash asosi".
-            # `None` — bu imtihonda talab qilinmagan.
-            "offer": (
-                {
-                    "consent_id": pending["offer_consent_id"],
-                    "revision_id": pending.get("offer_revision_id"),
-                    "accepted_at": pending.get("offer_accepted_at", ""),
-                }
-                if pending.get("offer_consent_id")
-                else None
-            ),
         },
         external_access_from=_parse_dt(pending.get("external_access_from")),
         external_access_until=_parse_dt(pending.get("external_access_until")),

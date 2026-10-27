@@ -1,10 +1,13 @@
 """
 Oferta: saqlash, versiyalash va client'ga berish — BITTA JOYDA.
 
-Panel serializer'i, Django admin va testlar ofertani faqat shu yerdagi
-`save_offer` orqali yozadi. Sabab — versiya qoidasi: matn yoki sarlavha
-o'zgarsa YANGI `OfferRevision` yaratilishi shart, aks holda rozilik
-qatori bog'langan matn jimgina boshqasiga aylanardi.
+Panel serializer'i va testlar ofertani faqat shu yerdagi `save_offer`
+orqali yozadi. Sabab — versiya qoidasi: matn yoki sarlavha o'zgarsa YANGI
+`OfferRevision` yaratilishi shart, aks holda tahrirlar tarixi jimgina
+uzilardi.
+
+Talabgorning roziligi SERVERGA YOZILMAYDI: client matnni har JSHSHIR
+qidiruvida ko'rsatadi va «Roziman» siz davom ettirmaydi.
 """
 
 from __future__ import annotations
@@ -14,7 +17,7 @@ from django.utils import timezone
 from rest_framework import status
 
 from apps.common.exceptions import DomainError
-from apps.common.html_sanitizer import content_hash, html_text, sanitize_html
+from apps.common.html_sanitizer import html_text, sanitize_html
 
 #: Tozalangan HTML chegarasi. Oferta odatda 5-30 KB; chegara JSHSHIR
 #: javobini (u matnni o'zida tashiydi) va client xotirasini himoya qiladi.
@@ -45,8 +48,7 @@ def save_offer(*, offer=None, title: str, content: str, is_active=None, exams=No
     Ofertani yaratadi yoki yangilaydi; matn o'zgarsa yangi versiya.
 
     `content` — TOZALANGAN bo'lishi shart (`clean_content`): bu yerda
-    qayta tozalanmaydi, aks holda iz (`content_hash`) serializer
-    ko'rgan matnnikidan farq qilib qolishi mumkin edi.
+    qayta tozalanmaydi.
 
     `is_active`, `exams` — `None` bo'lsa o'zgarmaydi. `exams` berilsa
     oferta AYNAN shu imtihonlarniki bo'ladi (`assign_exams`).
@@ -74,7 +76,6 @@ def save_offer(*, offer=None, title: str, content: str, is_active=None, exams=No
             version=offer.version,
             title=title,
             content=content,
-            content_hash=content_hash(content),
             created_by=actor,
         )
     if exams is not None:
@@ -119,7 +120,7 @@ def delete_offer(offer) -> None:
     """
     Yumshoq o'chirish — faqat hech bir tirik imtihon unga bog'lanmagan bo'lsa.
 
-    Jimgina ajratish emas, RAD: o'chirish imtihondan rozilik qadamini
+    Jimgina ajratish emas, RAD: o'chirish imtihondan oferta qadamini
     olib tashlardi va administrator buni sezmay qolardi.
     """
     names = list(offer.exams.alive().order_by("name").values_list("name", flat=True)[:4])
@@ -134,7 +135,7 @@ def delete_offer(offer) -> None:
 
 def current_revision(exam):
     """
-    Imtihon ofertasining oxirgi versiyasi (`None` — rozilik so'ralmaydi).
+    Imtihon ofertasining oxirgi versiyasi (`None` — oferta ko'rsatilmaydi).
 
     So'ralmaydi: imtihonga oferta biriktirilmagan, oferta nofaol yoki
     o'chirilgan. Versiyalar faqat o'sadi, ya'ni eng kattasi — joriy matn.
@@ -158,12 +159,9 @@ def current_revision(exam):
 def client_payload(revision) -> dict:
     """JSHSHIR javobidagi `offer` — client dialogi shuni chizadi."""
     return {
-        "revision_id": revision.pk,
         "offer_id": revision.offer_id,
         "version": revision.version,
         "title": revision.title,
         "content_html": revision.content,
-        # Client rozilikda AYNAN shu izni qaytaradi (`accept_offer`).
-        "content_hash": revision.content_hash,
         "published_at": revision.created_at,
     }

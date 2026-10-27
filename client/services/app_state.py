@@ -133,51 +133,35 @@ class ExamOption:
 @dataclass
 class Offer:
     """
-    Ofertaga rozilik matni — JSHSHIR javobidan (`offer`).
+    Oferta matni — JSHSHIR javobidan (`offer`), imtihonga biriktirilgan bo'lsa.
 
     Matn serverda TOZALANGAN HTML (`apps/common/html_sanitizer.py`):
-    client uni faqat chizadi. `revision_id` va `content_hash` rozilikda
-    o'zgartirilmasdan qaytariladi — server ularni shu challenge'ga
-    berilgan matn bilan solishtiradi (`session.accept_offer`).
+    client uni faqat chizadi. Rozilik SERVERGA YUBORILMAYDI: `accepted`
+    shu qidiruv natijasining lokal bayrog'i — keyingi JSHSHIR qidiruvi
+    yangi `Candidate` beradi va oferta yana so'raladi.
     """
 
-    revision_id: int = 0
     version: int = 0
     title: str = ""
     content_html: str = ""
-    content_hash: str = ""
-    #: Rozilik vaqti (ISO). Bo'sh — rozilik hali berilmagan; server
-    #: bugungi rozilikni topsa JSHSHIR javobida o'zi to'ldiradi.
-    accepted_at: str = ""
-
-    @property
-    def accepted(self) -> bool:
-        return bool(self.accepted_at)
+    #: Talabgor shu qidiruvda «Roziman» ni bosdi (FaceID'dan qaytsa
+    #: dialog qayta ochilmaydi).
+    accepted: bool = False
 
     @classmethod
     def from_api(cls, data) -> Optional["Offer"]:
-        """`None` — bu imtihonda rozilik so'ralmaydi (yoki javob buzilgan)."""
+        """`None` — bu imtihonda oferta yo'q (yoki javob buzilgan)."""
         if not isinstance(data, dict):
             return None
+        content = str(data.get("content_html") or "")
+        if not content.strip():
+            # Matnsiz "oferta" ni ko'rsatib bo'lmaydi.
+            return None
         try:
-            revision_id = int(data.get("revision_id") or 0)
             version = int(data.get("version") or 0)
         except (TypeError, ValueError):
-            return None
-        content = str(data.get("content_html") or "")
-        if not revision_id or not content.strip():
-            # Matnsiz "oferta" ni ko'rsatib bo'lmaydi, rozilik esa matnga
-            # beriladi — server baribir FaceID'ni yopadi va operator
-            # xatoni `offer_not_accepted` matnidan ko'radi.
-            return None
-        return cls(
-            revision_id=revision_id,
-            version=version,
-            title=str(data.get("title") or ""),
-            content_html=content,
-            content_hash=str(data.get("content_hash") or ""),
-            accepted_at=str(data.get("accepted_at") or ""),
-        )
+            version = 0
+        return cls(version=version, title=str(data.get("title") or ""), content_html=content)
 
 
 @dataclass

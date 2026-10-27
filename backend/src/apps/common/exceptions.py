@@ -362,37 +362,6 @@ class TechnicalProblemLimit(DomainError):
     default_code = "technical_problem_limit"
 
 
-class OfferNotAccepted(DomainError):
-    """
-    Ofertaga rozilik berilmagan, yuz tekshiruvi esa so'raldi.
-
-    Rozilik clientda dialog bilan olinadi, lekin qadam faqat UI'da
-    bo'lsa eski yoki o'zgartirilgan client biometrik ma'lumotni
-    rozilikdan OLDIN yuborardi — shuning uchun `face/verify/` va
-    `face/attempt/` uni serverda talab qiladi.
-    """
-
-    status_code = status.HTTP_403_FORBIDDEN
-    default_detail = "Talabgor ofertaga rozilik bermagan — avval rozilikni tasdiqlang"
-    default_code = "offer_not_accepted"
-
-
-class OfferOutdated(DomainError):
-    """
-    Client tasdiqlagan matn JSHSHIR tekshiruvida berilgan matn emas.
-
-    Versiya yoki matn izi challenge'dagidan farq qiladi (client boshqa
-    matnni ko'rsatgan yoki eski javobni ishlatgan): rozilik aynan
-    ko'rsatilgan matnga berilishi kerak, shuning uchun talabgor qaytadan
-    qidiriladi. Oraliqda oferta tahrirlangani bunga KIRMAYDI — talabgor
-    ko'rgan versiyaga rozilik yoziladi.
-    """
-
-    status_code = status.HTTP_409_CONFLICT
-    default_detail = "Oferta matni yangilangan — JSHSHIR ni qaytadan tekshiring"
-    default_code = "offer_outdated"
-
-
 # --------------------------------------------------------------------------
 # Erkin joylashuv (`Setting.is_booking=False`) — JSHSHIR tekshiruvi.
 #

@@ -20,9 +20,9 @@ import OfferDocument from './OfferDocument'
  * Oferta kartasi: qaysi testlarda so'ralishi, matn talabgor ko'radigan
  * ko'rinishda va versiyalar tarixi.
  *
- * TARIX — huquqiy savolga javob: "talabgor qaysi kuni qaysi matnga rozi
- * bo'lgan?". Har versiyada nechta rozilik borligi ko'rinadi va bosilsa
- * o'sha versiyaning AYNAN o'zi chiziladi (keyingi tahrirlar ta'sir qilmaydi).
+ * TARIX — "qaysi kuni talabgorlarga qanday matn ko'rsatilgan?". Versiya
+ * bosilsa o'sha tahrirning AYNAN o'zi chiziladi. Talabgorlarning roziligi
+ * saqlanmaydi — u faqat client oqimini ochadi.
  */
 export default function OfferDetailDialog({ row, onEdit, onClose }: DetailDialogBaseProps) {
   const [selected, setSelected] = useState<ApiRecord | null>(null)
@@ -75,15 +75,15 @@ export default function OfferDetailDialog({ row, onEdit, onClose }: DetailDialog
         items={[
           { label: 'Testlar', value: exams.length },
           { label: 'Joriy versiya', value: row.version },
-          { label: 'Roziliklar', value: (row.consents_count ?? 0).toLocaleString('uz'), hint: 'barcha versiyalarga' },
           { label: 'Versiyalar', value: isLoading ? undefined : revisions.length },
+          { label: 'Holat', value: deleted ? 'O‘chirilgan' : asked ? 'Ko‘rsatiladi' : 'Ko‘rsatilmaydi' },
         ]}
       />
 
       <InfoNote icon={<InfoIcon fontSize="small" />}>
         Biriktirilgan testlarda talabgor bu matnni JSHSHIR bo‘yicha topilgandan keyin, yuz tekshiruvidan <b>oldin</b> o‘qiydi va
-        «Roziman» ni bosadi — rozilik siz shu yerda ko‘rib turgan versiyaga yoziladi. Matnni tahrirlash
-        yangi versiya yaratadi, berilgan roziliklar eski versiyada o‘zgarmay qoladi.
+        «Roziman» ni bosadi — rozilik bermasa davom eta olmaydi. Oferta har JSHSHIR tekshiruvida qaytadan
+        ko‘rsatiladi; rozilik saqlanmaydi. Matnni tahrirlash yangi versiya yaratadi — tarix pastda.
       </InfoNote>
 
       <Section title={`Testlar · ${exams.length}`}>
@@ -145,11 +145,7 @@ export default function OfferDetailDialog({ row, onEdit, onClose }: DetailDialog
                       {dateText(revision.created_at)}{revision.created_by_name ? ` · ${revision.created_by_name}` : ''}
                     </Typography>
                   </Box>
-                  <Chip
-                    size="small"
-                    variant={revision.consents_count ? 'filled' : 'outlined'}
-                    label={`${revision.consents_count ?? 0} rozilik`}
-                  />
+                  {revision.version === row.version && <Chip size="small" label="Joriy" />}
                 </ButtonBase>
               )
             })}

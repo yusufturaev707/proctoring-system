@@ -469,8 +469,6 @@ class OfferSerializer(serializers.ModelSerializer):
     """
 
     updated_by_name = serializers.SerializerMethodField()
-    #: `OfferViewSet.get_queryset` annotatsiyasi; ro'yxatda N+1 bo'lmasin.
-    consents_count = serializers.IntegerField(read_only=True, default=0)
     exams = serializers.PrimaryKeyRelatedField(
         many=True, required=False, queryset=Exam.objects.alive(),
     )
@@ -480,7 +478,7 @@ class OfferSerializer(serializers.ModelSerializer):
         model = Offer
         fields = (
             "id", "title", "content", "version", "is_active", "exams", "exam_list",
-            "updated_by_name", "consents_count", "created_at", "updated_at", "deleted_at",
+            "updated_by_name", "created_at", "updated_at", "deleted_at",
         )
         read_only_fields = ("id", "version", "created_at", "updated_at", "deleted_at")
 
@@ -545,14 +543,10 @@ class OfferSerializer(serializers.ModelSerializer):
 
 class OfferRevisionSerializer(serializers.ModelSerializer):
     created_by_name = serializers.SerializerMethodField()
-    consents_count = serializers.IntegerField(read_only=True, default=0)
 
     class Meta:
         model = OfferRevision
-        fields = (
-            "id", "version", "title", "content", "content_hash",
-            "created_by_name", "consents_count", "created_at",
-        )
+        fields = ("id", "version", "title", "content", "created_by_name", "created_at")
         read_only_fields = fields
 
     def get_created_by_name(self, obj) -> str:

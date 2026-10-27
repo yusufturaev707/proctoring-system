@@ -562,20 +562,27 @@ talqin qilinadi.
 `integrations/exam_platform.py` da faqat `report_result` va
 `platform_health` qoldi.
 
-### Oferta — yuz tekshiruvidan OLDIN rozilik
+### Oferta — yuz tekshiruvidan OLDIN rozilik (clientda, SAQLANMAYDI)
 
-Talabgor topilgach (JSHSHIR javobi), FaceID'dan OLDIN shaxsga doir
-ma'lumotlar bilan ishlashga rozilik beradi: FaceID biometrik ma'lumotni
-(kadr, hujjat rasmi) serverga yuboradi.
+Talabgor topilgach (JSHSHIR javobi), FaceID'dan OLDIN imtihonga biriktirilgan
+oferta ko'rsatiladi: FaceID biometrik ma'lumotni (kadr, hujjat rasmi)
+serverga yuboradi. «Roziman» siz davom etib bo'lmaydi — va shu bilan tamom.
 
 | Qatlam | Qayerda |
 |---|---|
 | matn | `controls.Offer`, panel «Oferta» (TipTap, `components/offers/`) |
-| versiya | `controls.OfferRevision` — O'ZGARMAS; matn/sarlavha o'zgarsa yangisi (`controls/offers.py:save_offer`) |
-| test | `Exam.offer` (FK, `PROTECT`) — so'raladi: biriktirilgan VA `Offer.is_active` VA o'chirilmagan (`offers.current_revision(exam)`) |
-| rozilik | `proctoring.OfferConsent` (versiya + `content_hash`, sessiyadan OLDIN, keyin `session` bog'lanadi) |
-| client | `candidate_page._on_next` → `ui/dialogs/offer_dialog.py` → `client/offer/accept/` |
+| tahrirlar | `controls.OfferRevision` — O'ZGARMAS; matn/sarlavha o'zgarsa yangisi (`controls/offers.py:save_offer`) |
+| test | `Exam.offer` (FK, `PROTECT`) — ko'rsatiladi: biriktirilgan VA `Offer.is_active` VA o'chirilmagan (`offers.current_revision(exam)`) |
+| client | JSHSHIR javobidagi `offer` → `candidate_page._on_next` → `ui/dialogs/offer_dialog.py` |
 
+* **Rozilik bazaga YOZILMAYDI va serverga YUBORILMAYDI** (foydalanuvchi
+  qarori; `OfferConsent`, `client/offer/accept/`, `offer_not_accepted` olib
+  tashlangan). Server FaceID'ni ofertaga bog'lamaydi. Bazada faqat paneldagi
+  tahrirlar qoladi (`OfferRevision` + audit). Rozilik yozuvini, uni qayta
+  ishlatishni yoki server tomonidagi to'siqni QAYTARMANG.
+* **Har JSHSHIR qidiruvida qaytadan** so'raladi: `Offer.accepted` — shu qidiruv
+  natijasining lokal bayrog'i (FaceID'dan qaytsa dialog qayta ochilmaydi),
+  keyingi qidiruv yangi `Candidate` beradi. Doim eng oxirgi tahrir ko'rsatiladi.
 * **Oferta TESTGA tegishli** — har testning o'z shartlari. Bog'lanish imtihon
   tomonida: testda bittadan ortiq oferta bo'lmasligini baza kafolatlaydi, bitta
   matn bir nechta testga xizmat qiladi. Panelda IKKI kirish, bitta maydon:
@@ -584,32 +591,25 @@ ma'lumotlar bilan ishlashga rozilik beradi: FaceID biometrik ma'lumotni
   `moved`) va imtihon formasidagi «Oferta». "Bitta amaldagi oferta" yoki
   profil kaliti (`is_offer_required`) QAYTARMANG — test ofertasini global
   matn bosib ketardi. Biriktirilgan ofertani o'chirish — 409 `offer_in_use`
-  (jim ajratish rozilik qadamini sezdirmay olib tashlardi).
+  (jim ajratish oferta qadamini sezdirmay olib tashlardi).
 * **Ruxsat — `offers.view` / `offers.manage`** (guruh `exams`), `controls.*`
   va `exams.manage` dan ALOHIDA (huquqiy matn). Paydo bo'lganda bir marta
   `exams.view`/`exams.manage` li rollarga beriladi
   (`seed_base_data.DERIVED_PERMISSIONS`). Panel ruxsatsiz ro'yxatni so'ramaydi
   (`useOptions(..., enabled)`): imtihon formasida oferta, oferta formasida testlar.
-* **Server majburlaydi**: pending'da `offer_revision_id` bor, `offer_consent_id`
-  yo'q — `face/verify/` va `face/attempt/` 403 `offer_not_accepted`, challenge
-  SARFLANMAYDI (`_require_offer_consent`, `peek` dan keyin).
-* **Ofertani faqat `save_offer` yozadi** (serializer ham) — aks holda rozilik
-  bog'langan matn jimgina o'zgarardi. Django admin'da ATAYLAB ro'yxatdan
-  o'tmagan.
+* **Ofertani faqat `save_offer` yozadi** (serializer ham) — aks holda tahrirlar
+  tarixi jimgina uzilardi. Django admin'da ATAYLAB ro'yxatdan o'tmagan.
 * **HTML serverda oq ro'yxat bilan tozalanadi** (`common/html_sanitizer.py`,
   yangi bog'liqliksiz): havola, rasm, jadval YO'Q (kiosk). Tekislash `style`
   VA `align` bilan (Qt atributni o'qiydi). Muharrir imkoniyatlari ro'yxat bilan
   BIR XIL bo'lishi shart.
-* Rozilik aynan JSHSHIR javobidagi versiya + izga (`OfferOutdated` 409 aks
-  holda); oraliqda tahrir — talabgor KO'RGAN versiyaga yoziladi. Takror —
-  idempotent. Bugungi (12 soat) SHU TEST + shu versiyaga rozilik qayta
-  qidiruvda `accepted_at` bilan qaytadi — dialog ochilmaydi (boshqa testda
-  bir xil matn bo'lsa ham qayta so'raladi).
-* `OfferConsent` ANONIMLASHTIRILMAYDI — qayta ishlashning huquqiy asosi.
+* **(panel) `RichTextEditor`: `setEditable(..., false)`** — `emitUpdate`
+  standarti `update` chiqaradi va bo'sh muharrir `onChange('')` bilan
+  tahrirlash formasidagi matnni bosib ketardi (maydon bo'sh ochilardi).
 * Client dialogi: matn oxirigacha ko'rilmaguncha belgi o'chiq, belgisiz
-  «Roziman» o'chiq; so'rov ketayotganda yopilmaydi. Aylantirgich handleri
-  `_alive` bilan himoyalangan (o'chirilayotgan `QTextBrowser` `rangeChanged`
-  chiqaradi — access violation).
+  «Roziman» o'chiq; rad etilsa talabgor JSHSHIR sahifasida qoladi. Aylantirgich
+  handleri `_alive` bilan himoyalangan (o'chirilayotgan `QTextBrowser`
+  `rangeChanged` chiqaradi — access violation).
 
 ### Kompyuter raqami va inventar kodi — IKKI BOSHQA SAVOL
 

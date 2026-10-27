@@ -78,11 +78,6 @@ ERROR_MESSAGES = {
     "session_already_active": "Bu talabgorning boshqa kompyuterda ochiq sessiyasi bor.",
     "exam_not_open": "Imtihon kirish oynasi hozir yopiq.",
     "face_verification_failed": "Yuz mos kelmadi. Qaytadan urinib ko'ring.",
-    "offer_not_accepted": (
-        "Talabgor ofertaga rozilik bermagan. JSHSHIR sahifasida rozilikni "
-        "tasdiqlang."
-    ),
-    "offer_outdated": "Oferta matni yangilangan. JSHSHIR ni qaytadan tekshiring.",
     "identity_not_confirmed": "Avval talabgor shaxsini hujjat bo'yicha tasdiqlang.",
     "session_not_found": "Sessiya topilmadi yoki muddati tugagan.",
     "session_forbidden": "Bu sessiya boshqa qurilmaga tegishli.",
