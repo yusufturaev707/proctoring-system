@@ -240,3 +240,24 @@ class SeedRolesTests(TestCase):
         self.assertNotIn("panel.access", self.codes("Operator"))
         # Mavjud Operatorning ruxsatlariga tegilmagan — faqat panel yopilgan.
         self.assertIn("bookings.view", self.codes("Operator"))
+
+    def test_upgrade_backfills_offer_permissions_once(self):
+        """`offers.*` paydo bo'lganda imtihon rollari ofertani yo'qotmaydi."""
+        self.seed()
+        Permission.objects.filter(code__in=["offers.view", "offers.manage"]).delete()
+        manager = Role.objects.create(name="Imtihon boshqaruvchisi", key=8002)
+        manager.permissions.set(Permission.objects.filter(code__in=["panel.access", "exams.manage"]))
+        viewer = Role.objects.create(name="Imtihon kuzatuvchisi", key=8003)
+        viewer.permissions.set(Permission.objects.filter(code__in=["panel.access", "exams.view"]))
+
+        self.seed()
+
+        self.assertTrue({"offers.view", "offers.manage"} <= self.codes("Imtihon boshqaruvchisi"))
+        self.assertIn("offers.view", self.codes("Imtihon kuzatuvchisi"))
+        self.assertNotIn("offers.manage", self.codes("Imtihon kuzatuvchisi"))
+        self.assertNotIn("offers.view", self.codes("Proktor"))
+
+        # Administrator olib tashlasa — keyingi deploy qaytarmaydi.
+        viewer.permissions.remove(Permission.objects.get(code="offers.view"))
+        self.seed()
+        self.assertNotIn("offers.view", self.codes("Imtihon kuzatuvchisi"))

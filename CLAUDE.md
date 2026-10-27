@@ -585,6 +585,11 @@ ma'lumotlar bilan ishlashga rozilik beradi: FaceID biometrik ma'lumotni
   profil kaliti (`is_offer_required`) QAYTARMANG — test ofertasini global
   matn bosib ketardi. Biriktirilgan ofertani o'chirish — 409 `offer_in_use`
   (jim ajratish rozilik qadamini sezdirmay olib tashlardi).
+* **Ruxsat — `offers.view` / `offers.manage`** (guruh `exams`), `controls.*`
+  va `exams.manage` dan ALOHIDA (huquqiy matn). Paydo bo'lganda bir marta
+  `exams.view`/`exams.manage` li rollarga beriladi
+  (`seed_base_data.DERIVED_PERMISSIONS`). Panel ruxsatsiz ro'yxatni so'ramaydi
+  (`useOptions(..., enabled)`): imtihon formasida oferta, oferta formasida testlar.
 * **Server majburlaydi**: pending'da `offer_revision_id` bor, `offer_consent_id`
   yo'q — `face/verify/` va `face/attempt/` 403 `offer_not_accepted`, challenge
   SARFLANMAYDI (`_require_offer_consent`, `peek` dan keyin).

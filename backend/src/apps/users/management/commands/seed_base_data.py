@@ -68,6 +68,14 @@ ROLE_MATRIX: dict[str, tuple[int, bool, list[str]]] = {
     "Operator": (5, False, ["client.operate", "client.identity", "client.exit"]),
 }
 
+#: Yangi ruxsat -> uni birinchi paydo bo'lganda oladigan rollar (shu
+#: kodlardan birortasi bor). Oferta testga tegishli: imtihonni yuritgan
+#: rol ofertani ham yuritgan, ko'rgan — ko'radi (`_backfill_derived`).
+DERIVED_PERMISSIONS: dict[str, tuple[str, ...]] = {
+    "offers.view": ("exams.view", "exams.manage"),
+    "offers.manage": ("exams.manage",),
+}
+
 #: Rol izohi — foydalanuvchi formasidagi rol plitkasida ko'rinadi. Faqat
 #: BO'SH izohga yoziladi: administrator o'zgartirgan matn bosilmaydi.
 ROLE_DESCRIPTIONS = {
@@ -100,6 +108,7 @@ class Command(BaseCommand):
 
         if PANEL_ACCESS_CODE in created:
             self._backfill_panel_access()
+        self._backfill_derived(created)
 
         self._seed_controls()
 
@@ -177,6 +186,25 @@ class Command(BaseCommand):
                 continue
             role.permissions.add(permission)
             self.stdout.write(f"  Panel kirishi: {role.name} — berildi")
+
+    def _backfill_derived(self, created):
+        """
+        Yangi ruxsat paydo bo'lgan relizda — BIR MARTA, mavjud rollarga.
+
+        Ruxsat ilgari boshqasi ichida bo'lgan bo'limdan ajratilganda shu
+        bo'lim bilan ishlagan rollar uni yo'qotmasligi kerak (migratsiyalar
+        git'da yo'q — `RunPython` serverga yetmaydi, shuning uchun bu yerda).
+        Keyingi ishga tushishlarda kod `created` da bo'lmaydi va
+        administrator qaroriga tegilmaydi.
+        """
+        for code, sources in DERIVED_PERMISSIONS.items():
+            if code not in created:
+                continue
+            permission = Permission.objects.get(code=code)
+            roles = Role.objects.filter(permissions__code__in=sources).exclude(permissions=permission)
+            for role in roles.distinct():
+                role.permissions.add(permission)
+                self.stdout.write(f"  {code}: {role.name} — berildi")
 
     def _seed_controls(self):
         from apps.controls.models import CocoObject, HotKeyboardKey, RdpObject, Setting

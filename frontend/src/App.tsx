@@ -111,7 +111,7 @@ const ROUTES = [
   { path: '/settings', element: <Settings />, permission: 'controls.view' },
   { path: '/allowed-ips', element: <AllowedIpsPage />, permission: 'controls.ip_view' },
   { path: '/exit-passwords', element: <ClientExitPasswordsPage />, permission: 'controls.exit_password_view' },
-  { path: '/offers', element: <OffersPage />, permission: 'controls.view' },
+  { path: '/offers', element: <OffersPage />, permission: 'offers.view' },
   { path: '/rdp-objects', element: <RdpObjectsPage />, permission: 'controls.view' },
   { path: '/hotkeys', element: <HotkeysPage />, permission: 'controls.view' },
   { path: '/coco-objects', element: <CocoObjectsPage />, permission: 'controls.view' },

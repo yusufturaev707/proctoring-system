@@ -84,6 +84,13 @@ DEFAULT_PERMISSIONS: list[tuple[str, str, str]] = [
     # o'zgartirish huquqi (`exams.manage`) kerak emas.
     ("bookings.view", "Kompyuter bronlarini ko'rish", "exams"),
     ("bookings.manage", "Kompyuter bronlarini boshqarish", "exams"),
+    # Oferta — talabgor shaxsga doir ma'lumotlari bilan ishlashga rozilik
+    # beradigan HUQUQIY matn. `exams.manage` dan ALOHIDA: platforma
+    # sozlamasini yuritgan xodim shartnoma matnini yozmasligi mumkin (va
+    # aksincha — yurist imtihon tokenini ko'rmasin). `controls.*` dan ham:
+    # oferta client siyosati emas, testning shartlari.
+    ("offers.view", "Ofertalarni ko'rish", "exams"),
+    ("offers.manage", "Ofertalarni boshqarish", "exams"),
     ("controls.view", "Sozlamalarni ko'rish", "controls"),
     ("controls.manage", "Sozlamalarni boshqarish", "controls"),
     # Tarmoq chegarasi — client siyosatidan ALOHIDA ruxsat.

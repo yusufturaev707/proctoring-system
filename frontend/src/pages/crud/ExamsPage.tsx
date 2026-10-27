@@ -43,8 +43,10 @@ const RELATED_KEYS = ['offers']
 export default function ExamsPage() {
   const { options: settingOptions } = useSettingOptions()
   const { options: examTypeOptions } = useExamTypeOptions()
-  const { options: offerOptions } = useOfferOptions()
-  const { canShared } = useAuth()
+  const { can, canShared } = useAuth()
+  // Oferta ro'yxati alohida ruxsatda (`offers.view`) — usiz so'rov 403 berardi.
+  const canSeeOffers = can('offers.view')
+  const { options: offerOptions } = useOfferOptions(canSeeOffers)
   const canManage = canShared('exams.manage')
   // Qator bosilganda — imtihonning to'liq kartasi; «Tahrirlash» sahifaning
   // o'z formasini ochadi (`openEdit`), ikkinchi forma yasalmaydi.
@@ -175,7 +177,7 @@ export default function ExamsPage() {
       exportName="imtihonlar"
       filters={[
         { name: 'exam_type', label: 'Turi', type: 'select', options: examTypeOptions },
-        { name: 'offer', label: 'Oferta', type: 'select', options: offerOptions },
+        ...(canSeeOffers ? [{ name: 'offer', label: 'Oferta', type: 'select' as const, options: offerOptions }] : []),
         {
           name: 'is_active', label: 'Holat', type: 'select',
           options: [{ value: 'true', label: 'Faol' }, { value: 'false', label: 'Nofaol' }],
@@ -266,8 +268,11 @@ export default function ExamsPage() {
           // «Testlar» ham aynan shu maydonni yozadi.
           name: 'offer', label: 'Oferta', type: 'select',
           options: offerOptions, colSpan: 12, section: 'Sozlamalar',
+          disabled: () => !canSeeOffers,
           emptyOptionsText: 'Oferta yo‘q — «Oferta» sahifasida yarating',
-          helperText: 'Talabgor JSHSHIR bo‘yicha topilgach, yuz tekshiruvidan oldin shu matnga rozilik beradi. Bo‘sh — rozilik so‘ralmaydi',
+          helperText: (_isEdit, form) => (canSeeOffers
+            ? 'Talabgor JSHSHIR bo‘yicha topilgach, yuz tekshiruvidan oldin shu matnga rozilik beradi. Bo‘sh — rozilik so‘ralmaydi'
+            : `Hozirgisi: ${form._meta?.row?.offer_title || 'yo‘q'}. Tanlash uchun «Ofertalarni ko‘rish» ruxsati kerak`),
         },
         {
           name: 'is_active', label: 'Faol', type: 'boolean', colSpan: 12, section: 'Sozlamalar',

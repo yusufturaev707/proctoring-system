@@ -551,10 +551,13 @@ export function useOptions<T = ApiRecord>(
   api: ListApi,
   mapper: (item: ApiRecord) => T,
   params: QueryParams = {},
+  /** `false` — so'rov yuborilmaydi (masalan ruxsat yo'q: 403 ni kutish o'rniga). */
+  enabled = true,
 ) {
   const query = useQuery({
     queryKey: [key, 'options', params],
     queryFn: () => fetchAllPages(api, params),
+    enabled,
     staleTime: 5 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
   })

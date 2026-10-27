@@ -211,7 +211,7 @@ export const NAVIGATION: NavGroup[] = [
         description: 'Client dasturini yopish uchun viloyat paroli (Ctrl+Q)',
       },
       {
-        label: 'Oferta', path: '/offers', icon: GavelIcon, permission: 'controls.view',
+        label: 'Oferta', path: '/offers', icon: GavelIcon, permission: 'offers.view',
         description: 'Talabgor yuz tekshiruvidan oldin shaxsga doir ma’lumotlar bilan ishlashga rozilik beradigan matn',
       },
       {

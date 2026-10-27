@@ -134,6 +134,9 @@ class OfferViewSet(SoftDeleteRestoreMixin, ControlsBaseViewSet):
     tahrirlash formasini qo'shimcha so'rovsiz ochadi (yozuvlar soni kam).
     """
 
+    # Alohida ruxsat (`offers.*`, sababi — `users.services.DEFAULT_PERMISSIONS`).
+    required_permission = "offers.manage"
+    required_read_permission = "offers.view"
     queryset = (
         Offer.objects.select_related("updated_by")
         .prefetch_related(

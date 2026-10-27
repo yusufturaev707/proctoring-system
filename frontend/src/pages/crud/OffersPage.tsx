@@ -91,11 +91,13 @@ const buildFields = (examOptions: Option[]): FieldDef[] => [
 const RELATED_KEYS = ['exams']
 
 export default function OffersPage() {
-  const { canShared } = useAuth()
-  const canManage = canShared('controls.manage')
+  const { can, canShared } = useAuth()
+  const canManage = canShared('offers.manage')
+  // Testlar ro'yxati `exams.view` da — usiz so'rov 403 berardi.
+  const canSeeExams = can('exams.view')
   const [detail, setDetail] = useState<RowDetail | null>(null)
-  const { options: examOfferOptions } = useExamOfferOptions()
-  const { options: examOptions } = useExamOptions()
+  const { options: examOfferOptions } = useExamOfferOptions(canSeeExams)
+  const { options: examOptions } = useExamOptions(canSeeExams)
   const fields = useMemo(() => buildFields(examOfferOptions), [examOfferOptions])
 
   return (
@@ -109,7 +111,7 @@ export default function OffersPage() {
         queryKey="offers"
         relatedKeys={RELATED_KEYS}
         api={offersApi}
-        permission="controls.manage"
+        permission="offers.manage"
         searchPlaceholder="Sarlavha yoki test nomi…"
         defaultSort={{ field: 'updated_at', sort: 'desc' }}
         defaults={{ title: '', content: '', exams: [], is_active: true }}
@@ -185,7 +187,7 @@ export default function OffersPage() {
           },
         ]}
         filters={[
-          { name: 'exams', label: 'Test', type: 'select', options: examOptions },
+          ...(canSeeExams ? [{ name: 'exams', label: 'Test', type: 'select' as const, options: examOptions }] : []),
           {
             name: 'is_active', label: 'Holat', type: 'select',
             options: [{ value: 'true', label: 'Faol' }, { value: 'false', label: 'Nofaol' }],

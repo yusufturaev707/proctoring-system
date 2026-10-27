@@ -107,28 +107,35 @@ export const useZoneOptions = () => {
   return { ...result, options }
 }
 
-export const useExamOptions = () =>
-  useOptions('exams', examsApi, (item): Option => ({ value: item.id, label: item.name }))
+const examOption = (item: ApiRecord): Option => ({ value: item.id, label: item.name })
+
+export const useExamOptions = (enabled = true) =>
+  useOptions('exams', examsApi, examOption, NO_PARAMS, enabled)
+
+// Modul doimiylari: `useOptions` xaritalovchi va parametrlarga bog'liq memo/so'rov kaliti.
+const NO_PARAMS = {}
+const examOfferOption = (item: ApiRecord): Option => ({
+  value: item.id,
+  label: item.name,
+  offer: item.offer,
+  offerTitle: item.offer_title,
+  isActive: item.is_active,
+})
+const offerOption = (item: ApiRecord): Option => ({
+  value: item.id,
+  label: item.is_active ? `${item.title} · v${item.version}` : `${item.title} · v${item.version} (nofaol)`,
+})
 
 /**
  * Testlar — oferta formasi uchun: har birining HOZIRGI ofertasi bilan.
  * Boshqa ofertadagi test tanlansa u ko'chadi, forma buni yorliqda aytadi.
  */
-export const useExamOfferOptions = () =>
-  useOptions('exams', examsApi, (item): Option => ({
-    value: item.id,
-    label: item.name,
-    offer: item.offer,
-    offerTitle: item.offer_title,
-    isActive: item.is_active,
-  }))
+export const useExamOfferOptions = (enabled = true) =>
+  useOptions('exams', examsApi, examOfferOption, NO_PARAMS, enabled)
 
 /** Ofertalar — imtihon formasi uchun; nofaol (qoralama) ham tanlanadi, lekin so'ralmaydi. */
-export const useOfferOptions = () =>
-  useOptions('offers', offersApi, (item): Option => ({
-    value: item.id,
-    label: item.is_active ? `${item.title} · v${item.version}` : `${item.title} · v${item.version} (nofaol)`,
-  }))
+export const useOfferOptions = (enabled = true) =>
+  useOptions('offers', offersApi, offerOption, NO_PARAMS, enabled)
 
 /**
  * Test sessiyalari (imtihon jadvali) — bron sahifasi uchun.

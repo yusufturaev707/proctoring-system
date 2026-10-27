@@ -23,7 +23,7 @@ class OfferApiTests(TestCase):
         cache.clear()
         self.addCleanup(cache.clear)
         self.client = APIClient()
-        self.staff = factories.make_user(permissions=["controls.manage", "controls.view"])
+        self.staff = factories.make_user(permissions=["offers.manage", "offers.view"])
         self.client.force_authenticate(self.staff)
         self.list_url = reverse("offer-list")
 
@@ -167,9 +167,24 @@ class OfferApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual([row["version"] for row in response.json()["data"]], [2, 1])
 
+    def test_controls_permission_does_not_open_offers(self):
+        """Client sozlamalarini yuritish — oferta (huquqiy matn) huquqi EMAS."""
+        self.client.force_authenticate(
+            factories.make_user(permissions=["controls.manage", "controls.view"])
+        )
+        self.assertEqual(self.client.get(self.list_url).status_code, 403)
+
+    def test_view_permission_is_read_only(self):
+        data = self._create()
+        self.client.force_authenticate(factories.make_user(permissions=["offers.view"]))
+        self.assertEqual(self.client.get(self.list_url).status_code, 200)
+        self.assertEqual(self.client.get(reverse("offer-revisions", args=[data["id"]])).status_code, 200)
+        response = self.client.patch(reverse("offer-detail", args=[data["id"]]), {"title": "X"}, format="json")
+        self.assertEqual(response.status_code, 403)
+
     def test_region_staff_cannot_write(self):
         region_staff = factories.make_user(
-            permissions=["controls.manage", "controls.view"], region=factories.make_region()
+            permissions=["offers.manage", "offers.view"], region=factories.make_region()
         )
         self.client.force_authenticate(region_staff)
         response = self.client.post(self.list_url, {"title": "Oferta", "content": TEXT}, format="json")

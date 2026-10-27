@@ -52,7 +52,7 @@ export const GROUP_META: Record<string, GroupMeta> = {
   dashboard: { label: 'Boshqaruv paneli', icon: DashboardIcon, description: 'Umumiy holat va statistika' },
   sessions: { label: 'Sessiyalar', icon: ListAltIcon, description: 'Kuzatuv, ogohlantirish, chetlashtirish, dalillar' },
   technical: { label: 'Texnik muammolar', icon: BuildIcon, description: 'Nosozliklar va qo‘shimcha vaqt qarorlari' },
-  exams: { label: 'Imtihonlar', icon: SchoolIcon, description: 'Imtihon, jadval va kompyuter bronlari' },
+  exams: { label: 'Imtihonlar', icon: SchoolIcon, description: 'Imtihon, jadval, kompyuter bronlari va oferta' },
   devices: { label: 'Qurilmalar', icon: ComputerIcon, description: 'Kompyuterlar, kameralar, client qurilmalari' },
   regions: { label: 'Hududlar', icon: MapIcon, description: 'Viloyatlar va binolar' },
   controls: { label: 'Sozlamalar', icon: TuneIcon, description: 'Client profili, IP ro‘yxati, chiqish paroli, AI siyosati' },
