@@ -158,8 +158,16 @@ def _detect_gpu(info: HardwareInfo) -> None:
     `nvidia-smi` esa drayver bilan birga keladi — u yo'q bo'lsa,
     CUDA ham baribir ishlamaydi, ya'ni javob bir xil.
     """
+    from core.system_tools import nvidia_smi
+
+    # To'liq yo'l: nom bilan chaqirilsa NVIDIA'siz mashinada `PATH`
+    # bo'yicha qidirilardi (`core/system_tools.py`).
+    executable = nvidia_smi()
+    if executable is None:
+        log.debug("nvidia-smi topilmadi")
+        return
     command = [
-        "nvidia-smi",
+        executable,
         "--query-gpu=name,memory.total,driver_version",
         "--format=csv,noheader,nounits",
     ]

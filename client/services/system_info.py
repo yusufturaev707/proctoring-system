@@ -39,6 +39,10 @@ import threading
 import uuid
 from typing import Optional
 
+# Windows utilitalari TO'LIQ yo'l bilan: client administrator huquqida
+# ishlaydi, nom bilan chaqiruv esa foydalanuvchi `PATH` ida qidirilardi.
+from core.system_tools import powershell, system32, wmic
+
 log = logging.getLogger(__name__)
 
 _IPV4_RE = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
@@ -150,7 +154,7 @@ def _ip_via_psutil() -> str:
 def _ip_via_os_command() -> str:
     """OS buyruqlari - oxirgi chora (psutil ham ishlamaganda)."""
     if sys.platform == "win32":
-        text = _run(["route", "print", "0.0.0.0"])
+        text = _run([system32("ROUTE.EXE"), "print", "0.0.0.0"])
         # "0.0.0.0  0.0.0.0  <gateway>  <interfeys IP>  <metrika>"
         match = re.search(
             r"0\.0\.0\.0\s+0\.0\.0\.0\s+(\d+\.\d+\.\d+\.\d+)\s+(\d+\.\d+\.\d+\.\d+)", text
@@ -243,7 +247,7 @@ def _mac_of_active_interface() -> str:
 def _mac_via_os_command() -> str:
     if sys.platform == "win32":
         # `getmac` - PowerShell'dan tez (PS ishga tushishi ~1 s oladi).
-        text = _run(["getmac", "/fo", "csv", "/nh"])
+        text = _run([system32("getmac.exe"), "/fo", "csv", "/nh"])
         for line in text.splitlines():
             mac = _normalize_mac(line.split(",")[0].strip('" '))
             if mac:
@@ -647,7 +651,7 @@ def _uuid_from_cim() -> str:
         return ""
     output = _run(
         [
-            "powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+            powershell(), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
             "-Command", "(Get-CimInstance -ClassName Win32_ComputerSystemProduct).UUID",
         ],
         timeout=15.0,
@@ -658,7 +662,7 @@ def _uuid_from_cim() -> str:
 def _uuid_from_wmic() -> str:
     if sys.platform != "win32":
         return ""
-    output = _run(["wmic", "csproduct", "get", "uuid"], timeout=10.0)
+    output = _run([wmic(), "csproduct", "get", "uuid"], timeout=10.0)
     for line in output.splitlines():
         line = line.strip()
         if line and line.upper() != "UUID":

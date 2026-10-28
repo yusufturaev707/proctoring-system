@@ -335,7 +335,8 @@ REST_FRAMEWORK = {
     "DEFAULT_FILTER_BACKENDS": (
         "django_filters.rest_framework.DjangoFilterBackend",
         "rest_framework.filters.OrderingFilter",
-        "rest_framework.filters.SearchFilter",
+        # DRF'niki + MAC ikkala ajratgich bilan (`EC-D6-...` = `EC:D6:...`).
+        "apps.common.filters.SearchFilter",
     ),
     "DEFAULT_RENDERER_CLASSES": ("apps.common.renderers.ApiJSONRenderer",),
     "EXCEPTION_HANDLER": "apps.common.exceptions.api_exception_handler",

@@ -284,9 +284,11 @@ class WebcamSource(CameraSource):
         _LAST_RESTART[instance] = now
         import subprocess
 
+        from core.system_tools import system32
+
         try:
             result = subprocess.run(
-                ["pnputil", "/restart-device", instance],
+                [system32("pnputil.exe"), "/restart-device", instance],
                 capture_output=True, timeout=20,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )

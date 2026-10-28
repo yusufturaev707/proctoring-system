@@ -264,6 +264,19 @@ if ($LASTEXITCODE -ne 0) { Fail "onnxruntime import qilinmadi" }
 if ($Variant -eq "gpu" -and $HasCuda.Trim() -ne "1") {
     Fail "GPU nashri so'raldi, lekin venv'da onnxruntime ning CPU paketi. onnxruntime-gpu==1.22.0 o'rnating yoki -Cpu."
 }
+# IKKI PAKET BIR PAPKADA. `insightface` metadata'sida `onnxruntime` bor va
+# `pip install -r requirements.txt` CPU paketini (eng yangisi) GPU paketi
+# USTIGA yozadi: `onnxruntime/` papkasi umumiy, `.pyd` CPU'niki bo'ladi,
+# eski `onnxruntime_providers_cuda.dll` esa qoladi — yuqoridagi tekshiruv
+# o'tadi, build esa GPU'siz chiqadi (28.10.2026 dev venv'da shunday bo'ldi).
+$OrtDists = & $Python -c "from importlib import metadata as m; import onnxruntime as o; d = [n for n in ('onnxruntime', 'onnxruntime-gpu') if any(x.metadata['Name'] == n for x in m.distributions())]; print(','.join(d) + '|' + o.__version__)"
+if ($LASTEXITCODE -ne 0) { Fail "onnxruntime paketlari o'qilmadi" }
+$OrtNames, $OrtVersion = $OrtDists.Trim().Split("|")
+if ($OrtNames -eq "onnxruntime,onnxruntime-gpu") {
+    Fail ("venv'da onnxruntime (CPU, $OrtVersion) va onnxruntime-gpu BIRGA - CPU fayllari GPU paketini bosib ketgan. Tuzatish: " +
+          "venv\Scripts\python -m pip uninstall -y onnxruntime; " +
+          "venv\Scripts\python -m pip install --force-reinstall --no-deps onnxruntime-gpu==1.22.0")
+}
 
 # Yo'l muhit o'zgaruvchisi orqali: satr ichiga qo'yilsa, yo'ldagi
 # apostrof (Windows foydalanuvchi nomlarida uchraydi) Python satrini buzardi.

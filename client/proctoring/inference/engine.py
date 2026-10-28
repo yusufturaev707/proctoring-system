@@ -38,6 +38,33 @@ import numpy as np
 log = logging.getLogger(__name__)
 
 
+def session_options(ort, *, intra_threads: int = 0):
+    """
+    ONNX Runtime sessiya sozlamalari — barcha modellar uchun BITTA joyda.
+
+    SPINNING O'CHIRILADI (`allow_spinning = 0`). Standart holatda ORT
+    thread'lari ish tugagach ham keyingi vazifani kutib yadroni bo'sh
+    aylantiradi. CPU nashrida FaceID shu tufayli protsessorni 100% band
+    qilardi — o'lchangan (10 yadro, buffalo_l, 1280x720, bitta yuz):
+
+        standart            95 ms, 10.5 aniqlash/s, jarayon CPU 83%
+        spinning o'chiq     80 ms, 12.4 aniqlash/s, jarayon CPU  5%
+
+    ya'ni yuklama ~17 baravar kam, aniqlash esa hatto tezroq (bo'sh
+    aylanayotgan thread'lar haqiqiy hisobdan vaqt olmaydi). GPU
+    sessiyasida ham CPU'da bajariladigan tugunlar bor — u yerda ham
+    zararsiz. `intra_threads` — faqat profil cheklasa (`OnnxEngine`).
+    """
+    options = ort.SessionOptions()
+    options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    options.add_session_config_entry("session.intra_op.allow_spinning", "0")
+    options.add_session_config_entry("session.inter_op.allow_spinning", "0")
+    if intra_threads:
+        options.intra_op_num_threads = intra_threads
+        options.inter_op_num_threads = 1
+    return options
+
+
 class ModelNotFound(FileNotFoundError):
     """Model fayli topilmadi — modul o'chiriladi, dastur to'xtamaydi."""
 
@@ -139,15 +166,11 @@ class OnnxEngine(InferenceEngine):
         # yuklangan bo'lishi kerak.
         cuda_runtime.prepare()
 
-        options = ort.SessionOptions()
-        options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        if self._intra_threads:
-            # CPU rejimida thread sonini CHEKLASH kerak: standart
-            # holda ONNX Runtime barcha yadrolarni egallaydi va UI
-            # thread'i kadr uzatishga ulgurmay qoladi - oldindan
-            # ko'rish uzuq-yuluq bo'lib ko'rinadi.
-            options.intra_op_num_threads = self._intra_threads
-            options.inter_op_num_threads = 1
+        # CPU rejimida thread sonini CHEKLASH kerak: standart holda ONNX
+        # Runtime barcha yadrolarni egallaydi va UI thread'i kadr
+        # uzatishga ulgurmay qoladi - oldindan ko'rish uzuq-yuluq bo'lib
+        # ko'rinadi. Spinning har doim o'chiq (`session_options`).
+        options = session_options(ort, intra_threads=self._intra_threads)
 
         # RO'YXATNI `cuda_runtime` BERADI, `ort.get_available_providers()`
         # EMAS. Ikkinchisida `CUDAExecutionProvider` provayder DLL'i

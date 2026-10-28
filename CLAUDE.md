@@ -341,6 +341,13 @@ aniqlanmaydi va solishtirilmaydi; keyin oval xira uzuq chiziq bo'lib qoladi.
   `set_detection_enabled`); sahifa ham sanoqdagi natijani rad etadi (`_on_face`).
 * Har urinishda qaytadan. `0` — sanoq yo'q, oval baribir qoladi.
 * **`take_camera` aniqlashni YOQIB uzatadi** — davriy FaceID unga tayanadi.
+* **Aniqlash kamera o'qish siklidan ALOHIDA thread'da**
+  (`camera_worker._DetectionLane`, bitta o'rinli quti — model band bo'lsa
+  kutayotgan kadr eng yangisi bilan almashadi). Modelni `_read_loop` ichida
+  sinxron chaqirishni QAYTARMANG: oldindan ko'rish har 3-kadrda model vaqtiga
+  qotardi (o'lchangan, GPU: 30 → 24 kadr/s, 93 ms gacha uzilish; CPU'da
+  100–300 ms). O'chirish/yoqishdan oldingi kadr natijasi tashlanadi
+  (`_detect_gen`).
 * Oval o'lchami (`_GUIDE_HEIGHT` 72%, nisbat 0.76, markaz 47%) ichidagi
   yuz `MIN_FACE_WIDTH_PX` dan katta bo'lishini kafolatlaydi.
 
@@ -1490,6 +1497,23 @@ uni ochiq xatoga aylantiradi (standart `false`).
 cuDNN 9, `1.24+` → CUDA 13 (`client/requirements.txt` izohi). Yechim —
 faqat mos nashr.
 
+**`pip install -r requirements.txt` GPU'ni jimgina o'chiradi**: `insightface`
+metadata'sida `onnxruntime` (CPU) bor, pip uni `onnxruntime-gpu` ning o'rnini
+bosuvchi deb tanimaydi va eng yangi CPU paketini umumiy `onnxruntime/` papkasiga
+yozadi (eski `providers_cuda.dll` qoladi — DLL tekshiruvi aldanadi). Keyin:
+`pip uninstall -y onnxruntime` + `pip install --force-reinstall --no-deps
+onnxruntime-gpu==1.22.0`. `build.ps1` ikkalasi birga bo'lsa to'xtaydi.
+
+**ONNX sessiya sozlamasi BITTA joyda — `proctoring/inference/engine.py:
+session_options`** (`OnnxEngine` ham, FaceID ham): spinning O'CHIQ
+(`session.intra_op/inter_op.allow_spinning = 0`). Standartda ORT thread'lari
+yadroni bo'sh aylantiradi — CPU nashrida FaceID protsessorni 100% band qilardi
+(o'lchangan: 83% → 5%, aniqlash hatto tezroq; GPU'ga ta'sir yo'q).
+`FaceAnalysis(**kwargs)` `sess_options` ni TASHLAYDI — sozlama yuklash paytida
+`model_zoo.PickableInferenceSession` ga beriladi
+(`face_engine._insightface_session_options`, `tests/test_onnx_session_options.py`).
+Yangi ONNX sessiyasini shu funksiyasiz yaratmang.
+
 ### Kuzatuv sikli (`client/proctoring/pipeline.py`)
 
 Barcha modullar bitta thread'da, kadrlar buferlanmaydi (har iteratsiyada eng
@@ -1743,6 +1767,12 @@ ProctoringClientSetup-1.0.0-gpu.exe /VERYSILENT [/INVENTORY_CODE=INV-001]
     qaytariladi (foydalanuvchi o'zgaruvchisi tizimnikini soyalaydi);
   * `PROCTORING_ENV_FILE` faqat MASHINA darajasida (HKLM), REG_EXPAND_SZ da
     faqat `%ProgramData%` ochiladi;
+  * **Tizim utilitasi faqat TO'LIQ yo'l bilan** (`core/system_tools.py`:
+    `system32()`, `powershell()`, `wmic()`, `nvidia_smi()`): nom bilan
+    chaqiruv tizim katalogida yo'q fayl uchun (`nvidia-smi` NVIDIA'siz,
+    `wmic` yangi Windows 11 da) foydalanuvchi `PATH` ida qidiriladi va
+    begona `.exe` administrator huquqida ishga tushardi
+    (`tests/test_system_tools.py` nom bilan chaqiruvni ushlaydi);
   * dev rejimda hammasi o'chiq — muhit odatdagidek ustun.
 * Shablon `.env.example` EMAS — `installer/env.production.template`. Mavjud
   `.env` ustiga yozilmaydi (`/FORCEENV` — `.bak` bilan). `%APPDATA%\
@@ -2047,7 +2077,9 @@ deploy'ni (`deploy.sh`) yangi `dist` almashtirilishidan OLDIN to'xtatadi.
 * **`FaceVerificationLog.session` NULL mumkin** — `select_related("session")`
   yoki `session__` filtri kira olmagan urinishlarni jimgina tashlaydi.
 * **`filter_backends` ni ViewSet'da qayta e'lon qilmang** — `search_fields`
-  / `ordering_fields` jimgina o'chadi.
+  / `ordering_fields` jimgina o'chadi. Qidiruv — `apps.common.filters.
+  SearchFilter` (DRF'niki emas): MAC maydonida (`mac_address`, `*_mac`)
+  `EC-D6-...` va `EC:D6:...` bir xil topiladi (`tests/test_mac_search.py`).
 * **Kursor va offset sahifalash aralash**: sessiya/hodisa/audit `count`
   qaytarmaydi, `?page=2` jimgina e'tiborsiz. Frontend shaklni avtomatik aniqlaydi.
 * **Kursor unikal ustunga**: audit — `AuditCursorPagination` (`-id`).
@@ -2106,9 +2138,14 @@ deploy'ni (`deploy.sh`) yangi `dist` almashtirilishidan OLDIN to'xtatadi.
 * **(client) Ishlab turgan `CameraWorker` ni `None` qilmang — `retire_camera()`**.
   Egasiz QThread kamerani band qiladi va keyin `0xC0000409` bilan qulaydi
   (`_LIVE` registri faqat qulashni to'sadi).
-* **(client) Qat'iy o'lchamli vidjet siqilgan ustunda ustma-ust tushadi** —
-  `faceid_page._fit_photo` rasmni karta balandligidan o'lchaydi; yangi
-  element qo'shganda 1366x768 da tekshiring.
+* **(client) Qat'iy o'lchamli vidjet siqilgan ustunda ustma-ust tushadi**
+  (`setFixedSize`/`setMinimumHeight` `QWidget.setGeometry` da majburlanadi
+  va vidjet katagidan chiqadi). FaceID hujjat rasmi — `FittedPhotoView`:
+  o'lchamni layout beradi (matn minimumi, rasm — qolgani), minimum faqat
+  `minimumSizeHint`; joy tor bo'lsa `_apply_compact` chiplar → sarlavhani
+  yashiradi. Qo'lda o'lchash siklini va qat'iy rasm o'lchamini QAYTARMANG
+  (15", 150%, 1280x680 da rasm ismni yopardi). Yangi element qo'shganda
+  `tests/test_faceid_photo_layout.py` (1280x600..1920x1080).
 * **(client) Kamera nomini PnP ro'yxatidan olmang** — `camera/dshow.py`.
 * **(client) Otasiz vidjetda `setVisible(True)`/`show()` chaqirmang**
   (`__init__` ichida ham) — Qt uni ALOHIDA OYNA qilib ochadi: ishga

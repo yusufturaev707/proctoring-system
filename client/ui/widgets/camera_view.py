@@ -29,9 +29,9 @@ from __future__ import annotations
 from typing import Optional
 
 import numpy as np
-from PyQt6.QtCore import QElapsedTimer, QRectF, Qt
+from PyQt6.QtCore import QElapsedTimer, QRect, QRectF, QSize, Qt
 from PyQt6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPixmap
-from PyQt6.QtWidgets import QLabel, QSizePolicy
+from PyQt6.QtWidgets import QLabel, QSizePolicy, QWidget
 
 from ui.styles import COLORS, preview_surface_style
 
@@ -503,4 +503,133 @@ class PhotoView(QLabel):
             scaled,
         )
         painter.end()
+        return canvas
+
+
+class FittedPhotoView(QWidget):
+    """
+    Hujjat rasmi — layout bergan JOYGA SIG'ADI (nisbat 3:4, kesilmaydi).
+
+    `PhotoView` qat'iy o'lchamli (`setFixedSize`). FaceID sahifasida u
+    yon ustundagi joyga qo'lda moslanardi, lekin pastki chegarasi
+    (160 px) bor edi: joy undan kam bo'lsa (15" noutbuk, 150% masshtab,
+    ochiq vazifalar paneli — 1280x680) layout qat'iy vidjetni
+    kichraytira olmasdi va rasm o'z katagidan chiqib, ostidagi F.I.Sh.
+    ni yopardi.
+
+    Bu vidjetda o'lchamni LAYOUT hal qiladi: matn o'z minimumini oladi,
+    rasm esa qolganini (`Expanding`, `max_height` gacha). Rasm vidjetning
+    ichida chiziladi — hech qachon chetidan chiqmaydi. Ramka kattaligi
+    joyga qarab o'zgaradi, nisbat esa doim 3:4.
+
+    Piksel xaritasi ekran masshtabida (`devicePixelRatio`) tayyorlanadi:
+    150% da 1:1 rasm xira chiqardi — bu esa jonli kadr bilan
+    solishtiriladigan rasm.
+    """
+
+    _PLACEHOLDER = "Hujjat rasmi\nyuklanmagan"
+
+    def __init__(self, parent=None, *, max_width: int = 264, max_height: int = 352,
+                 min_height: int = 96) -> None:
+        super().__init__(parent)
+        self._source = QPixmap()
+        self._cache = QPixmap()
+        self._cache_key: tuple = ()
+        self._max_width = max_width
+        self._max_height = max_height
+        self._min_height = min_height
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        # Minimum faqat MASLAHAT (`minimumSizeHint`), `setMinimumHeight`
+        # EMAS: qat'iy minimum `QWidget.setGeometry` da majburlanadi va
+        # joy undan ham kam bo'lsa vidjet yana katagidan chiqardi.
+        self.setMaximumHeight(max_height)
+
+    def sizeHint(self) -> QSize:
+        return QSize(self._max_width, self._max_height)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(round(self._min_height * 3 / 4), self._min_height)
+
+    def set_min_height(self, height: int) -> None:
+        """Layout'ga beriladigan minimal balandlik (o'ta past ekranda kamayadi)."""
+        height = max(0, int(height))
+        if height != self._min_height:
+            self._min_height = height
+            self.updateGeometry()
+
+    def has_image(self) -> bool:
+        return not self._source.isNull()
+
+    def set_image_bytes(self, raw: bytes) -> bool:
+        pixmap = QPixmap()
+        ok = bool(raw) and pixmap.loadFromData(raw)
+        self._source = pixmap if ok else QPixmap()
+        self._cache = QPixmap()
+        self._cache_key = ()
+        self.update()
+        return ok
+
+    def frame_rect(self) -> QRect:
+        """Vidjet ichidagi eng katta 3:4 ramka (gorizontal markazda)."""
+        height = min(self.height(), self._max_height, round(self.width() * 4 / 3))
+        width = round(height * 3 / 4)
+        return QRect((self.width() - width) // 2, (self.height() - height) // 2, width, height)
+
+    def paintEvent(self, _event) -> None:
+        rect = self.frame_rect()
+        if rect.width() <= 0 or rect.height() <= 0:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        frame = QRectF(rect).adjusted(0.5, 0.5, -0.5, -0.5)
+        path = QPainterPath()
+        path.addRoundedRect(frame, _PHOTO_RADIUS, _PHOTO_RADIUS)
+        # MD3 "media" konteyneri: tonal fon — nisbati 3:4 bo'lmagan rasm
+        # chetida oq yo'lak emas, sirt rangi ko'rinadi.
+        painter.fillPath(path, QColor(COLORS["surface_container_low"]))
+
+        if self._source.isNull():
+            pen = QPen(QColor(COLORS["outline_variant"]), 1, Qt.PenStyle.DashLine)
+            painter.setPen(pen)
+            painter.drawPath(path)
+            font = QFont(self.font())
+            font.setPixelSize(13)
+            painter.setFont(font)
+            painter.setPen(QColor(COLORS["outline"]))
+            painter.drawText(rect, int(Qt.AlignmentFlag.AlignCenter), self._PLACEHOLDER)
+        else:
+            painter.drawPixmap(rect.topLeft(), self._rounded_pixmap(rect.size()))
+        painter.end()
+
+    def _rounded_pixmap(self, size: QSize) -> QPixmap:
+        """
+        Rasm yumaloq burchakli niqob ichida (`PhotoView._rounded` bilan
+        bir xil usul — `setClipPath` tekislanmaydi). O'lcham o'zgarmasa
+        keshdan: yon ustundagi har o'zgarish qayta chizishni chaqiradi.
+        """
+        ratio = self.devicePixelRatioF()
+        key = (size.width(), size.height(), ratio)
+        if key == self._cache_key and not self._cache.isNull():
+            return self._cache
+        device = QSize(round(size.width() * ratio), round(size.height() * ratio))
+        scaled = self._source.scaled(
+            device, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+        )
+        canvas = QPixmap(device)
+        canvas.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(canvas)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#FFFFFF"))
+        mask = QPainterPath()
+        radius = _PHOTO_RADIUS * ratio
+        mask.addRoundedRect(QRectF(canvas.rect()), radius, radius)
+        painter.drawPath(mask)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+        painter.drawPixmap(
+            (canvas.width() - scaled.width()) // 2, (canvas.height() - scaled.height()) // 2, scaled
+        )
+        painter.end()
+        canvas.setDevicePixelRatio(ratio)
+        self._cache, self._cache_key = canvas, key
         return canvas

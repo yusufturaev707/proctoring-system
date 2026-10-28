@@ -5,6 +5,14 @@ Kamera oqimi - alohida thread.
 har kadrda qotadi. Shuning uchun butun sikl QThread ichida, UI'ga esa
 faqat tayyor kadr va natija signal bilan uzatiladi.
 
+YUZ ANIQLASH O'QISH SIKLIDAN ALOHIDA (`_DetectionLane`). Ilgari model
+shu siklda, har 3-kadrda sinxron chaqirilardi va u ishlayotganda
+kameradan kadr o'qilmasdi: oldindan ko'rish har 3-kadrda model vaqtiga
+(GPU ~20-30 ms, CPU 100-300 ms) to'xtab, "bilinar-bilinmas" qotardi.
+O'lchangan (soxta 30 fps manba, GPU): kadr/s 30 dan 24 ga tushgan, 6 s
+da 50 ms dan uzun 24 ta oraliq (eng uzuni 93 ms). Endi o'qish sikli
+modelni hech qachon kutmaydi.
+
 QURILMANI O'ZI OCHMAYDI. Manba tashqaridan beriladi
 (`proctoring/camera/factory.py`) va u AYNAN tekshiruv sahifasida
 tanlangan taqsimotdan quriladi (`AppState.cameras`). Ilgari bu yerda
@@ -23,6 +31,7 @@ alohida.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import Optional
 
@@ -216,6 +225,62 @@ def select_candidate_face(faces: list, reference=None, min_score=None) -> tuple:
     return "ok", selection.candidate, list(selection.ignored)
 
 
+class _DetectionLane:
+    """
+    Yuz aniqlash o'z thread'ida — BITTA O'RINLI pochta qutisi.
+
+    O'qish sikli kadrni `offer` bilan tashlab ketadi va kutmaydi. Model
+    band bo'lsa kutayotgan kadr YANGISI bilan almashtiriladi: model
+    bo'shaganda doim ENG OXIRGI kadrni oladi (navbat o'smaydi, natija
+    eskirmaydi). Bir vaqtda bitta inferensiya — yuklama avvalgidan oshmaydi.
+
+    `threading.Thread`, QThread emas: signal ishchining o'zidan chiqadi
+    (`face_result`), Qt uni qabul qiluvchining thread'iga navbat bilan
+    yetkazadi. Inferensiya (ONNX Runtime, OpenCV) GIL'ni qo'yib yuboradi,
+    ya'ni o'qish sikli shu paytda ham kadr oladi.
+    """
+
+    def __init__(self, process) -> None:
+        self._process = process
+        self._cond = threading.Condition()
+        self._job: Optional[tuple] = None
+        self._stopped = False
+        # `daemon` — jarayon tugayotganda osilgan inferensiya chiqishni
+        # to'smasin; odatdagi yo'lda `stop()` uni kutadi.
+        self._thread = threading.Thread(target=self._loop, name="faceid-detect", daemon=True)
+        self._thread.start()
+
+    def offer(self, frame, generation: int) -> None:
+        with self._cond:
+            if self._stopped:
+                return
+            self._job = (frame, generation)
+            self._cond.notify()
+
+    def stop(self, timeout: float = 3.0) -> None:
+        with self._cond:
+            self._stopped = True
+            self._job = None
+            self._cond.notify()
+        if self._thread is not threading.current_thread():
+            self._thread.join(timeout)
+
+    def _loop(self) -> None:
+        while True:
+            with self._cond:
+                while self._job is None and not self._stopped:
+                    self._cond.wait()
+                if self._stopped:
+                    return
+                frame, generation = self._job
+                self._job = None
+            try:
+                self._process(frame, generation)
+            except Exception:
+                # Thread o'lmasin: keyingi kadr baribir tekshiriladi.
+                log.exception("Yuz aniqlash thread'ida kutilmagan xato")
+
+
 def source_for_role(layout, role: str = "primary", *, stream_url_provider=None):
     """
     Taqsimotdagi ROL uchun kadr manbai. `None` — ishlaydigan kamera yo'q.
@@ -311,6 +376,12 @@ class CameraWorker(QThread):
         # Oddiy `bool`: yozish ham, o'qish ham GIL ostida atomik va
         # sikl uni har kadrda qayta o'qiydi.
         self._detect = bool(detect)
+        #: Aniqlash yoqilib-o'chirilgan sayin oshadi. Aniqlash alohida
+        #: thread'da (`_DetectionLane`): o'chirishdan OLDIN olingan kadr
+        #: natijasi keyin kelsa, u tashlanadi — yuqoridagi "eski natija
+        #: birinchi kadr bo'lib kelardi" holati qaytmasin.
+        self._detect_gen = 0
+        self._lane: Optional[_DetectionLane] = None
         #: Test davomidagi etalon: `(birlik vektor, imtihon chegarasi)`
         #: yoki `None` (`set_reference`). BITTA kortej - UI thread uni
         #: almashtiradi, ishchi har kadrda bir marta o'qiydi; ikki alohida
@@ -417,7 +488,10 @@ class CameraWorker(QThread):
 
     def set_detection_enabled(self, enabled: bool) -> None:
         """Yuz aniqlashni yoqadi/o'chiradi - kamera to'xtamaydi."""
-        self._detect = bool(enabled)
+        enabled = bool(enabled)
+        if enabled != self._detect:
+            self._detect_gen += 1
+        self._detect = enabled
 
     @property
     def detection_enabled(self) -> bool:
@@ -469,6 +543,7 @@ class CameraWorker(QThread):
             self._report_error("Yuz kamerasi topilmadi.")
             return
         self._started_at = time.monotonic()
+        self._lane = _DetectionLane(self._process)
 
         # UZILISH ISHCHINI TO'XTATMAYDI. Ilgari kamera ochilmasa yoki
         # kadr kelmay qolsa `run()` tugardi va sahifa qayta ochmaguncha
@@ -493,6 +568,8 @@ class CameraWorker(QThread):
                         break
                     attempt += 1
         finally:
+            # Aniqlash thread'i avval: u tugagach natija chiqmaydi.
+            self._lane.stop()
             # Har qanday chiqish yo'lida yopiladi - aks holda kamera
             # band qolib, keyingi sahifa (yoki kuzatuv oqimi) uni
             # umuman ocholmaydi.
@@ -576,7 +653,10 @@ class CameraWorker(QThread):
             frame_index += 1
 
             if self._detect and frame_index % max(1, DETECT_EVERY_NTH_FRAME) == 0:
-                self._process(frame)
+                # Kutilmaydi — model o'z thread'ida (`_DetectionLane`).
+                # Kadr nusxasiz: UI'ga nusxasi ketdi, `read()` esa har
+                # safar yangi massiv beradi.
+                self._lane.offer(frame, self._detect_gen)
 
     def _report_error(self, message: str, source=None) -> None:
         """Uzilish haqida xabar — boshida bir marta, sabab o'zgarsa yana."""
@@ -639,7 +719,13 @@ class CameraWorker(QThread):
             log.debug("Kamerani yopishda xato", exc_info=True)
 
     # ------------------------------------------------------------------
-    def _process(self, frame: np.ndarray) -> None:
+    def _process(self, frame: np.ndarray, generation: Optional[int] = None) -> None:
+        """
+        Bitta kadrni aniqlaydi va `face_result` chiqaradi (`_DetectionLane` thread'ida).
+
+        `generation` — kadr olingan paytdagi `_detect_gen`: oraliqda aniqlash
+        o'chirilgan yoki qayta yoqilgan bo'lsa natija chiqmaydi.
+        """
         engine = self._ensure_engine()
         if engine is None or not engine.is_ready:
             return
@@ -696,6 +782,8 @@ class CameraWorker(QThread):
             )
         else:
             payload["quality"] = []
+        if generation is not None and (not self._detect or generation != self._detect_gen):
+            return
         self.face_result.emit(payload)
 
     def _ensure_engine(self):

@@ -30,14 +30,13 @@ IKKI QATLAM (`CLAUDE.md`: "Client sozlamalari: .env va panel"):
 from __future__ import annotations
 
 import os
-import sys
 from pathlib import Path
 
 from dotenv import dotenv_values, load_dotenv
 
 from core.bundle_paths import env_file_path, is_frozen, resource_root, writable_root
 from core.env_guard import config_source
-from version import APP_NAME, __version__ as APP_VERSION
+from version import APP_NAME, __version__ as APP_VERSION  # noqa: F401  (qayta eksport: main, auth_service)
 
 #: Yuklangan `.env` fayli (yoki `None`). `main` uni log'ga yozadi:
 #: "qaysi server manzili?" degan savolga birinchi javob - qaysi fayl

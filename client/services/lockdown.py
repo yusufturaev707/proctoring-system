@@ -822,7 +822,6 @@ def install_system_menu_guard(app) -> bool:
         return True
     if sys.platform != "win32":
         return False
-    import ctypes
     from ctypes import wintypes
 
     from PyQt6.QtCore import QAbstractNativeEventFilter

@@ -125,8 +125,10 @@ def device_names() -> list[str]:
 
 
 def _pnp_names(device_class: str) -> list[str]:
+    from core.system_tools import powershell
+
     command = [
-        "powershell", "-NoProfile", "-NonInteractive", "-Command",
+        powershell(), "-NoProfile", "-NonInteractive", "-Command",
         "Get-PnpDevice -Class {} -Status OK "
         "| Select-Object -ExpandProperty FriendlyName".format(device_class),
     ]

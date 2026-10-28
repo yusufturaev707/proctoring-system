@@ -248,67 +248,6 @@ def grab_screens() -> Optional[QImage]:
 
 
 # --------------------------------------------------------------------------
-# Kadr olish (FAQAT UI thread'dan)
-# --------------------------------------------------------------------------
-def grab_screens() -> Optional[QImage]:
-    """
-    Barcha monitorlarni bitta rasmga yig'adi.
-
-    Ikkinchi monitor ATAYLAB qamrab olinadi: aynan u chetlashtirish
-    sababi bo'ladigan holat. `multi_monitor` hodisasi buni AYTADI,
-    skrinshot esa KO'RSATADI - faqat asosiy ekranni olish dalilning
-    yarmini tashlab yuborish demak.
-
-    Ekranlar gorizontal joylashtiriladi: haqiqiy koordinatalarni saqlash
-    monitorlar turli balandlikda bo'lganda katta bo'sh maydon beradi va
-    u JPEG'da faqat joy egallaydi.
-
-    Qt'da ekran nusxasi GUI thread'iga bog'langan, shuning uchun bu
-    funksiya fon thread'idan chaqirilmaydi.
-    """
-    app = QApplication.instance()
-    if app is None:
-        return None
-
-    screens = app.screens()
-    if not screens:
-        return None
-
-    images = []
-    for screen in screens:
-        try:
-            pixmap = screen.grabWindow(0)
-        except Exception:
-            log.debug("Ekranni olishda xato: %s", screen.name(), exc_info=True)
-            continue
-        if pixmap is None or pixmap.isNull():
-            continue
-        images.append(pixmap.toImage())
-
-    if not images:
-        return None
-    if len(images) == 1:
-        return images[0]
-
-    total_width = sum(image.width() for image in images)
-    max_height = max(image.height() for image in images)
-    canvas = QImage(total_width, max_height, QImage.Format.Format_RGB32)
-    canvas.fill(0)
-
-    painter = QPainter(canvas)
-    try:
-        offset = 0
-        for image in images:
-            painter.drawImage(offset, 0, image)
-            offset += image.width()
-    finally:
-        # `QPainter` yopilmasa `QImage` qulflangan holda qoladi va uni
-        # fon thread'iga uzatib bo'lmaydi.
-        painter.end()
-    return canvas
-
-
-# --------------------------------------------------------------------------
 # Kodlash
 # --------------------------------------------------------------------------
 def encode_jpeg(image: QImage, *, max_width: int, quality: int,

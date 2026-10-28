@@ -13,6 +13,7 @@ Ikki amaliy xato qo'riqlanadi:
 Haqiqiy kamera ishlatilmaydi.
 """
 
+import os
 import threading
 import time
 import unittest
@@ -385,7 +386,9 @@ class RecoveryLadderTests(unittest.TestCase):
         self.assertEqual([mode for _, mode in steps], ["native", "msmf", "dshow", "native"])
         self.assertIn("qayta ishga tushirildi", steps[2][0])
         args = run.call_args[0][0]
-        self.assertEqual(args[:2], ["pnputil", "/restart-device"])
+        self.assertEqual(os.path.basename(args[0]).lower(), "pnputil.exe")
+        self.assertTrue(os.path.isabs(args[0]), args[0])
+        self.assertEqual(args[1], "/restart-device")
         self.assertEqual(args[2], r"USB\VID_1BCF&PID_2284&MI_00\7&2B3C&0&0000")
 
     def test_restart_has_cooldown(self):

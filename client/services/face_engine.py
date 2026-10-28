@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextlib
 import logging
 import threading
 import time
@@ -378,6 +379,45 @@ def decode_photo_base64(photo_base64: str) -> bytes:
     return base64.b64decode(text, validate=False)
 
 
+@contextlib.contextmanager
+def _insightface_session_options():
+    """
+    InsightFace yaratadigan ONNX sessiyalariga bizning sozlamamizni beradi.
+
+    `FaceAnalysis(**kwargs)` -> `model_zoo.get_model` `kwargs` dan FAQAT
+    `providers` / `provider_options` ni oladi — `sess_options` jimgina
+    tashlanadi (tekshirilgan: sessiyada `intra_op_num_threads == 0`).
+    Natijada spinning yoqiq qolib, CPU nashrida FaceID protsessorni
+    100% band qilardi (`proctoring.inference.engine.session_options`).
+
+    Sessiyani yuklangandan keyin qayta yaratish model yuklashni ikki
+    barobar uzaytirardi — shuning uchun yuklash PAYTIDA kutubxonaning
+    sessiya klassi (`model_zoo.PickableInferenceSession`, modul darajasida
+    nom bilan chaqiriladi) sozlamali vorisga almashtiriladi va keyin
+    qaytariladi. Ikkala chaqiruvchi (`_initialize_locked`, `_fallback_to_cpu`)
+    `FaceEngine._init_lock` ostida — boshqa yuklash
+    bilan to'qnashmaydi.
+    """
+    import onnxruntime as ort
+    from insightface.model_zoo import model_zoo
+
+    from proctoring.inference.engine import session_options
+
+    original = model_zoo.PickableInferenceSession
+    options = session_options(ort)
+
+    class _WithOptions(original):
+        def __init__(self, model_path, **kwargs):
+            kwargs.setdefault("sess_options", options)
+            super().__init__(model_path, **kwargs)
+
+    model_zoo.PickableInferenceSession = _WithOptions
+    try:
+        yield options
+    finally:
+        model_zoo.PickableInferenceSession = original
+
+
 def _check_model_files(directory) -> None:
     """
     Model katalogidagi fayllarni YUKLASHDAN OLDIN tekshiradi.
@@ -618,12 +658,13 @@ class FaceEngine(metaclass=SingletonMeta):
         "yuz topilmadi" deb abadiy kutib turardi. Shuning uchun ikkala
         modul borligi shu yerda talab qilinadi.
         """
-        app = factory(
-            name=FACE_MODEL_NAME,
-            root=str(FACE_MODEL_ROOT),
-            providers=providers,
-            allowed_modules=["detection", "recognition"],
-        )
+        with _insightface_session_options():
+            app = factory(
+                name=FACE_MODEL_NAME,
+                root=str(FACE_MODEL_ROOT),
+                providers=providers,
+                allowed_modules=["detection", "recognition"],
+            )
         missing = [
             name for name in ("detection", "recognition")
             if name not in (getattr(app, "models", None) or {})

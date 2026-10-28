@@ -12,6 +12,9 @@
 # hook'lari aynan shu paketda va ular PyInstaller'dan tezroq o'zgaradi.
 pyinstaller==6.22.3
 pyinstaller-hooks-contrib==2026.7
+# PyInstaller'ning bog'liqligi; 78.1.0 da yo'l kesib o'tish va Windows'da
+# g'ildirak o'rnatish zaifliklari (PYSEC-2025-49, GHSA-xmj3-9gf7-h52w).
+setuptools==84.1.0
 
 # Ikonka (`make_icon.py`) - Pillow `requirements.txt` da allaqachon bor
-# (Pillow==12.3.0); `.exe` ga kirmaydi (spec'da `PIL` excludes'da).
+# (Pillow==13.0.0); `.exe` ga kirmaydi (spec'da `PIL` excludes'da).

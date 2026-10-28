@@ -86,7 +86,7 @@ from services.face_engine import (
 from services.repositories import ProctoringRepository
 from services.workers import ApiWorker, WorkerHolder
 from ui.styles import COLORS, badge_style, primary_button_style
-from ui.widgets.camera_view import CameraView, PhotoView
+from ui.widgets.camera_view import CameraView, FittedPhotoView
 from ui.widgets.header import PageHeader, ip_chip_hints
 from ui.widgets.indicators import BusyOverlay, Card
 from ui.widgets.notice import Notice
@@ -107,18 +107,25 @@ _SIDE_WIDTH = 420
 _PHOTO_WIDTH = 264
 _PHOTO_HEIGHT = 352
 
-#: Rasm shundan kichik bo'lmaydi.
+#: Rasm uchun QULAY balandlik — undan kam joy qolsa ikkilamchi
+#: elementlar (chiplar, keyin karta sarlavhasi) yashiriladi
+#: (`_apply_compact`).
 #:
-#: Pastki chegara KERAK: hujjat rasmi bu sahifada dalil, va uni
-#: "sig'sin" deb pochta markasiga aylantirish operatorni faqat
-#: foizga tayanishga majbur qilardi. 160 px - talabgorni qidirish
-#: sahifasidagi rasm bilan bir xil o'lcham, ya'ni "to'g'ri odammi?"
-#: degan qarash uchun yetarli deb qabul qilingan chegara.
-#:
-#: 1366x768 ekranda shaxs tasdig'i kartasi ochilganda yon ustunga
-#: aynan shuncha joy qoladi - chegarani balandroq qo'yish o'sha
-#: holatda yorliqlarni rasm ustiga chiqarardi.
+#: Hujjat rasmi bu sahifada dalil, va uni "sig'sin" deb pochta
+#: markasiga aylantirish operatorni faqat foizga tayanishga majbur
+#: qilardi. 160 px - talabgorni qidirish sahifasidagi rasm bilan bir
+#: xil o'lcham, ya'ni "to'g'ri odammi?" degan qarash uchun yetarli.
 _PHOTO_MIN_HEIGHT = 160
+
+#: Rasmning pastki chegarasi — layout shundan pastga tushirmaydi
+#: (faqat o'ta past ekranda, `_apply_compact`).
+#:
+#: ATAYLAB `_PHOTO_MIN_HEIGHT` dan kichik. Ilgari 160 qat'iy edi va
+#: joy undan kam bo'lganda (15" noutbuk, 150% masshtab, ochiq vazifalar
+#: paneli — 1280x680) rasm o'z katagidan chiqib F.I.Sh. ni yopardi.
+#: Endi yetishmagan joyni rasm beradi, matn emas: ism doim to'liq
+#: o'qiladi, rasm esa biroz kichikroq bo'ladi.
+_PHOTO_FLOOR = 96
 
 
 
@@ -357,8 +364,14 @@ class FaceIDPage(QWidget):
         # detalga o'xshardi - operator solishtirishni ko'z bilan
         # emas, faqat foizga tayanib bajarardi.
         candidate_card = Card("Talabgor")
-        self.photo = PhotoView(width=_PHOTO_WIDTH, height=_PHOTO_HEIGHT)
-        candidate_card.body.addWidget(self.photo, 0, Qt.AlignmentFlag.AlignHCenter)
+        self._candidate_card = candidate_card
+        # O'LCHAMNI LAYOUT HAL QILADI (`FittedPhotoView`): matn o'z
+        # minimumini oladi, rasm qolganini (cho'zilma 1, `_PHOTO_HEIGHT`
+        # gacha). Rasm o'z katagidan hech qachon chiqmaydi.
+        self.photo = FittedPhotoView(
+            max_width=_PHOTO_WIDTH, max_height=_PHOTO_HEIGHT, min_height=_PHOTO_FLOOR
+        )
+        candidate_card.body.addWidget(self.photo, 1)
         candidate_card.body.addSpacing(6)
 
         self.name_label = QLabel("-")
@@ -397,7 +410,10 @@ class FaceIDPage(QWidget):
         self.mode_badge.setFixedHeight(26)
         candidate_card.body.addSpacing(4)
         candidate_card.body.addWidget(self.mode_badge, 0, Qt.AlignmentFlag.AlignLeft)
-        candidate_card.body.addStretch(1)
+        # Cho'zilma 0: bo'sh joy avval RASMGA beriladi; rasm eng katta
+        # o'lchamiga yetgandan keyingisi shu yerda (kartaning pastida)
+        # qoladi — rasm va ism orasida emas.
+        candidate_card.body.addStretch(0)
         # Cho'zilma koeffitsienti 1: karta o'ng ustunning qolgan
         # balandligini egallaydi va ikkala ustun BIR XIL balandlikda
         # tugaydi. Aks holda chapda baland karta, o'ngda esa kichik
@@ -535,14 +551,17 @@ class FaceIDPage(QWidget):
 
     def _fit_photo(self) -> None:
         """
-        Hujjat rasmini EKRAN BALANDLIGIGA moslaydi (nisbat 3:4).
+        Yon ustundagi talabgor kartasini mavjud joyga moslaydi.
 
-        Ramka qat'iy 264x352 bo'lganda past ekranda (1366x768,
-        imtihon markazlarida odatiy) yon ustun sig'masdi. Qt bunday
-        holatda yetishmagan joyni O'RALADIGAN YORLIQLARDAN oladi
-        (ular layout'ga bir qatorlik minimum beradi) va natijada ism
-        rasmning ustiga chiziladi — ekranda u "dastur buzildi"
-        bo'lib ko'rinadi.
+        Rasm o'lchamini endi LAYOUT hal qiladi (`FittedPhotoView`) — bu
+        yerda faqat ikki narsa qoladi: o'raladigan ismga haqiqiy
+        balandligini berish (`_refit_wrapped`) va joy tor bo'lsa
+        ikkilamchi elementlarni yashirish (`_apply_compact`).
+
+        Ilgari rasm qat'iy o'lchamli edi va bu yerda qo'lda (uch
+        urinish bilan) hisoblanardi; 160 px pastki chegaradan kam joy
+        qolganda rasm katagidan chiqib F.I.Sh. ni yopardi
+        (15" noutbuk, 150% masshtab — 1280x680).
         """
         # Sahifa hali qurilmagan bo'lsa (`resizeEvent` konstruktordan
         # oldin ham kelishi mumkin) o'lchaydigan narsa yo'q.
@@ -550,66 +569,52 @@ class FaceIDPage(QWidget):
         if card is None or card.height() <= 0:
             return
         self._refit_wrapped()
-
-        # JOY YETMASA IKKILAMCHI CHIPLAR YASHIRINADI.
-        #
-        # 1366x768 ekranda shaxs tasdig'i kartasi ochilganda yon
-        # ustunga hamma narsa sig'maydi va tanlov aniq: bu qadamda
-        # kartaning vazifasi — hujjat rasmini jonli kadr bilan
-        # SOLISHTIRISH. Test vaqti allaqachon o'qilgan, "solishtirish
-        # rejimi" esa moslik tasdiqlangandan keyin hech nima
-        # qo'shmaydi. Rasmni pochta markasiga aylantirish esa aynan
-        # shu qadamni ma'nosiz qilardi.
         self._apply_compact(card)
 
-        # O'LCHOV KARTANING O'ZIDAN olinadi, ekran balandligidan
-        # emas. Kartaga qancha joy tekkanini yon ustun hal qiladi
-        # (xabar satri paydo bo'lsa kamayadi), qat'iy konstanta esa
-        # shriftga va DPI masshtabiga bog'liq bo'lardi — 125% da
-        # yana buzilardi.
-        #
-        # Ayirma — rasmdan BOSHQA hamma narsaning minimumi: rasm
-        # shundan qolganini oladi va shu tufayli karta minimumi
-        # kartaning o'ziga aynan teng bo'ladi, ya'ni Qt endi joy
-        # "o'g'irlashi" kerak emas.
-        #
-        # UCH URINISH: rasm o'lchami o'zgargach yon ustun qaytadan
-        # taqsimlanadi va kartaga tekkan balandlik ham o'zgaradi
-        # (masalan xabar satri bitta qator o'rniga ikkitasini oladi).
-        # Bitta o'tish bu yangi holatni ko'rmasdi, cheksiz sikl esa
-        # kerak emas — har o'tishda ayirma kamayadi.
-        for _ in range(3):
-            others = card.layout().minimumSize().height() - self.photo.height()
-            height = max(
-                _PHOTO_MIN_HEIGHT, min(_PHOTO_HEIGHT, card.height() - others)
-            )
-            # Nisbat 3:4 — hujjat rasmi aynan shunday keladi.
-            if height == self.photo.height():
-                break
-            self.photo.set_size(round(height * 3 / 4), height)
-            self._side_panel.layout().activate()
+    def _photo_room(self, card) -> int:
+        """Joriy ko'rinishda rasmga qoladigan balandlik."""
+        layout = card.layout()
+        layout.invalidate()
+        others = layout.minimumSize().height() - self.photo.minimumSizeHint().height()
+        return card.height() - others
 
     def _apply_compact(self, card) -> None:
         """
-        Joy yetmasa ikkilamchi chiplarni yashiradi (`_fit_photo`).
+        Joy yetmasa ikkilamchi elementlarni BOSQICHMA-BOSQICH yashiradi.
 
-        Qaror chiplar KO'RINGANDAGI o'lchov bo'yicha qabul qilinadi
-        (yashirilganlarining balandligi ayirmaga QAYTA qo'shiladi),
-        aks holda "yashirdim -> joy paydo bo'ldi -> ko'rsatdim ->
-        joy yetmadi" degan tebranish yuzaga kelardi va chiplar har
-        o'lchamda bir marta miltillardi.
+        Tartib — ahamiyati bo'yicha: avval chiplar (test vaqti
+        allaqachon o'qilgan, "solishtirish rejimi" moslik
+        tasdiqlangandan keyin hech nima qo'shmaydi), keyin karta
+        sarlavhasi ("Talabgor" — rasm va ism o'zi buni aytadi). Rasm
+        va F.I.Sh. hech qachon yashirilmaydi: kartaning vazifasi — hujjat
+        rasmini jonli kadr bilan SOLISHTIRISH.
+
+        Har chaqiruv HAMMASINI ko'rsatishdan boshlaydi va o'lchovni shu
+        holatdan oladi, ya'ni qaror faqat joyga bog'liq: "yashirdim ->
+        joy paydo bo'ldi -> ko'rsatdim -> joy yetmadi" tebranishi yo'q.
+        Hammasi bitta chaqiruvda, chizishdan oldin — miltillamaydi.
         """
-        hidden = 0
-        if self._duration_text and not self.duration_badge.isVisible():
-            hidden += self.duration_badge.sizeHint().height()
-        if not self.mode_badge.isVisible():
-            hidden += self.mode_badge.sizeHint().height()
-        # Chiplar ko'ringandagi holat: qaror shundan chiqadi.
-        others = card.layout().minimumSize().height() - self.photo.height() + hidden
-        tight = card.height() - others < _PHOTO_MIN_HEIGHT
+        chips = [self.mode_badge]
+        if self._duration_text:
+            chips.append(self.duration_badge)
+        steps = [chips, [card.title_label]]
 
-        self.duration_badge.setVisible(bool(self._duration_text) and not tight)
-        self.mode_badge.setVisible(not tight)
+        self.photo.set_min_height(_PHOTO_FLOOR)
+        for group in steps:
+            for widget in group:
+                widget.setVisible(True)
+        for group in steps:
+            if self._photo_room(card) >= _PHOTO_MIN_HEIGHT:
+                break
+            for widget in group:
+                widget.setVisible(False)
+        # O'TA PAST EKRAN (masalan 1920x1080, 175%): hamma ikkilamchi
+        # element yashirilgandan keyin ham `_PHOTO_FLOOR` sig'masa — rasm
+        # qolgan joyga kichrayadi. Matn ustiga chiqish hech qachon emas.
+        room = self._photo_room(card)
+        if room < _PHOTO_FLOOR:
+            self.photo.set_min_height(room)
+        card.layout().activate()
 
     def _refit_wrapped(self) -> None:
         """

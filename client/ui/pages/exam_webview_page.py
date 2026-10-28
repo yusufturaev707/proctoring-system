@@ -61,7 +61,6 @@ from services.screen_capture import ScreenshotService
 from services.screen_recorder import ScreenRecorder
 from services.workers import ApiWorker, WorkerHolder
 from ui.dialogs.finish_dialog import FinishDialog
-from ui.styles import COLORS
 from ui.dialogs.reload_dialog import ReloadDialog
 from ui.widgets.brand import FloatingSeatTag
 from ui.widgets.exam_menu import ExamActionMenu

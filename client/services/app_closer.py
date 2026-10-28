@@ -321,7 +321,7 @@ def close_other_apps(
             except Exception:
                 log.debug("WM_CLOSE yuborilmadi", exc_info=True)
 
-    gone, alive = psutil.wait_procs(
+    gone, alive = _wait(
         [process for process, _, _ in targets], timeout=grace_seconds
     )
     report["closed"] = sorted({_safe_name(process) for process in gone})
@@ -341,13 +341,48 @@ def close_other_apps(
             log.warning("Yopib bo'lmadi: %s (%s)", name, exc)
             report["failed"].append(name)
 
-    psutil.wait_procs(alive, timeout=_KILL_TIMEOUT)
+    _wait(alive, timeout=_KILL_TIMEOUT)
 
     log.info(
         "Yopildi: %s ta muloyim, %s ta majburan, %s ta yopilmadi",
         len(report["closed"]), len(report["killed"]), len(report["failed"]),
     )
     return report
+
+
+def _wait(processes: list, timeout: float) -> tuple:
+    """
+    `psutil.wait_procs`, lekin ochib bo'lmaydigan BITTA jarayon butun
+    ro'yxatni yiqitmaydi.
+
+    `wait_procs` har jarayonni `SYNCHRONIZE` huquqi bilan ochadi; client
+    oddiy huquqda ishlaganda o'zi ko'tariladigan `Taskmgr.exe` ga
+    `AccessDenied` qaytadi (22.09 log'i) va istisno majburan yopish
+    bosqichini TO'LIQ o'tkazib yuborardi — "saqlaysizmi?" da osilgan
+    dasturlar ochiq qolardi. Zaxira yo'lda har jarayon alohida kutiladi;
+    kutib bo'lmagani tirik hisoblanadi va keyingi bosqichga o'tadi
+    (`threat_scanner` dagi tuzatish bilan bir xil).
+    """
+    import time
+
+    import psutil
+
+    try:
+        return psutil.wait_procs(processes, timeout=timeout)
+    except psutil.Error:
+        log.debug("Jarayonlarni birga kutib bo'lmadi — alohida", exc_info=True)
+
+    deadline = time.monotonic() + timeout
+    gone, alive = [], []
+    for process in processes:
+        try:
+            process.wait(timeout=max(0.0, deadline - time.monotonic()))
+            gone.append(process)
+        except psutil.NoSuchProcess:
+            gone.append(process)
+        except psutil.Error:
+            alive.append(process)
+    return gone, alive
 
 
 def _safe_name(process) -> str:

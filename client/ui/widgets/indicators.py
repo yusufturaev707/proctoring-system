@@ -19,6 +19,8 @@ ko'rinmay qolishi mumkin edi.
 
 from __future__ import annotations
 
+from typing import Optional
+
 from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer
 from PyQt6.QtGui import QBrush, QColor, QFont, QPainter, QPen
 from PyQt6.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
@@ -429,8 +431,11 @@ class Card(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 22, 24, 22)
         layout.setSpacing(14)
+        #: Sarlavha yorlig'i (sarlavhasiz kartada `None`) — joy tor
+        #: bo'lganda sahifa uni yashira oladi (`FaceIDPage._apply_compact`).
+        self.title_label: Optional[QLabel] = None
         if title:
-            label = QLabel(title)
+            label = self.title_label = QLabel(title)
             label.setProperty("role", "value")
             layout.addWidget(label)
         self.body = layout

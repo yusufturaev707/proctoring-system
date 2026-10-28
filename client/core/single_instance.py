@@ -247,7 +247,6 @@ SPLASH_CLASS_NAME = "ProctoringClientEarlySplash"
 
 
 def _splash_visible() -> bool:
-    import ctypes
     from ctypes import wintypes
 
     user32 = _user32()

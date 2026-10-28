@@ -15,9 +15,19 @@ insightface==1.0.1
 # numpy 2.x - insightface/onnxruntime bilan mos kelmaydi.
 numpy==1.26.4
 httpx==0.28.1
-Pillow==12.3.0
+# 13.0.0 - 12.3.0 da 38 ta CVE (pip-audit, 28.10.2026). `.exe` ga
+# kirmaydi (spec `PIL` excludes), lekin skimage/imageio va `make_icon.py`.
+Pillow==13.0.0
 python-dotenv==1.2.3
 psutil==7.2.2
+
+# Tranzitiv paketlar - XAVFSIZLIK uchun qadalgan (pip-audit). Ularni
+# boshqa paket tortadi, qadalmasa eski zaif versiya qolib ketardi.
+#   certifi - httpx TLS ildiz to'plami; 2026.10.18 gacha ishonchsiz
+#             emSign ECC Root CA - G3 bor edi (PYSEC-2026-4320).
+#   urllib3 - requests orqali (insightface); 2.7.0 da 3 ta CVE.
+certifi==2026.10.19
+urllib3==2.8.0
 
 # Kiosk rejimining global klaviatura hook'i uchun paket YO'Q: u xom
 # `WH_KEYBOARD_LL` (`services/keyboard_hook.py`, ctypes). `keyboard`
@@ -55,4 +65,14 @@ psutil==7.2.2
 #   3) `.exe` yonidagi `cuda/` katalogiga nusxalash.
 # Client ularni o'zi topadi va jarayonga yuklaydi - PATH ni qo'lda
 # sozlash kerak emas.
+#
+# TUZOQ: `insightface` metadata'sida `onnxruntime` (CPU) bor va pip
+# `onnxruntime-gpu` ni uning o'rnini bosuvchi deb TANIMAYDI. Shu fayl
+# o'rnatilganda CPU paketi (eng yangisi) GPU paketi ustiga yoziladi -
+# papka umumiy, GPU jimgina yo'qoladi. Har `pip install -r` dan KEYIN:
+#
+#   venv\Scripts\python -m pip uninstall -y onnxruntime
+#   venv\Scripts\python -m pip install --force-reinstall --no-deps onnxruntime-gpu==1.22.0
+#
+# `installer/build.ps1` ikkalasi birga bo'lsa to'xtaydi.
 onnxruntime-gpu==1.22.0
