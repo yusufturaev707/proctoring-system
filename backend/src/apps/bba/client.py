@@ -380,8 +380,18 @@ def fetch_ca(base_url: str, timeout: float = 10.0) -> tuple[bytes, str]:
     bo'lmaydi). Shuning uchun iz chiqariladi — administrator uni Console
     administratoridagi qiymat bilan solishtiradi.
     """
-    response = requests.get(base_url.rstrip("/") + "/ca", timeout=timeout, verify=False)  # noqa: S501
-    response.raise_for_status()
+    try:
+        response = requests.get(base_url.rstrip("/") + "/ca", timeout=timeout, verify=False)  # noqa: S501
+        response.raise_for_status()
+    except requests.exceptions.ConnectTimeout as exc:
+        # Odatda tarmoq yo'li/firewall: Console ishlayapti, lekin bu serverdan
+        # unga yo'l yo'q (`bba_agent_api.md` §1 — 8443 porti ochilishi kerak).
+        raise BbaUnavailable(
+            f"{base_url} ga ulanib bo'lmadi (timeout) — serverdan Console'ga tarmoq yo'li "
+            "yoki firewall ruxsati yo'q. Tekshiring: nc -vz -w 5 <host> <port>"
+        ) from exc
+    except requests.RequestException as exc:
+        raise BbaUnavailable(f"CA sertifikatini olib bo'lmadi: {exc.__class__.__name__}: {exc}") from exc
     pem = response.content
     if b"BEGIN CERTIFICATE" not in pem:
         raise BbaError("Javob PEM sertifikat emas")
