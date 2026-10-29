@@ -199,6 +199,26 @@ class ImportTests(ServiceTestCase):
         with self.assertRaises(services.BbaAlreadyLinked):
             services.import_computer(self.device, zone_id=self.zone.pk, request=fake_request(self.admin))
 
+    def test_import_takes_ip_of_chosen_adapter(self):
+        computer = services.import_computer(self.device, zone_id=self.zone.pk, request=fake_request(self.admin))
+        self.assertEqual(computer.ip_address, "192.168.0.57")
+        self.assertEqual(self.device.primary_ip, "192.168.0.57")
+
+    def test_explicit_or_empty_ip(self):
+        computer = services.import_computer(
+            self.device, zone_id=self.zone.pk, request=fake_request(self.admin), ip_address="",
+        )
+        self.assertIsNone(computer.ip_address)
+
+    def test_ip_taken_in_zone(self):
+        factories.make_computer(zone=self.zone, ip_address="192.168.0.57")
+        with self.assertRaises(serializers.ValidationError) as ctx:
+            services.import_computer(self.device, zone_id=self.zone.pk, request=fake_request(self.admin))
+        self.assertIn("ip_address", ctx.exception.detail)
+        # Ommaviy qo'shishda — IP'siz qo'shiladi, partiya to'xtamaydi.
+        [row] = services.bulk_import([self.device], zone_id=self.zone.pk, request=fake_request(self.admin))
+        self.assertEqual((row["status"], row["ip"]), ("created", ""))
+
     def test_chosen_mac_must_be_physical(self):
         with self.assertRaises(serializers.ValidationError):
             services.import_computer(

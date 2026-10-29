@@ -411,7 +411,7 @@ def link_computers(devices=None) -> int:
 # --------------------------------------------------------------------------
 _INVENTORY_FIELDS = (
     "inventory", "inventory_changes", "inventory_captured_at", "inventory_fetched_at",
-    "inventory_error", "system_uuid", "macs", "primary_mac", "baseboard_serial",
+    "inventory_error", "system_uuid", "macs", "primary_mac", "primary_ip", "baseboard_serial",
     "tpm_ek_hash", "machine_guid",
 )
 
@@ -441,6 +441,7 @@ def fetch_inventory(device: BbaDevice, client=None) -> BbaDevice:
     device.inventory_error = ""
     for name in ("system_uuid", "macs", "primary_mac", "baseboard_serial", "tpm_ek_hash", "machine_guid"):
         setattr(device, name, ids[name])
+    device.primary_ip = ids["primary_ip"] or None
     device.save(update_fields=[*_INVENTORY_FIELDS, "updated_at"])
     link_computers(BbaDevice.objects.filter(pk=device.pk))
     device.refresh_from_db(fields=["computer"])
@@ -550,13 +551,20 @@ def default_inventory_code(device: BbaDevice, mac: str) -> str:
 
 
 def import_computer(device: BbaDevice, *, zone_id, request, number=None,
-                    inventory_code: str = "", mac_address: str = ""):
+                    inventory_code: str = "", mac_address: str = "", ip_address=None,
+                    ip_conflict: str = "error"):
     """
     Console kompyuterini bizning `Computer` sifatida qo'shadi.
 
     Tekshiruv panel formasi bilan BITTA (`ComputerSerializer`): juftlik
     unikalligi, MAC majburiyligi, viloyat chegarasi. UUID — inventory'dan
     (placeholder bo'lsa qo'shilmaydi: uni minglab mashina bo'lishadi).
+
+    IP: `ip_address=None` — tanlangan MAC adapterining inventory'dagi IPv4
+    manzili; `""` — IP'siz. IP bino ichida unikal (`unique_computer_zone_ip`):
+    band bo'lsa `ip_conflict="error"` — xato (bitta kompyuter, administrator
+    tuzatadi), `"skip"` — IP'siz qo'shiladi (ommaviy qo'shish; DHCP manzili
+    eskirgan bo'lishi mumkin, butun partiya to'xtamasin).
     """
     from apps.devices.api.v1.serializers import ComputerSerializer
     from apps.proctoring.services.audit import record_audit
@@ -576,6 +584,16 @@ def import_computer(device: BbaDevice, *, zone_id, request, number=None,
     if not mac:
         raise serializers.ValidationError({"mac_address": "Kompyuterda jismoniy MAC topilmadi"})
 
+    from apps.devices.models import Computer
+
+    ip = identity.ip_for_mac(device.inventory, mac) if ip_address is None else (ip_address or "")
+    if ip and Computer.objects.alive().filter(zone_id=zone_id, ip_address=ip).exists():
+        if ip_conflict != "skip":
+            raise serializers.ValidationError(
+                {"ip_address": f"Bu binoda {ip} manzilli kompyuter allaqachon bor"}
+            )
+        ip = ""
+
     serializer = ComputerSerializer(
         data={
             "zone": zone_id,
@@ -583,6 +601,7 @@ def import_computer(device: BbaDevice, *, zone_id, request, number=None,
             "inventory_code": (inventory_code or "").strip() or default_inventory_code(device, mac),
             "machine_uuid": device.system_uuid,
             "mac_address": mac,
+            "ip_address": ip or None,
         },
         context={"request": request},
     )
@@ -594,7 +613,7 @@ def import_computer(device: BbaDevice, *, zone_id, request, number=None,
     record_audit(
         actor=request.user, action="bba_import_computer", object_type="Computer",
         object_id=computer.pk, request=request,
-        meta={"bba_device": str(device.console_id), "hostname_code": device.hostname_code},
+        meta={"bba_device": str(device.console_id), "hostname_code": device.hostname_code, "ip": ip},
     )
     return computer
 
@@ -606,8 +625,8 @@ def bulk_import(devices, *, zone_id, request) -> list[dict]:
         row = {"id": device.pk, "name": device.name}
         try:
             with transaction.atomic():
-                computer = import_computer(device, zone_id=zone_id, request=request)
-            row.update(status="created", computer=computer.pk)
+                computer = import_computer(device, zone_id=zone_id, request=request, ip_conflict="skip")
+            row.update(status="created", computer=computer.pk, ip=computer.ip_address or "")
         except BbaAlreadyLinked:
             row.update(status="skipped", message="Allaqachon ro'yxatda")
         except serializers.ValidationError as exc:

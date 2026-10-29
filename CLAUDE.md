@@ -831,7 +831,7 @@ Tashqi FaceID tizimi (FastAPI) Face ID'dan o'tgan nomzodni shu yerda bron qiladi
   (ichki ID'lar mos kelmaydi).
 * `seat_in_use`/`seat_unavailable` (409) — qaror, qayta urilmaydi.
 
-### BBA Console integratsiyasi (`apps/bba`, panel `/bba`, `/bba/jobs`)
+### BBA Console integratsiyasi (`apps/bba`, panel `/bba` «Agent PC», `/bba/jobs` «Agent joblar»)
 
 BBA Console — BOSHQA tizim (har kompyuterda agent; API `bba_agent_api.md`).
 Biz uning mijozimiz: hudud → xona → kompyuter, holat, inventory/hardware ID,
@@ -860,7 +860,13 @@ yo'llari ham `BBA_PATH_*`); production'da faqat `https` + CA (`BBA_CA_FILE`,
   MAC'lardan biri mos. Faqat UUID yoki faqat MAC bo'yicha bog'lanmaydi.
   «Ro'yxatga qo'shish» — `ComputerSerializer` orqali (bitta qoida), UUID/MAC
   inventory'dan (`identity.extract`, placeholder'lar tashlanadi; standart MAC —
-  shlyuzli faol adapter, client yuboradigani).
+  shlyuzli faol adapter, client yuboradigani). IP — shu adapterning inventory'dagi
+  IPv4 manzili (`identity.ip_for_mac`, APIPA tashlanadi; `BbaDevice.primary_ip` —
+  faqat ko'rsatish, identifikator EMAS); binoda band bo'lsa bitta qo'shishda xato,
+  ommaviyda IP'siz qo'shiladi.
+* **Dastur ikonkasi Console'da YO'Q** (`InstalledSoftware` — `name`/`version`/
+  `scope`): ikonka va turi NOMDAN (`components/bba/icons.tsx:APP_RULES`), masofaviy
+  boshqaruv/ekran yozish/o'yin — `risk` (ro'yxat boshida, qizil).
 * **Job katalogi bitta joyda** — `bba/jobs.py` (panel `bba/job-types/` dan
   oladi); xavfli tur `confirm` siz rad. Kim yuborgani — `BbaJob` (+ audit
   `bba_job`); holat Console'dan poll ichida (`refresh_jobs`).

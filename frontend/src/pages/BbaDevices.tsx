@@ -16,6 +16,7 @@ import ListIcon from '@mui/icons-material/ViewListOutlined'
 import ResourcePage from '../components/data/ResourcePage'
 import PageHeader from '../components/PageHeader'
 import BbaRoomsView from '../components/bba/BbaRoomsView'
+import type { RoomAction } from '../components/bba/BbaRoomsView'
 import ConfirmDialog from '../components/ConfirmDialog'
 import BbaDeviceSheet from '../components/bba/BbaDeviceSheet'
 import SendJobDialog from '../components/bba/SendJobDialog'
@@ -97,6 +98,8 @@ export default function BbaDevices() {
   const [jobTarget, setJobTarget] = useState<Pending<JobTarget> | null>(null)
   const [importTarget, setImportTarget] = useState<Pending<ImportTarget> | null>(null)
   const [wakeTarget, setWakeTarget] = useState<ApiRecord | null>(null)
+  // Xona kartasidagi «yoqish» — xonaning o'chiq kompyuterlari.
+  const [roomWake, setRoomWake] = useState<{ devices: ApiRecord[]; roomName: string } | null>(null)
   const [mapping, setMapping] = useState(false)
 
   const { data: overview } = useQuery({ queryKey: ['bba-overview'], queryFn: bba.overview, refetchInterval: 60000 })
@@ -127,6 +130,29 @@ export default function BbaDevices() {
     },
     onError: notifyError,
   })
+
+  const wakeRoom = useMutation({
+    mutationFn: (ids: Id[]) => bba.devices.bulkWake({ ids, all: false }),
+    retry: false,
+    onSuccess: (data) => {
+      const rows: ApiRecord[] = data.results || []
+      const failed = rows.filter((row) => row.status === 'error').length
+      notify(
+        `Yoqish signali yuborildi: ${rows.length - failed}` + (failed ? ` · yuborilmadi: ${failed}` : ''),
+        failed ? 'warning' : 'success',
+      )
+      setRoomWake(null)
+    },
+    onError: notifyError,
+  })
+
+  const roomAction = useCallback((action: RoomAction, devices: ApiRecord[], roomName: string) => {
+    if (action === 'wake') {
+      setRoomWake({ devices, roomName })
+      return
+    }
+    setJobTarget({ target: { selection: { ids: devices.map((device) => device.id), all: false }, count: devices.length } })
+  }, [])
 
   const columns = useMemo(
     (): AppColumn[] => [
@@ -175,6 +201,10 @@ export default function BbaDevices() {
               </Box>
             )
         ),
+      },
+      {
+        field: 'primary_ip', headerName: 'IP manzil', width: 130, sortable: false,
+        renderCell: (params) => <CellText value={params.value} mono />,
       },
       {
         field: 'primary_mac', headerName: 'MAC', width: 160, sortable: false,
@@ -289,14 +319,16 @@ export default function BbaDevices() {
         <ToggleButton value="rooms" aria-label="Xonalar bo‘yicha"><RoomsIcon fontSize="small" sx={{ mr: 0.5 }} />Xonalar</ToggleButton>
         <ToggleButton value="list" aria-label="Jadval"><ListIcon fontSize="small" sx={{ mr: 0.5 }} />Jadval</ToggleButton>
       </ToggleButtonGroup>
-      <ToggleButtonGroup size="small" exclusive value={scope} onChange={(_, value) => value && setScope(value)}>
-        <ToggleButton value="all">Barchasi{countLabel(overview?.total)}</ToggleButton>
-        {STATUSES.map((status) => (
-          <ToggleButton key={status} value={status}>
-            {BBA_STATUS_LABEL[status]}{countLabel(counts[status])}
-          </ToggleButton>
-        ))}
-      </ToggleButtonGroup>
+      {view === 'list' && (
+        <ToggleButtonGroup size="small" exclusive value={scope} onChange={(_, value) => value && setScope(value)}>
+          <ToggleButton value="all">Barchasi{countLabel(overview?.total)}</ToggleButton>
+          {STATUSES.map((status) => (
+            <ToggleButton key={status} value={status}>
+              {BBA_STATUS_LABEL[status]}{countLabel(counts[status])}
+            </ToggleButton>
+          ))}
+        </ToggleButtonGroup>
+      )}
       {canManage && !user?.is_region_scoped && (
         <Button size="small" startIcon={<MapIcon />} onClick={() => setMapping(true)}>Hududlar</Button>
       )}
@@ -320,18 +352,21 @@ export default function BbaDevices() {
     <>
       {view === 'rooms' ? (
         <>
-          <PageHeader title="BBA kompyuterlari" subtitle={subtitle} actions={headerActions} />
+          <PageHeader title="Agent PC" subtitle={subtitle} actions={headerActions} />
           {banner && <Box sx={{ mb: 2 }}>{banner}</Box>}
           <BbaRoomsView
             status={scope}
+            onStatusChange={setScope}
             region={searchParams.get('region')}
             onRegionChange={selectRegion}
             onOpen={setDetailId}
+            canJobs={canJobs}
+            onRoomAction={roomAction}
           />
         </>
       ) : (
       <ResourcePage
-        title="BBA kompyuterlari"
+        title="Agent PC"
         subtitle={subtitle}
         queryKey="bba-devices"
         api={devicesApi}
@@ -344,7 +379,7 @@ export default function BbaDevices() {
         filters={filters}
         defaultFilters={DEFAULT_FILTERS}
         staticParams={scope === 'all' ? undefined : { status: scope }}
-        searchPlaceholder="Nomi, Windows nomi, UUID yoki MAC…"
+        searchPlaceholder="Nomi, Windows nomi, IP, UUID yoki MAC…"
         exportName="bba-kompyuterlar"
         height={640}
         // WebSocket uzilgan paytda ham ro'yxat eskirib qolmasin.
@@ -404,6 +439,18 @@ export default function BbaDevices() {
         />
       )}
       {mapping && <RegionMapDialog onClose={() => setMapping(false)} />}
+      <ConfirmDialog
+        open={Boolean(roomWake)}
+        title={`«${roomWake?.roomName || ''}» xonasini yoqish`}
+        description={
+          `Xonadagi ${roomWake?.devices.length || 0} ta o‘chiq kompyuterga Wake-on-LAN signali yuboriladi — ` +
+          'xonadagi boshqa YONIQ kompyuter orqali. Xonada yoniq kompyuter bo‘lmasa yoki BIOS’da WoL o‘chiq bo‘lsa, yoqilmaydi.'
+        }
+        confirmLabel="Yoqish"
+        loading={wakeRoom.isPending}
+        onConfirm={() => roomWake && wakeRoom.mutate(roomWake.devices.map((device) => device.id))}
+        onClose={() => setRoomWake(null)}
+      />
       <ConfirmDialog
         open={Boolean(wakeTarget)}
         title="Kompyuterni yoqish"

@@ -198,11 +198,11 @@ export const NAVIGATION: NavGroup[] = [
         description: 'O‘rnatilgan client dasturlari: tasdiqlash, bloklash, kompyuterga biriktirish',
       },
       {
-        label: 'BBA kompyuterlari', path: '/bba', icon: HubIcon, permission: 'bba.view',
+        label: 'Agent PC', path: '/bba', icon: HubIcon, permission: 'bba.view',
         description: 'BBA Console’dagi kompyuterlar: yoniq/o‘chiq holati, hardware, inventory va ro‘yxatga qo‘shish',
       },
       {
-        label: 'BBA job’lari', path: '/bba/jobs', icon: TerminalIcon, permission: 'bba.view',
+        label: 'Agent joblar', path: '/bba/jobs', icon: TerminalIcon, permission: 'bba.view',
         description: 'Paneldan BBA kompyuterlariga yuborilgan buyruqlar: kim, qachon, natija',
       },
     ],

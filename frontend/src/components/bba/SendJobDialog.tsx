@@ -10,6 +10,7 @@ import WarningIcon from '@mui/icons-material/WarningAmberOutlined'
 import { bba } from '../../api/endpoints'
 import { useUi } from '../../context/UiContext'
 import { JobStatusChip, resultText, Terminal } from './common'
+import { JOB_ICON } from './icons'
 import type { BulkSelection } from '../../api/endpoints'
 import type { ApiRecord, Id } from '../../types/api'
 
@@ -166,6 +167,10 @@ export default function SendJobDialog({
             {types.map((item) => (
               <MenuItem key={item.code} value={item.code}>
                 <Stack direction="row" spacing={1} alignItems="center">
+                  {(() => {
+                    const Glyph = JOB_ICON[item.code]
+                    return Glyph ? <Glyph fontSize="small" color="action" /> : null
+                  })()}
                   <span>{item.label}</span>
                   {item.dangerous && <WarningIcon fontSize="inherit" color="warning" />}
                 </Stack>

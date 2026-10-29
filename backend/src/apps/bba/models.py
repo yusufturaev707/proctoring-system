@@ -109,6 +109,9 @@ class BbaDevice(TimeStampedModel):
     #: Jismoniy adapterlar MAC'lari, kanonik shaklda.
     macs = models.JSONField(default=list, blank=True)
     primary_mac = models.CharField(max_length=17, blank=True, default="")
+    #: `primary_mac` adapterining IPv4 manzili (DHCP'da o'zgaradi — faqat
+    #: ko'rsatish va import taklifi, identifikator EMAS).
+    primary_ip = models.GenericIPAddressField(null=True, blank=True)
     baseboard_serial = models.CharField(max_length=128, blank=True, default="")
     tpm_ek_hash = models.CharField(max_length=128, blank=True, default="")
     machine_guid = models.CharField(max_length=64, blank=True, default="")

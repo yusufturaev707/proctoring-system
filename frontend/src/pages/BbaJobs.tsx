@@ -8,6 +8,7 @@ import ReplayIcon from '@mui/icons-material/ReplayOutlined'
 
 import ResourcePage from '../components/data/ResourcePage'
 import { JobStatusChip, resultText, Terminal } from '../components/bba/common'
+import { JobIcon } from '../components/bba/icons'
 import { LastSeenCell } from './crud/shared'
 import { bba } from '../api/endpoints'
 import { useAuth } from '../context/AuthContext'
@@ -51,7 +52,15 @@ export default function BbaJobs() {
     (): AppColumn[] => [
       { field: 'created_at', headerName: 'Yuborilgan', width: 140, renderCell: LastSeenCell },
       { field: 'device_name', headerName: 'Kompyuter', flex: 1, minWidth: 140, sortable: false },
-      { field: 'job_label', headerName: 'Job', flex: 1, minWidth: 160, sortable: false },
+      {
+        field: 'job_label', headerName: 'Job', flex: 1, minWidth: 180, sortable: false,
+        renderCell: (params) => (
+          <Stack direction="row" spacing={1.25} alignItems="center" sx={{ height: '100%', minWidth: 0 }}>
+            <JobIcon type={params.row.job_type} size={28} />
+            <Typography variant="body2" noWrap>{params.value}</Typography>
+          </Stack>
+        ),
+      },
       {
         field: 'status', headerName: 'Holat', width: 140,
         exportValue: (value) => BBA_JOB_STATUS_LABEL[value] || value,
@@ -84,7 +93,7 @@ export default function BbaJobs() {
   return (
     <>
       <ResourcePage
-        title="BBA job’lari"
+        title="Agent joblar"
         subtitle="Paneldan yuborilgan buyruqlar: kim, qachon, qaysi kompyuterga va natijasi"
         queryKey="bba-jobs"
         api={jobsApi}

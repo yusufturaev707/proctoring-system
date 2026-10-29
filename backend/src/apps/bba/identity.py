@@ -90,18 +90,43 @@ def primary_mac(snapshot: dict) -> str:
     return physical[0] if physical else ""
 
 
+_IPV4 = re.compile(r"^(\d+\.\d+\.\d+\.\d+)/\d+$")
+
+
+def ip_for_mac(snapshot: dict | None, mac: str) -> str:
+    """
+    Adapterning IPv4 manzili (`NetworkConfig[].addrs`, `192.168.0.57/24`).
+
+    APIPA (`169.254.*`) va loopback — manzil emas: DHCP javob bermagan
+    adapter shu manzilni oladi va u mashinani belgilamaydi.
+    """
+    target = canonical_mac(mac)
+    if not snapshot or not target:
+        return ""
+    for nic in snapshot.get("NetworkConfig") or []:
+        if not isinstance(nic, dict) or canonical_mac(nic.get("mac")) != target:
+            continue
+        for addr in nic.get("addrs") or []:
+            match = _IPV4.match(str(addr))
+            if match and not match.group(1).startswith(("169.254.", "127.")):
+                return match.group(1)
+    return ""
+
+
 def extract(snapshot: dict | None) -> dict:
     """Bitta inventory snapshot'idan saqlanadigan identifikatorlar."""
     if not snapshot:
         return {
-            "system_uuid": "", "macs": [], "primary_mac": "", "baseboard_serial": "",
+            "system_uuid": "", "macs": [], "primary_mac": "", "primary_ip": "", "baseboard_serial": "",
             "tpm_ek_hash": "", "machine_guid": "",
         }
     ids = (snapshot.get("Hardware") or {}).get("ids") or {}
+    mac = primary_mac(snapshot)
     return {
         "system_uuid": normalize_machine_uuid(ids.get("system_uuid")),
         "macs": physical_macs(snapshot),
-        "primary_mac": primary_mac(snapshot),
+        "primary_mac": mac,
+        "primary_ip": ip_for_mac(snapshot, mac),
         "baseboard_serial": clean_id(ids.get("baseboard_serial"))[:128],
         "tpm_ek_hash": clean_id(ids.get("tpm_ek_hash"))[:128],
         "machine_guid": clean_id(ids.get("machine_guid"))[:64],

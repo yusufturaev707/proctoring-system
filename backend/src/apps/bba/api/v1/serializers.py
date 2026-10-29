@@ -51,7 +51,8 @@ class BbaDeviceSerializer(serializers.ModelSerializer):
             "id", "console_id", "name", "hostname_code", "hostname", "status",
             "status_changed_at", "last_seen_at", "enrolled_at", "revoked_at", "agent_version",
             "test_mode_enabled", "is_visible", "missing_since", "room", "room_name",
-            "bba_region", "bba_region_name", "region", "region_name", "system_uuid", "primary_mac", "macs",
+            "bba_region", "bba_region_name", "region", "region_name", "system_uuid", "primary_mac",
+            "primary_ip", "macs",
             "computer", "computer_label", "computer_zone_name", "inventory_captured_at",
             "inventory_fetched_at",
         )
@@ -115,6 +116,11 @@ class ImportComputerSerializer(serializers.Serializer):
     number = serializers.IntegerField(min_value=1, max_value=32767, required=False, allow_null=True)
     inventory_code = serializers.CharField(max_length=50, required=False, allow_blank=True)
     mac_address = serializers.CharField(max_length=32, required=False, allow_blank=True)
+    #: Yuborilmasa — tanlangan MAC adapterining inventory'dagi IPv4 manzili;
+    #: bo'sh satr — IP'siz.
+    ip_address = serializers.IPAddressField(
+        protocol="IPv4", required=False, allow_blank=True, allow_null=True
+    )
 
 
 class BulkImportSerializer(serializers.Serializer):

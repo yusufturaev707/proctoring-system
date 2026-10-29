@@ -13,6 +13,23 @@ import { useRegionOptions, useZoneOptions, zonesOfRegion } from '../../pages/cru
 import type { BulkSelection } from '../../api/endpoints'
 import type { ApiError, ApiRecord } from '../../types/api'
 
+const macKey = (value: unknown) => String(value || '').replace(/[^0-9a-f]/gi, '').toUpperCase()
+
+/**
+ * Adapterning IPv4 manzili inventory'dan — server `identity.ip_for_mac` bilan
+ * bir xil qoida (APIPA `169.254.*` va loopback manzil emas).
+ */
+export function ipForMac(inventory: ApiRecord | null | undefined, mac: string): string {
+  const nic = (inventory?.NetworkConfig || []).find((item: ApiRecord) => macKey(item.mac) === macKey(mac))
+  for (const addr of nic?.addrs || []) {
+    const match = /^(\d+\.\d+\.\d+\.\d+)\/\d+$/.exec(String(addr))
+    if (match && !/^(169\.254\.|127\.)/.test(match[1])) return match[1]
+  }
+  return ''
+}
+
+const IPV4 = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/
+
 export interface ImportTarget {
   device?: ApiRecord
   selection?: BulkSelection
@@ -43,6 +60,10 @@ export default function ImportDialog({
   const [number, setNumber] = useState('')
   const [code, setCode] = useState<string>(device?.suggested_inventory_code || '')
   const [mac, setMac] = useState<string>(device?.primary_mac || device?.macs?.[0] || '')
+  // IP — tanlangan MAC adapterining manzili; qo'lda o'zgartirilmaguncha MAC
+  // bilan birga almashadi. Bo'sh — IP'siz (DHCP'da manzil o'zgarib turadi).
+  const [ip, setIp] = useState<string>(() => (device ? ipForMac(device.inventory, mac) || device.primary_ip || '' : ''))
+  const [ipTouched, setIpTouched] = useState(false)
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [results, setResults] = useState<ApiRecord | null>(null)
 
@@ -53,6 +74,7 @@ export default function ImportDialog({
       if (device) {
         return bba.devices.importComputer(device.id, {
           zone, number: number ? Number(number) : null, inventory_code: code.trim(), mac_address: mac,
+          ip_address: ip.trim(),
         })
       }
       return bba.devices.bulkImport(target.selection!, { zone })
@@ -119,8 +141,9 @@ export default function ImportDialog({
             )}
             {!device && (
               <Alert severity="info">
-                Har kompyuter Console inventory’sidagi UUID va MAC bilan qo‘shiladi; raqam
-                qo‘yilmaydi, inventar kodi — Console nomi (band bo‘lsa avtomatik kod).
+                Har kompyuter Console inventory’sidagi UUID, MAC va IP manzil bilan qo‘shiladi;
+                raqam qo‘yilmaydi, inventar kodi — Console nomi (band bo‘lsa avtomatik kod).
+                IP shu binoda band bo‘lsa, kompyuter IP’siz qo‘shiladi.
                 UUID’si yo‘q yoki allaqachon ro‘yxatdagilar o‘tkazib yuboriladi.
               </Alert>
             )}
@@ -185,7 +208,10 @@ export default function ImportDialog({
                   select
                   label="MAC manzil"
                   value={mac}
-                  onChange={(event) => setMac(event.target.value)}
+                  onChange={(event) => {
+                    setMac(event.target.value)
+                    if (!ipTouched) setIp(ipForMac(device.inventory, event.target.value))
+                  }}
                   error={Boolean(fieldErrors.mac_address)}
                   helperText={
                     fieldErrors.mac_address ||
@@ -200,6 +226,21 @@ export default function ImportDialog({
                     </MenuItem>
                   ))}
                 </TextField>
+                <TextField
+                  label="IP manzil"
+                  value={ip}
+                  onChange={(event) => {
+                    setIp(event.target.value)
+                    setIpTouched(true)
+                  }}
+                  error={Boolean(fieldErrors.ip_address) || (Boolean(ip.trim()) && !IPV4.test(ip.trim()))}
+                  helperText={
+                    fieldErrors.ip_address ||
+                    (ip.trim() && !IPV4.test(ip.trim()) ? 'IPv4 manzil noto‘g‘ri' : 'Tanlangan adapterning hozirgi manzili (inventory’dan). Bo‘sh — IP’siz')
+                  }
+                  fullWidth
+                  slotProps={{ htmlInput: { style: { fontFamily: 'monospace' }, inputMode: 'decimal' } }}
+                />
                 <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'monospace' }}>
                   System UUID: {device.system_uuid || '—'}
                 </Typography>
@@ -215,7 +256,7 @@ export default function ImportDialog({
           <Button
             variant="contained"
             disableElevation
-            disabled={!zone || mutation.isPending || Boolean(missingUuid)}
+            disabled={!zone || mutation.isPending || Boolean(missingUuid) || (Boolean(ip.trim()) && !IPV4.test(ip.trim()))}
             onClick={() => {
               setFieldErrors({})
               mutation.mutate()

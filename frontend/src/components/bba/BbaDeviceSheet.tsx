@@ -9,6 +9,16 @@ import RefreshIcon from '@mui/icons-material/RefreshOutlined'
 import TerminalIcon from '@mui/icons-material/TerminalOutlined'
 import PowerIcon from '@mui/icons-material/PowerSettingsNewOutlined'
 import AddIcon from '@mui/icons-material/AddToQueueOutlined'
+import InfoIcon from '@mui/icons-material/InfoOutlined'
+import MemoryIcon from '@mui/icons-material/MemoryOutlined'
+import FingerprintIcon from '@mui/icons-material/FingerprintOutlined'
+import LanIcon from '@mui/icons-material/LanOutlined'
+import AppsIcon from '@mui/icons-material/AppsOutlined'
+import RocketIcon from '@mui/icons-material/RocketLaunchOutlined'
+import HistoryIcon from '@mui/icons-material/HistoryOutlined'
+import WindowsIcon from '@mui/icons-material/DesktopWindowsOutlined'
+import RouterIcon from '@mui/icons-material/RouterOutlined'
+import ScheduleIcon from '@mui/icons-material/ScheduleOutlined'
 
 import ConfirmDialog from '../ConfirmDialog'
 import { bba } from '../../api/endpoints'
@@ -19,12 +29,21 @@ import { BBA_STATUS_TONE, BbaStatus, JobStatusChip, resultText, Terminal, uptime
 import {
   Empty, HardwareIdsPanel, HardwarePanel, NetworkPanel, SoftwarePanel, StartupPanel,
 } from './InventoryPanels'
+import { JobIcon } from './icons'
 import SendJobDialog from './SendJobDialog'
 import ImportDialog from './ImportDialog'
 import type { HeaderTone } from '../data/DetailFields'
 import type { ApiRecord, Id } from '../../types/api'
 
-const TABS = ['Umumiy', 'Hardware', 'Hardware ID', 'Tarmoq', 'Dasturlar', 'Avtostart', 'Job’lar'] as const
+const TABS = [
+  { label: 'Umumiy', icon: InfoIcon },
+  { label: 'Hardware', icon: MemoryIcon },
+  { label: 'Hardware ID', icon: FingerprintIcon },
+  { label: 'Tarmoq', icon: LanIcon },
+  { label: 'Dasturlar', icon: AppsIcon },
+  { label: 'Avtostart', icon: RocketIcon },
+  { label: 'Job’lar', icon: HistoryIcon },
+] as const
 
 const HEADER_TONE: Record<string, HeaderTone> = {
   success: 'success', error: 'error', default: 'neutral',
@@ -136,8 +155,12 @@ export default function BbaDeviceSheet({
               <Typography variant="body2" color="text.secondary" noWrap>
                 {[device.bba_region_name, device.room_name].filter(Boolean).join(' · ') || 'Xonaga biriktirilmagan'}
               </Typography>
-              <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
+              <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }} flexWrap="wrap" useFlexGap>
                 <BbaStatus device={device} />
+                {device.primary_ip && (
+                  <Chip size="small" variant="outlined" label={device.primary_ip} sx={{ fontFamily: 'monospace' }} />
+                )}
+                {device.computer_detail && <Chip size="small" color="info" label={`Bizda: ${device.computer_detail.label}`} />}
               </Stack>
             </Box>
             <IconButton onClick={onClose} aria-label="Yopish" sx={{ mt: -0.5, mr: -1 }}>
@@ -189,7 +212,15 @@ export default function BbaDeviceSheet({
             scrollButtons="auto"
             sx={{ px: 1.5, borderBottom: 1, borderColor: 'divider' }}
           >
-            {TABS.map((label) => <Tab key={label} label={label} sx={{ minWidth: 0, px: 1.5 }} />)}
+            {TABS.map(({ label, icon: TabIcon }) => (
+              <Tab
+                key={label}
+                label={label}
+                icon={<TabIcon fontSize="small" />}
+                iconPosition="start"
+                sx={{ minWidth: 0, minHeight: 48, px: 1.5, textTransform: 'none', fontWeight: 600 }}
+              />
+            ))}
           </Tabs>
           {refresh.isPending && <LinearProgress />}
 
@@ -260,7 +291,7 @@ function Overview({
     <>
       <Section title="Holat">
         <Field label="Holat" value={BBA_STATUS_LABEL[device.status] || device.status} />
-        <Field label="Holat o‘zgargan" value={dateText(device.status_changed_at)} />
+        <Field label="Holat o‘zgargan" value={dateText(device.status_changed_at)} icon={<ScheduleIcon />} />
         <Field label="Oxirgi aloqa (Console)" value={dateText(device.last_seen_at)} />
         <Field label="Ishlab turibdi" value={device.status === 'online' ? uptime(inventory?.LastBootAt) : ''} hint="—" />
         {device.revoked_at && <Field label="Console’dan chiqarilgan" value={dateText(device.revoked_at)} warn />}
@@ -287,11 +318,12 @@ function Overview({
       </Section>
 
       <Section title="Kompyuter">
-        <Field label="Console nomi" value={device.hostname_code} />
-        <Field label="Windows nomi" value={device.hostname} />
-        <Field label="Operatsion tizim" value={inventory?.OSVersion} hint="Inventory yo‘q" />
-        <Field label="System UUID" value={device.system_uuid} mono onCopy={copy} hint="Inventory’da yo‘q (yoki to‘ldiruvchi)" />
-        <Field label="Faol MAC" value={device.primary_mac} mono onCopy={copy} />
+        <Field label="Console nomi" value={device.hostname_code} icon={<HubIcon />} />
+        <Field label="Windows nomi" value={device.hostname} icon={<WindowsIcon />} />
+        <Field label="Operatsion tizim" value={inventory?.OSVersion} hint="Inventory yo‘q" icon={<WindowsIcon />} />
+        <Field label="System UUID" value={device.system_uuid} mono onCopy={copy} hint="Inventory’da yo‘q (yoki to‘ldiruvchi)" icon={<FingerprintIcon />} />
+        <Field label="Faol MAC" value={device.primary_mac} mono onCopy={copy} icon={<LanIcon />} />
+        <Field label="IP manzil" value={device.primary_ip} mono onCopy={copy} hint="Inventory’da yo‘q" icon={<RouterIcon />} />
         <Field label="Agent versiyasi" value={device.agent_version} />
         <Field label="Console ID" value={device.console_id} mono onCopy={copy} />
         <Field label="Ro‘yxatdan o‘tgan" value={dateText(device.enrolled_at)} />
@@ -366,11 +398,12 @@ function JobsPanel({ deviceId }: { deviceId: Id }) {
           <Box key={key} sx={{ borderTop: index ? 1 : 0, borderColor: 'divider' }}>
             <Stack
               direction="row"
-              spacing={1}
+              spacing={1.5}
               alignItems="center"
               onClick={() => setOpen(open === key ? null : key)}
               sx={{ px: 2, py: 1, cursor: 'pointer', '&:hover': { bgcolor: 'action.hover' } }}
             >
+              <JobIcon type={job.type} />
               <Box sx={{ flex: 1, minWidth: 0 }}>
                 <Typography variant="body2" fontWeight={600} noWrap>{labels[job.type] || job.type}</Typography>
                 <Typography variant="caption" color="text.secondary" noWrap display="block">

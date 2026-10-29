@@ -30,6 +30,13 @@ class IdentityTests(SimpleTestCase):
         self.assertEqual(ids["baseboard_serial"], "250861367400312")
         self.assertTrue(ids["tpm_ek_hash"].startswith("8FCBAF1F"))
 
+    def test_ip_for_mac(self):
+        self.assertEqual(identity.ip_for_mac(SNAPSHOT, "30:c5:99:18:53:a1"), "192.168.0.57")
+        self.assertEqual(identity.ip_for_mac(SNAPSHOT, "C4-62-37-01-DE-1A"), "")  # adapter NetworkConfig'da yo'q
+        apipa = {"NetworkConfig": [{"mac": "30-C5-99-18-53-A1", "addrs": ["169.254.3.4/16"]}]}
+        self.assertEqual(identity.ip_for_mac(apipa, "30-C5-99-18-53-A1"), "")
+        self.assertEqual(identity.extract(SNAPSHOT)["primary_ip"], "192.168.0.57")
+
     def test_old_agent_without_ids_uses_network_config(self):
         snapshot = {key: value for key, value in SNAPSHOT.items() if key != "Hardware"}
         ids = identity.extract(snapshot)

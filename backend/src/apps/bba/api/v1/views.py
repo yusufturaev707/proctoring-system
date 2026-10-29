@@ -148,7 +148,7 @@ class BbaDeviceViewSet(PermissionRequiredMixin, BulkSelectionMixin, viewsets.Rea
     }
     bulk_max_ids = jobs.MAX_BULK_DEVICES
     filterset_fields = ["status", "bba_region", "room", "is_visible"]
-    search_fields = ["hostname_code", "hostname", "system_uuid", "primary_mac"]
+    search_fields = ["hostname_code", "hostname", "system_uuid", "primary_mac", "primary_ip"]
     ordering_fields = [
         "hostname_code", "hostname", "status", "last_seen_at", "status_changed_at",
         "agent_version", "inventory_fetched_at",
@@ -291,6 +291,8 @@ class BbaDeviceViewSet(PermissionRequiredMixin, BulkSelectionMixin, viewsets.Rea
             self.get_object(), zone_id=data["zone"].pk, request=request,
             number=data.get("number"), inventory_code=data.get("inventory_code", ""),
             mac_address=data.get("mac_address", ""),
+            # Kalit yo'q — inventory'dagi IP; bo'sh/null — IP'siz.
+            ip_address=(data.get("ip_address") or "") if "ip_address" in data else None,
         )
         return Response({"computer": computer.pk, "label": computer.label}, status=201)
 
