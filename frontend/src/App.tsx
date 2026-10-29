@@ -22,6 +22,8 @@ const ZonesPage = lazy(ROUTE_LOADERS['/zones'])
 const ComputersPage = lazy(ROUTE_LOADERS['/computers'])
 const CamerasPage = lazy(ROUTE_LOADERS['/cameras'])
 const DeviceTokens = lazy(ROUTE_LOADERS['/device-tokens'])
+const BbaDevices = lazy(ROUTE_LOADERS['/bba'])
+const BbaJobs = lazy(ROUTE_LOADERS['/bba/jobs'])
 const ExamTypesPage = lazy(ROUTE_LOADERS['/exam-types'])
 const ExamsPage = lazy(ROUTE_LOADERS['/exams'])
 const ExamSchedulesPage = lazy(ROUTE_LOADERS['/exam-schedules'])
@@ -102,6 +104,8 @@ const ROUTES = [
   { path: '/computers', element: <ComputersPage />, permission: 'devices.view' },
   { path: '/cameras', element: <CamerasPage />, permission: 'devices.view' },
   { path: '/device-tokens', element: <DeviceTokens />, permission: 'devices.view' },
+  { path: '/bba', element: <BbaDevices />, permission: 'bba.view' },
+  { path: '/bba/jobs', element: <BbaJobs />, permission: 'bba.view' },
   { path: '/exam-types', element: <ExamTypesPage />, permission: 'exams.view' },
   { path: '/exams', element: <ExamsPage />, permission: 'exams.view' },
   { path: '/exam-schedules', element: <ExamSchedulesPage />, permission: 'exams.view' },

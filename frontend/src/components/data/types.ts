@@ -121,6 +121,13 @@ export type AppColumn = GridColDef<ApiRecord> & {
   exportValue?: (value: any, row: ApiRecord) => unknown
 }
 
+/** Ommaviy amalga beriladigan tanlov (`ids` yoki filtrga mos `all`). */
+export interface BulkSelectionArg {
+  ids?: readonly Id[]
+  all: boolean
+  params: QueryParams
+}
+
 /** Ommaviy amal (`ResourcePage bulkActions`). */
 export interface BulkAction {
   key: string
@@ -131,8 +138,14 @@ export interface BulkAction {
   confirmLabel?: string
   description?: (count: number) => ReactNode
   confirmPhrase?: (count: number) => string | null
-  run: (selection: { ids?: readonly Id[]; all: boolean; params: QueryParams }) => Promise<ApiRecord>
+  run?: (selection: BulkSelectionArg) => Promise<ApiRecord>
   success?: (result: ApiRecord) => string
+  /**
+   * Tasdiq oynasi o'rniga sahifaning O'Z dialogi — amal parametr talab
+   * qilsa (job turi, bino). `done` tanlovni tozalaydi va ro'yxatni
+   * yangilaydi; `count` — sarlavha uchun.
+   */
+  open?: (selection: BulkSelectionArg & { count: number }, done: () => void) => void
 }
 
 /** Forma bo'limi sarlavhasi (MD3). */

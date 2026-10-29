@@ -12,6 +12,7 @@ import WebIcon from '@mui/icons-material/WebOutlined'
 import ShieldIcon from '@mui/icons-material/AdminPanelSettingsOutlined'
 import KeyIcon from '@mui/icons-material/VpnKeyOutlined'
 import ServerIcon from '@mui/icons-material/DnsOutlined'
+import HubIcon from '@mui/icons-material/HubOutlined'
 
 /**
  * Ruxsatlar katalogining ko'rinishi — rol muharriri, foydalanuvchi
@@ -54,6 +55,7 @@ export const GROUP_META: Record<string, GroupMeta> = {
   technical: { label: 'Texnik muammolar', icon: BuildIcon, description: 'Nosozliklar va qo‘shimcha vaqt qarorlari' },
   exams: { label: 'Imtihonlar', icon: SchoolIcon, description: 'Imtihon, jadval, kompyuter bronlari va oferta' },
   devices: { label: 'Qurilmalar', icon: ComputerIcon, description: 'Kompyuterlar, kameralar, client qurilmalari' },
+  bba: { label: 'BBA Console', icon: HubIcon, description: 'BBA agentli kompyuterlar: holat, inventory, job yuborish' },
   regions: { label: 'Hududlar', icon: MapIcon, description: 'Viloyatlar va binolar' },
   controls: { label: 'Sozlamalar', icon: TuneIcon, description: 'Client profili, IP ro‘yxati, chiqish paroli, AI siyosati' },
   users: { label: 'Foydalanuvchilar', icon: PeopleIcon, description: 'Xodimlar va rollar' },
@@ -64,7 +66,7 @@ export const GROUP_META: Record<string, GroupMeta> = {
 
 /** Ish tartibi bo'yicha — menyu tartibi bilan bir xil. */
 const GROUP_ORDER = [
-  'dashboard', 'sessions', 'technical', 'exams', 'devices', 'regions',
+  'dashboard', 'sessions', 'technical', 'exams', 'devices', 'bba', 'regions',
   'controls', 'users', 'audit', 'server', 'client',
 ]
 

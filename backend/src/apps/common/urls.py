@@ -11,6 +11,7 @@ urlpatterns = [
     path("", include("apps.exams.api.v1.urls")),
     path("", include("apps.proctoring.api.v1.urls")),
     path("", include("apps.monitoring.api.v1.urls")),
+    path("", include("apps.bba.api.v1.urls")),
     # PyQt6 desktop client uchun alohida yuza
     path("client/", include("apps.proctoring.api.v1.client_urls")),
     # Tashqi tizimlar (`X-API-Key`) — xodim JWT'si yo'q, alohida yuza

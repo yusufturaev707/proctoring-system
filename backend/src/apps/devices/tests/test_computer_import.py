@@ -7,6 +7,8 @@ kompyuter. MAC UUID'siz eski yozuvga UUID yozish uchun ham ishlatiladi.
 """
 
 import io
+import re
+import zipfile
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
@@ -208,3 +210,95 @@ class ComputerImportTests(TestCase):
         user = factories.make_user(permissions=["devices.view"])
         self.client.credentials(HTTP_AUTHORIZATION=bearer(user))
         self.assertEqual(self.post([[1, 1, U1, "", 1, ""]]).status_code, 403)
+
+
+SHEET = "xl/worksheets/sheet1.xml"
+
+
+def rezip(upload, *, sheet=None, extra=None) -> SimpleUploadedFile:
+    """Haqiqiy faylning ichini almashtiradi: `sheet(xml) -> xml`, `extra` - qo'shimcha fayllar."""
+    source = zipfile.ZipFile(io.BytesIO(upload.read()))
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as target:
+        for item in source.infolist():
+            body = source.read(item)
+            if item.filename == SHEET and sheet is not None:
+                body = sheet(body.decode()).encode()
+            target.writestr(item, body)
+        for name, body in (extra or {}).items():
+            target.writestr(name, body)
+    return SimpleUploadedFile("k.xlsx", buffer.getvalue())
+
+
+class ComputerImportHardeningTests(TestCase):
+    """
+    Zararli fayllar (`_check_archive`, `_scan_sheet`): 5 MB lik zip ichidagi
+    XML server xotirasini/protsessorini tugatmasligi va 500 bermasligi kerak.
+    """
+
+    def setUp(self):
+        self.region = factories.make_region()
+        factories.make_zone(region=self.region, number=3)
+        self.user = factories.make_user(permissions=["devices.view", "devices.manage"])
+        self.client = APIClient()
+        self.client.credentials(HTTP_AUTHORIZATION=bearer(self.user))
+        self.url = reverse("computer-import-excel")
+        self.row = [self.region.dtm_id, 3, U1, M1, 1, ""]
+
+    def post(self, upload):
+        return self.client.post(self.url, {"file": upload, "dry_run": "true"}, format="multipart")
+
+    def assert_rejected(self, upload, fragment):
+        response = self.post(upload)
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn(fragment, str(response.json()["error"]["details"]["file"]))
+
+    def test_unpacked_size_limit(self):
+        # ~21 MB nol - siqilgani bir necha KB.
+        bomb = rezip(xlsx([self.row]), extra={"xl/media/bomb.bin": b"\0" * (21 * 1024 * 1024)})
+        self.assertLess(bomb.size, 100 * 1024)
+        self.assert_rejected(bomb, "juda katta")
+
+    def test_far_row_number_is_rejected_not_dropped(self):
+        far = '<row r="20000"><c r="A20000" t="inlineStr"><is><t>1</t></is></c></row></sheetData>'
+        self.assert_rejected(rezip(xlsx([self.row]), sheet=lambda x: x.replace("</sheetData>", far)), "qator bor")
+
+    def test_too_many_cells_in_row(self):
+        wide = '<row r="3">' + "<c/>" * 1000 + "</row></sheetData>"
+        self.assert_rejected(rezip(xlsx([self.row]), sheet=lambda x: x.replace("</sheetData>", wide)), "katak")
+
+    def test_too_many_cells_in_sheet(self):
+        grid = "".join(f'<row r="{i}">' + "<c/>" * 200 + "</row>" for i in range(3, 600)) + "</sheetData>"
+        self.assert_rejected(rezip(xlsx([self.row]), sheet=lambda x: x.replace("</sheetData>", grid)), "katak")
+
+    def test_entity_expansion_is_400_not_500(self):
+        def laughs(xml):
+            doctype = '<!DOCTYPE w [<!ENTITY a "aaaaaaaaaa"><!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;">]>'
+            return re.sub(r"(<\?xml[^>]*\?>)", r"\1" + doctype, xml, count=1).replace("<v>1</v>", "<v>&b;</v>")
+
+        self.assert_rejected(rezip(xlsx([self.row]), sheet=laughs), "o'qilmadi")
+
+    def test_not_a_zip(self):
+        self.assert_rejected(SimpleUploadedFile("k.xlsx", b"dtm_id;zone_number\n1;2\n"), "o'qilmadi")
+
+    def test_spoofed_dimension_still_reads(self):
+        """`<dimension ref="A1:XFD1048576">` - qatorlar shu o'lchamga to'ldirilmaydi."""
+        spoof = rezip(xlsx([self.row]), sheet=lambda x: re.sub(
+            r'<dimension ref="[^"]*"', '<dimension ref="A1:XFD1048576"', x))
+        response = self.post(spoof)
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["data"]["to_create"], 1)
+
+    def test_filled_template_passes(self):
+        """Shablonda 5001 ta formatlangan qator bor - qator chegarasi uni to'smasligi kerak."""
+        from apps.devices.computer_import import build_template
+
+        wb = load_workbook(io.BytesIO(build_template()))
+        ws = wb["Kompyuterlar"]
+        for column, value in zip("ABCDEF", self.row):
+            ws[f"{column}2"] = value
+        buffer = io.BytesIO()
+        wb.save(buffer)
+        response = self.post(SimpleUploadedFile("k.xlsx", buffer.getvalue()))
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["data"]["to_create"], 1)

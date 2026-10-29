@@ -15,13 +15,13 @@ export interface LiveMonitorOptions {
 // shifrlanmagan `ws://` ni bloklaydi (mixed content) va jonli kuzatuv
 // production'da umuman ulanmasdi, 8001-port esa tashqariga ochiq bo'lishi
 // kerak bo'lib qolardi. Boshqa host kerak bo'lsa — `VITE_WS_URL`.
-const WS_URL =
+export const WS_URL =
   import.meta.env.VITE_WS_URL ||
   `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`
 
 // Backend `consumers.py` dagi yopilish kodlari.
-const CLOSE_UNAUTHORIZED = 4401
-const CLOSE_FORBIDDEN = 4403
+export const CLOSE_UNAUTHORIZED = 4401
+export const CLOSE_FORBIDDEN = 4403
 
 /**
  * Proktor dashboard'i uchun WebSocket ulanishi.

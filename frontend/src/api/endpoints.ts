@@ -224,6 +224,52 @@ export const deviceTokens = {
       .then((r) => r.data),
 }
 
+/**
+ * BBA Console (boshqa tizim, `apps/bba`). Ro'yxatlar serverning MAHALLIY
+ * nusxasidan; Console'ga faqat amallar va tafsilotdagi tarixlar boradi.
+ * Holat o'zgarishi — WebSocket (`hooks/useBbaLive.ts`).
+ */
+const bbaBulk = (url: string) => ({ ids, all, params }: BulkSelection, payload: ApiRecord = {}): Data =>
+  api.post(url, all ? { all: true, ...payload } : { ids, ...payload }, { params: all ? params : undefined })
+    .then((r) => r.data)
+
+export const bba = {
+  overview: (): Data => api.get('/bba/overview/').then((r) => r.data),
+  jobTypes: (): Data => api.get('/bba/job-types/').then((r) => r.data),
+  sync: (): Data => api.post('/bba/sync/').then((r) => r.data),
+  regions: {
+    list: (params?: QueryParams): Promise<ApiRecord[]> =>
+      api.get<ApiRecord[]>('/bba/regions/', { params }).then((r) => r.data),
+    update: update('/bba/regions/'),
+  },
+  rooms: (params?: QueryParams): Promise<ApiRecord[]> =>
+    api.get<ApiRecord[]>('/bba/rooms/', { params }).then((r) => r.data),
+  devices: {
+    list: list('/bba/devices/'),
+    detail: detail('/bba/devices/'),
+    /** Viloyat -> xona daraxti, holatlar soni bilan (bitta GROUP BY). */
+    tree: (params?: QueryParams): Data => api.get('/bba/devices/tree/', { params }).then((r) => r.data),
+    /** Bitta viloyat kompyuterlari, sahifasiz (`bba_region` — ID yoki `none`). */
+    byRoom: (params: QueryParams): Data => api.get('/bba/devices/by-room/', { params }).then((r) => r.data),
+    refreshInventory: (id: Id): Data => api.post(`/bba/devices/${id}/refresh-inventory/`).then((r) => r.data),
+    connectivity: (id: Id): Data => api.get(`/bba/devices/${id}/connectivity/`).then((r) => r.data),
+    jobHistory: (id: Id): Data => api.get(`/bba/devices/${id}/job-history/`).then((r) => r.data),
+    importComputer: (id: Id, payload: ApiRecord): Data =>
+      api.post(`/bba/devices/${id}/import/`, payload).then((r) => r.data),
+    sendJob: (id: Id, payload: ApiRecord): Data => api.post(`/bba/devices/${id}/send-job/`, payload).then((r) => r.data),
+    wake: (id: Id): Data => api.post(`/bba/devices/${id}/wake/`).then((r) => r.data),
+    bulkImport: bbaBulk('/bba/devices/bulk-import/'),
+    bulkSendJob: bbaBulk('/bba/devices/bulk-send-job/'),
+    bulkWake: bbaBulk('/bba/devices/bulk-wake/'),
+  },
+  jobs: {
+    list: list('/bba/jobs/'),
+    detail: detail('/bba/jobs/'),
+    cancel: (id: Id): Data => api.post(`/bba/jobs/${id}/cancel/`).then((r) => r.data),
+    resend: (id: Id): Data => api.post(`/bba/jobs/${id}/resend/`).then((r) => r.data),
+  },
+}
+
 export const settings = {
   ...crud('/settings/'),
   // `examId` berilsa — o'sha imtihonning profili, aks holda global standart.

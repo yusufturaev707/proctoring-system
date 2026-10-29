@@ -48,7 +48,10 @@ xato: bu boshqa binoning mashinasi bo'lishi mumkin.
 from __future__ import annotations
 
 import io
+import logging
 import re
+import zipfile
+from xml.parsers import expat
 
 from django.db import transaction
 from django.utils import timezone
@@ -59,8 +62,26 @@ from apps.regions.models import Region, Zone
 from .models import Computer
 from .services import auto_inventory_code, match_identity
 
+logger = logging.getLogger(__name__)
+
 MAX_ROWS = 5000
 MAX_FILE_BYTES = 5 * 1024 * 1024
+#: Ochilgandagi hajm. To'liq 5000 qatorli fayl ~2 MB; `.xlsx` - zip, va
+#: 5 MB lik fayl ichida 1000 barobar katta XML bo'lishi mumkin (o'lchangan:
+#: 300 KB -> 613 MB xotira).
+MAX_UNPACKED_BYTES = 20 * 1024 * 1024
+_MAX_ZIP_ENTRIES = 500
+#: Varaqdagi qator raqami chegarasi - bo'sh (formatlangan) qatorlar ham
+#: sanaladi: shablonning o'zida 5001 ta formatlangan qator bor.
+_MAX_SHEET_ROWS = MAX_ROWS * 2 + 1
+#: Bitta qatordagi katak. openpyxl qatorni to'liq xotirada yig'adi
+#: (250 000 katak - 85 MB) va har qatorni eng chetki ustungacha to'ldiradi.
+_MAX_ROW_CELLS = 256
+#: Varaqdagi jami katak. To'liq fayl ~45 000 (5000 x 6 ma'lumot + shablonning
+#: 3 ta formatlangan ustuni); 10 000 x 256 bo'sh katak openpyxl'da 17 s edi.
+_MAX_SHEET_CELLS = MAX_ROWS * 20
+#: Sarlavha shu ustunlar ichidan qidiriladi.
+_HEADER_SCAN_COLUMNS = 64
 
 #: (ustun kodi, shablondagi sarlavha, majburiymi)
 COLUMNS = (
@@ -182,48 +203,146 @@ def build_template() -> bytes:
 # --------------------------------------------------------------------------
 # O'qish
 # --------------------------------------------------------------------------
+_UNREADABLE = "Fayl o'qilmadi - .xlsx formatidagi Excel fayl yuklang."
+
+
+def _scan_sheet(source) -> None:
+    """
+    Varaq XML'ini openpyxl'dan OLDIN o'qiydi: qator raqami va qatordagi
+    katak soni chegarada bo'lishi shart.
+
+    `expat` daraxt qurmaydi - xotira doimiy, chegaradan oshgan zahoti
+    to'xtaydi. openpyxl esa qatorni to'liq yig'adi va o'sha paytgacha
+    bitta qatorga yuz minglab katak sig'ardi.
+    """
+    state = {"row": 0, "rows": 0, "cells": 0, "total": 0}
+
+    def start(name, attrs):
+        tag = name.rpartition(":")[2]
+        if tag == "row":
+            state["rows"] += 1
+            state["cells"] = 0
+            state["row"] = _int(attrs.get("r")) or state["row"] + 1
+            # Raqam ham, soni ham: `r="1048576"` ikkinchi qatorda kelishi
+            # yoki bir xil `r` ming marta takrorlanishi mumkin.
+            if max(state["row"], state["rows"]) > _MAX_SHEET_ROWS:
+                raise ImportFileError(
+                    "Varaqda {} dan ortiq qator bor (bo'sh, lekin formatlangan qatorlar ham "
+                    "sanaladi). Ortiqcha qatorlarni o'chirib, faylni qayta saqlang.".format(_MAX_SHEET_ROWS)
+                )
+        elif tag == "c":
+            state["cells"] += 1
+            state["total"] += 1
+            if state["cells"] > _MAX_ROW_CELLS:
+                raise ImportFileError(
+                    "{}-qatorda {} dan ortiq katak bor - fayl buzilgan.".format(state["row"], _MAX_ROW_CELLS)
+                )
+            if state["total"] > _MAX_SHEET_CELLS:
+                raise ImportFileError(
+                    "Varaqda {} dan ortiq katak bor. Faylda faqat shablon ustunlarini qoldiring.".format(
+                        _MAX_SHEET_CELLS)
+                )
+
+    def doctype(*_):
+        # `.xlsx` da DTD bo'lmaydi; bor bo'lsa - entity hujumi.
+        raise ImportFileError(_UNREADABLE)
+
+    parser = expat.ParserCreate()
+    parser.StartElementHandler = start
+    parser.StartDoctypeDeclHandler = doctype
+    parser.ParseFile(source)
+
+
+def _check_archive(upload) -> None:
+    """
+    `.xlsx` - zip. Siqilgan hajm (`MAX_FILE_BYTES`) hech narsa aytmaydi:
+    ochilgandagi hajm, fayllar soni va varaqlar tuzilishi tekshiriladi.
+
+    Sarlavhadagi `file_size` ga ishonsa bo'ladi: `zipfile` undan ortiq
+    o'qimaydi va CRC mos kelmasa `BadZipFile` beradi (openpyxl ham shu
+    `zipfile` bilan o'qiydi).
+    """
+    try:
+        with zipfile.ZipFile(upload) as archive:
+            entries = archive.infolist()
+            if len(entries) > _MAX_ZIP_ENTRIES or sum(e.file_size for e in entries) > MAX_UNPACKED_BYTES:
+                raise ImportFileError(
+                    "Fayl ichidagi ma'lumot juda katta (ochilganda ko'pi bilan {} MB).".format(
+                        MAX_UNPACKED_BYTES // (1024 * 1024))
+                )
+            for entry in entries:
+                # Birinchi varaqni aniqlash workbook.xml ni talqin qilishni
+                # talab qiladi - hammasi tekshiriladi (hajmi baribir chegarada).
+                if entry.filename.startswith("xl/worksheets/") and entry.filename.endswith(".xml"):
+                    with archive.open(entry) as source:
+                        _scan_sheet(source)
+    except ImportFileError:
+        raise
+    except (zipfile.BadZipFile, expat.ExpatError, OSError, ValueError, EOFError) as exc:
+        logger.info("Excel import: fayl rad etildi (%s: %s)", type(exc).__name__, exc)
+        raise ImportFileError(_UNREADABLE)
+    finally:
+        upload.seek(0)
+
+
 def read_rows(upload) -> list[dict]:
     """Birinchi varaqni o'qiydi: `[{"row": 2, "dtm_id": "10", ...}, ...]`."""
     from openpyxl import load_workbook
 
     if upload.size > MAX_FILE_BYTES:
         raise ImportFileError("Fayl juda katta (ko'pi bilan 5 MB).")
+    _check_archive(upload)
     try:
         wb = load_workbook(upload, read_only=True, data_only=True)
     except Exception:
-        raise ImportFileError("Fayl o'qilmadi - .xlsx formatidagi Excel fayl yuklang.")
+        raise ImportFileError(_UNREADABLE)
     try:
-        ws = wb.worksheets[0]
-        rows = ws.iter_rows(values_only=True)
-        header = next(rows, None)
-        if not header:
-            raise ImportFileError("Fayl bo'sh.")
-        index = {}
-        for position, value in enumerate(header):
-            code = _header(value)
-            if code in _CODES and code not in index:
-                index[code] = position
-        missing = [code for code in _REQUIRED if code not in index]
-        if missing:
-            raise ImportFileError("Ustun topilmadi: {}.".format(", ".join(missing)))
-
-        result = []
-        for number, values in enumerate(rows, start=2):
-            item = {
-                code: _clean(values[position]) if position < len(values) else ""
-                for code, position in index.items()
-            }
-            if not any(item.values()):
-                continue  # bo'sh qator (Excel oxirida qoldiradi)
-            item["row"] = number
-            result.append(item)
-            if len(result) > MAX_ROWS:
-                raise ImportFileError("Qatorlar juda ko'p (ko'pi bilan {}).".format(MAX_ROWS))
-        if not result:
-            raise ImportFileError("Faylda ma'lumot qatori yo'q.")
-        return result
+        return _read_sheet(wb.worksheets[0])
+    except ImportFileError:
+        raise
+    except Exception:
+        # Varaq read-only rejimda iteratsiya paytida o'qiladi - buzilgan
+        # XML shu yerda chiqadi. 500 emas, "faylni tuzating" (400).
+        logger.warning("Excel import: varaq o'qilmadi", exc_info=True)
+        raise ImportFileError(_UNREADABLE)
     finally:
         wb.close()
+
+
+def _read_sheet(ws) -> list[dict]:
+    # `max_col`/`max_row` ATAYLAB: aks holda openpyxl faylning o'zi aytgan
+    # o'lchamga (`<dimension ref="A1:XFD1048576">`) qadar har qatorni
+    # to'ldiradi va bo'sh qatorlarni ham ishlab chiqaradi.
+    header = next(ws.iter_rows(min_row=1, max_row=1, max_col=_HEADER_SCAN_COLUMNS, values_only=True), None)
+    if not header or not any(value is not None for value in header):
+        raise ImportFileError("Fayl bo'sh.")
+    index = {}
+    for position, value in enumerate(header):
+        code = _header(value)
+        if code in _CODES and code not in index:
+            index[code] = position
+    missing = [code for code in _REQUIRED if code not in index]
+    if missing:
+        raise ImportFileError("Ustun topilmadi: {}.".format(", ".join(missing)))
+
+    rows = ws.iter_rows(
+        min_row=2, max_row=_MAX_SHEET_ROWS, max_col=max(index.values()) + 1, values_only=True,
+    )
+    result = []
+    for number, values in enumerate(rows, start=2):
+        item = {
+            code: _clean(values[position]) if position < len(values) else ""
+            for code, position in index.items()
+        }
+        if not any(item.values()):
+            continue  # bo'sh qator (Excel oxirida qoldiradi)
+        item["row"] = number
+        result.append(item)
+        if len(result) > MAX_ROWS:
+            raise ImportFileError("Qatorlar juda ko'p (ko'pi bilan {}).".format(MAX_ROWS))
+    if not result:
+        raise ImportFileError("Faylda ma'lumot qatori yo'q.")
+    return result
 
 
 # --------------------------------------------------------------------------

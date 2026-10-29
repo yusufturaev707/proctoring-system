@@ -12,11 +12,20 @@
 import type { AppColumn } from '../components/data/types'
 import type { ApiRecord } from '../types/api'
 
+// Excel `=`, `+`, `-`, `@` (yoki tab/CR) bilan boshlangan katakni FORMULA
+// deb bajaradi: tashqi platformadan kelgan ism `=HYPERLINK(...)` bo'lsa,
+// eksportni ochgan xodim kompyuterida u ishlardi (CSV injection). Bunday
+// matn oldiga `'` qo'yiladi. Son ko'rinishidagi matn (`-5`, `+998 90 ...`)
+// formula bo'la olmaydi - tegilmaydi.
+const FORMULA_START = /^[=+\-@\t\r][\s\S]/
+const NUMERIC = /^[-+]?[\d\s]+([.,]\d+)?$/
+
 export function exportCsv(columns: AppColumn[], rows: ApiRecord[], name: string) {
   const usable = columns.filter((column) => !column.field.startsWith('__'))
   const escape = (value: unknown) => {
-    const text = value == null ? '' : String(value)
-    return /[";\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+    let text = value == null ? '' : String(value)
+    if (typeof value === 'string' && FORMULA_START.test(text) && !NUMERIC.test(text)) text = `'${text}`
+    return /[";\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
   }
 
   const header = usable.map((column) => escape(column.headerName || column.field)).join(';')

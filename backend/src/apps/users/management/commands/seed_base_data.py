@@ -74,6 +74,10 @@ ROLE_MATRIX: dict[str, tuple[int, bool, list[str]]] = {
 DERIVED_PERMISSIONS: dict[str, tuple[str, ...]] = {
     "offers.view": ("exams.view", "exams.manage"),
     "offers.manage": ("exams.manage",),
+    # BBA ko'rinishi — kompyuterlar bo'limining davomi. `bba.jobs` HECH
+    # kimga avtomatik berilmaydi (Administrator — `*` orqali).
+    "bba.view": ("devices.view", "devices.manage"),
+    "bba.manage": ("devices.manage",),
 }
 
 #: Rol izohi — foydalanuvchi formasidagi rol plitkasida ko'rinadi. Faqat

@@ -679,7 +679,14 @@ Shu UUID'li MAC'siz eski yozuv bor bo'lsa — xato (avval unga MAC kiritiladi).
 Yagona tahrir: UUID'siz eski yozuv MAC + o'sha bino bo'yicha topilsa unga
 faqat `machine_uuid` yoziladi (`to_bind`/`bound`). Viloyat admini faqat o'z
 viloyatiga. `Computer.ip_address` ixtiyoriy (`devices.0010`, NULL
-`unique_computer_zone_ip` ga tushmaydi).
+`unique_computer_zone_ip` ga tushmaydi). **Zararli faylga qarshi —
+openpyxl'dan OLDIN** (`_check_archive`, `_scan_sheet`): ochilgan hajm
+≤ 20 MB (5 MB lik zip ichida GB'lab XML bo'ladi), varaqni `expat` bilan
+oldindan o'qish (DTD yo'q, qator raqami ≤ 10 001, qatorda ≤ 256, jami
+≤ 100 000 katak), `iter_rows` doim `max_row`/`max_col` bilan (aks holda
+fayl aytgan `<dimension>` gacha to'ldiriladi). Buzilgan fayl — 400, 500 emas.
+Panelning CSV eksporti formula boshini (`= + - @`) `'` bilan zararsizlantiradi
+(`utils/exportCsv.ts`).
 
 ### Kompyuter broni (`exams.ComputerBooking`)
 
@@ -823,6 +830,51 @@ Tashqi FaceID tizimi (FastAPI) Face ID'dan o'tgan nomzodni shu yerda bron qiladi
 * Bino — `region_dtm_id` + `zone_number`, kompyuter — `Computer.number`
   (ichki ID'lar mos kelmaydi).
 * `seat_in_use`/`seat_unavailable` (409) — qaror, qayta urilmaydi.
+
+### BBA Console integratsiyasi (`apps/bba`, panel `/bba`, `/bba/jobs`)
+
+BBA Console — BOSHQA tizim (har kompyuterda agent; API `bba_agent_api.md`).
+Biz uning mijozimiz: hudud → xona → kompyuter, holat, inventory/hardware ID,
+job va Wake-on-LAN. Sozlama `.env` `BBA_*` (`settings.BBA_CONSOLE`, endpoint
+yo'llari ham `BBA_PATH_*`); production'da faqat `https` + CA (`BBA_CA_FILE`,
+`manage.py bba_console fetch-ca|check|sync|unblock`).
+
+| Nima | Qachon | Qayerda |
+|---|---|---|
+| holat (`/devices`, 500 ga 1 so'rov) | `BBA_STATUS_POLL_SECONDS` (15 s, beat `bba.poll`) | `BbaDevice.status`, o'zgargani → `ws/bba/` |
+| hudud/xona | 5 daqiqa (poll ichida) | `BbaRegion`/`BbaRoom` |
+| inventory | 6 soatdan eski + yangi kompyuter (`bba.sync_inventories`, 120 s byudjet) | `BbaDevice.inventory` + ID'lar |
+
+* **Console'da push YO'Q** — "real vaqt" = so'rov oralig'i; panel faqat
+  O'ZGARGAN qatorlarni oladi va keshda o'rnida yangilaydi (`useBbaLive`).
+  Holatlar: `online` = yoniq, `offline_graceful` = o'chirilgan,
+  `offline_unexpected` = aloqa uzilgan (tok/kabel/qotish).
+* **Limit 300 so'rov/daqiqa**: ro'yxat va tafsilot MAHALLIY nusxadan; Console'ga
+  faqat amallar, «Yangilash» va tafsilotdagi tarixlar. Qatorlar o'chirilmaydi
+  (`is_visible=False`, `missing_since`).
+* **Login himoyasi** (`client.py`): token umumiy keshda (24 soat); rad etilgan
+  login 5 daqiqa ESLAB qolinadi — Console 5 xatodan keyin hisobni bloklaydi.
+  POST (job) qayta urinilMAYDI (javobi yo'qolgan job yaratilgan bo'lishi mumkin).
+* **Bizning kompyuter bilan bog'lash — (UUID, MAC) juftligi**
+  (`services.link_computers` → `devices.services.match_identity`): jismoniy
+  MAC'lardan biri mos. Faqat UUID yoki faqat MAC bo'yicha bog'lanmaydi.
+  «Ro'yxatga qo'shish» — `ComputerSerializer` orqali (bitta qoida), UUID/MAC
+  inventory'dan (`identity.extract`, placeholder'lar tashlanadi; standart MAC —
+  shlyuzli faol adapter, client yuboradigani).
+* **Job katalogi bitta joyda** — `bba/jobs.py` (panel `bba/job-types/` dan
+  oladi); xavfli tur `confirm` siz rad. Kim yuborgani — `BbaJob` (+ audit
+  `bba_job`); holat Console'dan poll ichida (`refresh_jobs`).
+* Ruxsatlar: `bba.view`, `bba.manage` (qo'shish, hudud bog'lash, sinxron; import
+  uchun `devices.manage` ham), `bba.jobs` (job/WoL — avtomatik berilmaydi).
+  Viloyat xodimi faqat `BbaRegion.region` orqali bog'langan hududni ko'radi
+  (avtomatik nom bo'yicha bog'lanmaydi); WebSocket guruhini server tanlaydi.
+* **Panel standarti — viloyat → xona ko'rinishi** (`components/bba/BbaRoomsView.tsx`,
+  jadval `?view=list`, viloyat `?region=`): sonlar `devices/tree/` (bitta GROUP BY),
+  plitkalar `devices/by-room/?bba_region=<id|none>` (sahifasiz, 3000 chegara, javob
+  `results` da — `useBbaLive` uni o'rnida yangilaydi). Plitka oddiy `<button>` +
+  `data-status`, tooltip — `title` (`SeatGrid` qoidasi).
+* `.env` `BBA_ENABLED=false` (testda `settings/test.py` mahkamlaydi) — vazifalar
+  darhol qaytadi, panel "sozlanmagan" deydi.
 
 ### Mashina tekshiruvi (Machine UUID + MAC) — ikkinchi darvoza
 
@@ -1825,6 +1877,7 @@ ProctoringClientSetup-1.0.0-gpu.exe /VERYSILENT [/INVENTORY_CODE=INV-001]
 | `exams` | Exam, ExamSchedule, ComputerBooking |
 | `proctoring` | ExamSession, ProctoringEvent (partitsiyalangan), FaceVerificationLog, ScreenshotMeta + ProctoringScreenshot, EvidenceArtifact, LocalRecording, TechnicalProblem, AuditLog + consumers/tasks/services |
 | `integrations` | Tashqi platforma (`exam_site.py`), FaceID integratsiyasi |
+| `bba` | BBA Console: kompyuterlar nusxasi, holat poll'i, inventory, job, `ws/bba/` |
 
 Har app: `models.py` / `selectors.py` (o'qish) / `services.py` (yozish,
 biznes-mantiq) / `api/v1/{serializers,views,urls}.py`. View'lar yupqa.

@@ -50,6 +50,18 @@ _faceid_key = FACEID_INTEGRATION["API_KEY"]  # noqa: F405
 if _faceid_key and len(_faceid_key) < 32:
     raise ImproperlyConfigured("FACEID_API_KEY kamida 32 belgidan iborat bo'lishi kerak")
 
+# BBA Console: Bearer token va job buyruqlari tarmoqda OCHIQ ketmasin
+# (`http://console.local/api` — faqat test) va sertifikat tekshirilsin —
+# aks holda Console nomidan javob bergan istalgan mashina job natijasini
+# soxtalashtirar va tokenni olardi.
+if BBA_CONSOLE["ENABLED"]:  # noqa: F405
+    if not BBA_CONSOLE["BASE_URL"].startswith("https://"):  # noqa: F405
+        raise ImproperlyConfigured("BBA_BASE_URL production'da https:// bo'lishi shart")
+    if not BBA_CONSOLE["VERIFY_TLS"]:  # noqa: F405
+        raise ImproperlyConfigured("BBA_VERIFY_TLS=false production'da taqiqlangan")
+    if not (BBA_CONSOLE["USERNAME"] and BBA_CONSOLE["PASSWORD"]):  # noqa: F405
+        raise ImproperlyConfigured("BBA_ENABLED=true: BBA_USERNAME va BBA_PASSWORD shart")
+
 
 # --------------------------------------------------------------------------
 # HTTPS / Xavfsizlik header'lari

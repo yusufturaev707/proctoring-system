@@ -78,3 +78,17 @@ SCREENSHOT_STORAGE["SERVE_DIRECTLY"] = True  # noqa: F405
 # Redis'ga yozadi — testlarda bu shovqin va (Redis yo'q bo'lsa) kechikish.
 # Monitoring testlari o'zi `override_settings` bilan yoqadi.
 SYSTEM_MONITOR["ENABLED"] = False  # noqa: F405
+
+# BBA Console: dev `.env` dagi haqiqiy Console testga tushmasin. Testlar
+# client'ni `mock` bilan almashtiradi va kerak bo'lsa `override_settings`
+# bilan yoqadi; pauza — testni sekinlashtirmasin.
+BBA_CONSOLE = {  # noqa: F405
+    **BBA_CONSOLE,  # noqa: F405
+    "ENABLED": False,
+    "BASE_URL": "https://bba.test",
+    "USERNAME": "proctoring",
+    "PASSWORD": "test-password",
+    "CA_FILE": "",
+    "VERIFY_TLS": True,
+    "INVENTORY_PAUSE": 0.0,
+}

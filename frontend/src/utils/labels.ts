@@ -101,6 +101,42 @@ export const AUDIT_ACTION_LABEL: Record<string, string> = {
   client_exit: 'Client’dan chiqish',
   client_back: 'Client’da orqaga qaytish',
   export: 'Eksport',
+  bba_job: 'BBA job yuborildi',
+  bba_job_cancel: 'BBA job bekor qilindi',
+  bba_job_resend: 'BBA job qayta yuborildi',
+  bba_wake: 'BBA: Wake-on-LAN',
+  bba_import_computer: 'BBA’dan kompyuter qo‘shildi',
+}
+
+/**
+ * BBA Console kompyuteri holati (`apps/bba/models.py:BbaDevice.Status`).
+ * Agent ulangan = kompyuter YONIQ; Console normal o'chirishni va kutilmagan
+ * uzilishni (tok, kabel, qotish) ajratadi — ikkalasi "offline" emas.
+ */
+export const BBA_STATUS_LABEL: Record<string, string> = {
+  online: 'Yoniq',
+  offline_graceful: 'O‘chirilgan',
+  offline_unexpected: 'Aloqa uzilgan',
+  unknown: 'Noma’lum',
+}
+
+export const BBA_STATUS_HINT: Record<string, string> = {
+  online: 'Agent hozir Console’ga ulangan — kompyuter ishlayapti',
+  offline_graceful: 'Windows’dan normal o‘chirilgan',
+  offline_unexpected: 'Aloqa kutilmaganda uzildi: tok o‘chgan, kabel sug‘urilgan yoki kompyuter qotgan',
+  unknown: 'Console holatni hali bilmaydi',
+}
+
+export const BBA_JOB_STATUS_LABEL: Record<string, string> = {
+  pending: 'Navbatda',
+  sent: 'Yuborildi',
+  received: 'Qabul qilindi',
+  running: 'Bajarilmoqda',
+  done: 'Bajarildi',
+  failed: 'Xato',
+  timeout: 'Vaqt tugadi',
+  cancelled: 'Bekor qilindi',
+  error: 'Yuborilmadi',
 }
 
 /** API vaqti (ISO satr), `Date` yoki bo'sh qiymat. */

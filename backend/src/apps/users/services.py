@@ -74,6 +74,12 @@ DEFAULT_PERMISSIONS: list[tuple[str, str, str]] = [
     ("users.manage", "Foydalanuvchilarni boshqarish", "users"),
     ("devices.view", "Qurilmalarni ko'rish", "devices"),
     ("devices.manage", "Qurilmalarni boshqarish", "devices"),
+    # BBA Console (boshqa tizim, `apps/bba`). Job — ko'rishdan ALOHIDA:
+    # u kompyuterni o'chiradi, qayta yuklaydi va SYSTEM huquqida skript
+    # bajaradi — kompyuterlar ro'yxatini ko'radigan har kimga berilmaydi.
+    ("bba.view", "BBA kompyuterlarini ko'rish", "bba"),
+    ("bba.manage", "BBA kompyuterlarini ro'yxatga qo'shish", "bba"),
+    ("bba.jobs", "BBA kompyuterlariga job yuborish", "bba"),
     ("regions.view", "Hududlarni ko'rish", "regions"),
     ("regions.manage", "Hududlarni boshqarish", "regions"),
     ("exams.view", "Imtihonlarni ko'rish", "exams"),

@@ -106,6 +106,7 @@ LOCAL_APPS = [
     "apps.proctoring",
     "apps.integrations",
     "apps.monitoring",
+    "apps.bba",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -739,6 +740,63 @@ EXTERNAL_PLATFORM = {
     "CB_RESET_TIMEOUT": env_int("BASE_CB_RESET_TIMEOUT", 30),
     # Test/dev uchun: tashqi API o'rniga soxta javob qaytarish
     "MOCK": env_bool("BASE_API_MOCK", False),
+}
+
+# BBA Console — kompyuterlar parkini boshqaradigan BOSHQA tizim (agent har
+# kompyuterda). Biz undan hudud -> xona -> kompyuter daraxtini, holatni
+# (online/o'chirilgan/aloqa uzilgan), inventory va hardware ID'larni olamiz va
+# job yuboramiz (`apps/bba`). Console'da push yo'q (o'z UI'si ham so'raydi):
+# holat `STATUS_POLL_SECONDS` da bir so'raladi va o'zgarishi panelga
+# WebSocket bilan boriladi (`ws/bba/`).
+#
+# Login/parol FAQAT `.env` da. Console sertifikati BBA'ning ichki CA'si bilan
+# imzolangan: `CA_FILE` — `GET /ca` dan bir marta olingan PEM
+# (`python manage.py bba_console fetch-ca`); `verify=False` production'da taqiq.
+#
+# Endpoint yo'llari Console versiyasi bilan o'zgarsa kodni emas, `.env` ni
+# tuzatish uchun — har biri `BBA_PATH_*` bilan almashtiriladi; `{id}` —
+# Console ID'si.
+BBA_CONSOLE = {
+    "ENABLED": env_bool("BBA_ENABLED", False),
+    "BASE_URL": (env("BBA_BASE_URL", "https://172.16.222.2:8443") or "").rstrip("/"),
+    "USERNAME": env("BBA_USERNAME", ""),
+    "PASSWORD": env("BBA_PASSWORD", ""),
+    # Nisbiy yo'l `backend/` ga nisbatan (`client_access.log` bilan bir xil sabab).
+    "CA_FILE": env("BBA_CA_FILE", ""),
+    "VERIFY_TLS": env_bool("BBA_VERIFY_TLS", True),
+    "CONNECT_TIMEOUT": env_float("BBA_CONNECT_TIMEOUT", 3.0),
+    "READ_TIMEOUT": env_float("BBA_READ_TIMEOUT", 15.0),
+    # Console limiti — 300 so'rov/daqiqa bitta IP'dan. Holat so'rovi
+    # 500 kompyuterga bitta: 10 000 kompyuter x 15 s = 80 so'rov/daqiqa.
+    "STATUS_POLL_SECONDS": env_int("BBA_STATUS_POLL_SECONDS", 15),
+    # Hudud va xonalar kam o'zgaradi.
+    "TREE_SYNC_SECONDS": env_int("BBA_TREE_SYNC_SECONDS", 300),
+    # Agent inventory'ni o'zi yuboradi (o'zgarsa darhol, kamida 6 soatda).
+    # Har inventory so'rovi Console audit'iga `view_device` yozadi — bot kabi
+    # tez-tez so'ralmaydi.
+    "INVENTORY_MAX_AGE_HOURS": env_int("BBA_INVENTORY_MAX_AGE_HOURS", 6),
+    "INVENTORY_BATCH": env_int("BBA_INVENTORY_BATCH", 1000),
+    "INVENTORY_PAUSE": env_float("BBA_INVENTORY_PAUSE", 0.35),
+    # Paneldagi «Yangilash» shu oraliqdan tez Console'ga bormaydi.
+    "INVENTORY_REFRESH_SECONDS": env_int("BBA_INVENTORY_REFRESH_SECONDS", 60),
+    "ENDPOINTS": {
+        "login": env("BBA_PATH_LOGIN", "/login"),
+        "logout": env("BBA_PATH_LOGOUT", "/logout"),
+        "me": env("BBA_PATH_ME", "/me"),
+        "regions": env("BBA_PATH_REGIONS", "/regions"),
+        "rooms": env("BBA_PATH_ROOMS", "/rooms"),
+        "devices": env("BBA_PATH_DEVICES", "/devices"),
+        "inventory": env("BBA_PATH_INVENTORY", "/devices/{id}/inventory"),
+        "connectivity": env("BBA_PATH_CONNECTIVITY", "/devices/{id}/connectivity-events"),
+        "stats": env("BBA_PATH_STATS", "/stats"),
+        "jobs": env("BBA_PATH_JOBS", "/jobs"),
+        "device_jobs": env("BBA_PATH_DEVICE_JOBS", "/devices/{id}/jobs"),
+        "bulk_jobs": env("BBA_PATH_BULK_JOBS", "/devices/jobs"),
+        "job_cancel": env("BBA_PATH_JOB_CANCEL", "/jobs/{id}/cancel"),
+        "job_resend": env("BBA_PATH_JOB_RESEND", "/jobs/{id}/resend"),
+        "device_wake": env("BBA_PATH_DEVICE_WAKE", "/devices/{id}/wake"),
+        "bulk_wake": env("BBA_PATH_BULK_WAKE", "/devices/wake"),
+    },
 }
 
 

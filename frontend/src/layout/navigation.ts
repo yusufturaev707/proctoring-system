@@ -28,6 +28,8 @@ import RiskIcon from '@mui/icons-material/SpeedOutlined'
 import SeatIcon from '@mui/icons-material/EventSeatOutlined'
 import ServerIcon from '@mui/icons-material/DnsOutlined'
 import GavelIcon from '@mui/icons-material/GavelOutlined'
+import HubIcon from '@mui/icons-material/HubOutlined'
+import TerminalIcon from '@mui/icons-material/TerminalOutlined'
 
 /**
  * Marshrut -> lazy import.
@@ -53,6 +55,8 @@ export const ROUTE_LOADERS: Record<string, () => Promise<PageModule>> = {
   '/computers': () => import('../pages/crud/ComputersPage'),
   '/cameras': () => import('../pages/crud/CamerasPage'),
   '/device-tokens': () => import('../pages/DeviceTokens'),
+  '/bba': () => import('../pages/BbaDevices'),
+  '/bba/jobs': () => import('../pages/BbaJobs'),
   '/exam-types': () => import('../pages/crud/ExamTypesPage'),
   '/exams': () => import('../pages/crud/ExamsPage'),
   '/exam-schedules': () => import('../pages/crud/ExamSchedulesPage'),
@@ -192,6 +196,14 @@ export const NAVIGATION: NavGroup[] = [
       {
         label: 'Client qurilmalari', path: '/device-tokens', icon: SecurityIcon, permission: 'devices.view',
         description: 'O‘rnatilgan client dasturlari: tasdiqlash, bloklash, kompyuterga biriktirish',
+      },
+      {
+        label: 'BBA kompyuterlari', path: '/bba', icon: HubIcon, permission: 'bba.view',
+        description: 'BBA Console’dagi kompyuterlar: yoniq/o‘chiq holati, hardware, inventory va ro‘yxatga qo‘shish',
+      },
+      {
+        label: 'BBA job’lari', path: '/bba/jobs', icon: TerminalIcon, permission: 'bba.view',
+        description: 'Paneldan BBA kompyuterlariga yuborilgan buyruqlar: kim, qachon, natija',
       },
     ],
   },

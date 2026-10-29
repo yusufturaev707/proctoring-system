@@ -32,6 +32,16 @@ app.autodiscover_tasks()
 if sys.platform == "win32":
     app.conf.worker_pool = "threads"
 
+
+def _env_seconds(key: str, default: float) -> float:
+    try:
+        return max(5.0, float(os.getenv(key) or default))
+    except ValueError:
+        return default
+
+
+_BBA_POLL_SECONDS = _env_seconds("BBA_STATUS_POLL_SECONDS", 15.0)
+
 # --------------------------------------------------------------------------
 # Periodik vazifalar
 #
@@ -79,6 +89,21 @@ app.conf.beat_schedule = {
         "task": "monitoring.sample_system",
         "schedule": 30.0,
         "options": {"queue": "maintenance", "expires": 25},
+    },
+    # BBA Console holati. Oraliq `.env` dan (sozlamadagi bilan bir xil
+    # kalit) — `beat_schedule` Django sozlamalari yuklanishidan oldin
+    # o'qiladi. `BBA_ENABLED=false` da vazifa darhol qaytadi.
+    "bba-poll": {
+        "task": "bba.poll",
+        "schedule": _BBA_POLL_SECONDS,
+        "options": {"queue": "maintenance", "expires": _BBA_POLL_SECONDS},
+    },
+    # Inventory: yurish vaqt byudjeti bilan (`services.INVENTORY_TIME_BUDGET_S`),
+    # qolgani keyingisida — `maintenance` ishchisini uzoq band qilmaydi.
+    "bba-sync-inventories": {
+        "task": "bba.sync_inventories",
+        "schedule": 300.0,
+        "options": {"queue": "maintenance", "expires": 280},
     },
     "rotate-event-partitions": {
         "task": "proctoring.rotate_event_partitions",

@@ -320,7 +320,7 @@ export default function ResourcePage({
 
   const runBulk = useCallback(async () => {
     const action = bulkPending
-    if (!action) return
+    if (!action?.run) return
     setBulkBusy(true)
     try {
       const result = await action.run({
@@ -604,7 +604,24 @@ export default function ResourcePage({
           color={action.color || 'primary'}
           startIcon={action.icon}
           disableElevation
-          onClick={() => setBulkPending(action)}
+          onClick={() => {
+            if (!action.open) {
+              setBulkPending(action)
+              return
+            }
+            action.open(
+              {
+                ids: selectAll ? undefined : selection,
+                all: selectAll,
+                params: resource.scopeParams,
+                count: selectedCount,
+              },
+              () => {
+                clearSelection()
+                queryClient.invalidateQueries({ queryKey: [queryKey] })
+              },
+            )
+          }}
           sx={{ borderRadius: 999 }}
         >
           {action.label}
