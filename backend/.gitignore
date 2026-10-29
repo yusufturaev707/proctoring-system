@@ -1,5 +1,7 @@
 src/config/settings/local.py
 script/
+# BBA Console CA sertifikati — har serverda o'zi (`manage.py bba_console fetch-ca`).
+certs/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
