@@ -358,7 +358,9 @@ REST_FRAMEWORK = {
         "client_ingest": env("THROTTLE_CLIENT_INGEST", "600/min"),
         "staff_login": env("THROTTLE_STAFF_LOGIN", "60/min"),
         "staff_login_device": env("THROTTLE_STAFF_LOGIN_DEVICE", "10/min"),
-        "device_register": env("THROTTLE_DEVICE_REGISTER", "20/hour"),
+        # Yangi qurilma IP (bino NAT'i) bo'yicha sanaladi: 20/hour bilan
+        # binoda ommaviy o'rnatish 21-mashinada to'xtardi.
+        "device_register": env("THROTTLE_DEVICE_REGISTER", "600/hour"),
         "user": env("THROTTLE_USER", "1000/min"),
         "anon": env("THROTTLE_ANON", "60/min"),
     },

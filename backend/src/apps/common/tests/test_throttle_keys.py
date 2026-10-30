@@ -325,3 +325,31 @@ class ScopeDetailsThrottleTests(TestCase):
         scopes = {cls.public_scope for cls in CandidateLookupView.throttle_classes}
         self.assertEqual(scopes, {"pinfl", "device", "operator"})
         self.assertIn(PinflLookupThrottle, CandidateLookupView.throttle_classes)
+
+
+class PlainThrottleWaitTests(TestCase):
+    """
+    Har qanday 429 — tanada haqiqiy `details.wait` (`api_exception_handler`).
+
+    Client `Retry-After` ni 300 s bilan qisadi: soatlik `devices/register/`
+    chegarasida operator "300 soniyadan keyin" ko'rib, keyin yana rad etilardi.
+    """
+
+    def test_wait_in_details_without_scope_mixin(self):
+        from rest_framework.permissions import AllowAny
+        from rest_framework.response import Response
+        from rest_framework.test import APIRequestFactory
+        from rest_framework.views import APIView
+
+        class View(APIView):
+            authentication_classes = []
+            permission_classes = [AllowAny]
+            throttle_classes = [_blocked("", 2399.4)]
+
+            def post(self, request):
+                return Response({"ok": True})
+
+        response = View.as_view()(APIRequestFactory().post("/x/", {}, format="json"))
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.data["error"]["details"], {"wait": 2400})
+        self.assertEqual(response["Retry-After"], "2400")

@@ -2008,7 +2008,12 @@ biznes-mantiq) / `api/v1/{serializers,views,urls}.py`. View'lar yupqa.
   har so'rovda to'liq qayta yoziladi — o'n minglab limit qo'ymang.
   JSHSHIR qidiruvining 429 javobida `details.scope` (`pinfl`/`device`/
   `operator`) va haqiqiy `details.wait` (`ScopeDetailsThrottleMixin`) —
-  operator "boshqa talabgorni qidirish mumkinmi" ni biladi. Client bu yo'lga
+  operator "boshqa talabgorni qidirish mumkinmi" ni biladi. **Har 429 da
+  `details.wait`** (`api_exception_handler`): client `Retry-After` ni 300 s
+  bilan qisadi va darvozasi ham 300 s, lekin matn server muddatini aytadi
+  (`throttled_message`, `ApiClient._set_gate`) — aks holda soatlik
+  `devices/register/` chegarasida har urinishda "300 soniyadan keyin" chiqardi.
+  `THROTTLE_DEVICE_REGISTER` 600/hour: yangi qurilma bino NAT IP'si bo'yicha. Client bu yo'lga
   `Retry-After` darvozasini QO'YMAYDI (`ApiClient.request(gate=False)`):
   darvoza yo'l bo'yicha, chegara esa JSHSHIR bo'yicha — bitta JSHSHIR
   butun qidiruvni 5 daqiqaga yopardi.

@@ -1,11 +1,12 @@
 import logging
+import math
 import random
 
 from django.core.exceptions import PermissionDenied, ValidationError as DjangoValidationError
 from django.db import IntegrityError, InterfaceError, OperationalError
 from django.http import Http404
 from rest_framework import status
-from rest_framework.exceptions import APIException
+from rest_framework.exceptions import APIException, Throttled
 from rest_framework.response import Response
 from rest_framework.views import exception_handler as drf_exception_handler
 from redis.exceptions import RedisError
@@ -558,6 +559,12 @@ def api_exception_handler(exc, context):
         message = str(detail["detail"])
         details = getattr(exc, "extra", None)
         code = getattr(detail["detail"], "code", code)
+        if details is None and isinstance(exc, Throttled) and exc.wait is not None:
+            # Haqiqiy muddat tanada ham: client `Retry-After` ni 300 s bilan
+            # qisadi (`client/services/net_policy.py`) va soatlik chegarada
+            # (`devices/register/`) operatorga "300 soniyadan keyin" deb,
+            # keyin yana rad etardi — har urinishda.
+            details = {"wait": math.ceil(exc.wait)}
     else:
         details = _flatten(detail)
         message = "Kiritilgan ma'lumotlar noto'g'ri"
