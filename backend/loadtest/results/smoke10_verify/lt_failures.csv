@@ -1,0 +1,2 @@
+Method,Name,Error,Occurrences
+GET,panel sessions/{id}/stored-screenshots,CatchResponseError('0'),1

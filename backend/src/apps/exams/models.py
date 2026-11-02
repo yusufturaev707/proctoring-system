@@ -238,6 +238,23 @@ class ExamSchedule(SoftDeleteModel):
         now = at or timezone.now()
         return bool(self.is_active and self.opens_at <= now <= self.ends_at)
 
+    def clean(self):
+        # Django admin formasi panel bilan BIR XIL qoidadan o'tadi
+        # (`ExamScheduleSerializer._check_overlap`, `exams/schedules.py`).
+        from django.core.exceptions import ValidationError
+
+        from apps.exams import schedules
+
+        super().clean()
+        if not self.exam_id:
+            return
+        other = schedules.overlap_of(self)
+        if other is not None:
+            raise ValidationError({"starts_at": schedules.overlap_message(
+                other, starts_at=self.starts_at, ends_at=self.ends_at,
+                lead_minutes=self.checkin_lead_minutes,
+            )})
+
     def __str__(self):
         return f"{self.exam.name} — {self.exam_date}"
 

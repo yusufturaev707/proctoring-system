@@ -226,6 +226,7 @@ class ExamScheduleSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"ends_at": "Tugash vaqti boshlanish vaqtidan keyin bo'lishi kerak"}
             )
+        self._check_overlap(attrs, starts_at, ends_at)
         # Umumiy seans (`zone=NULL`) BARCHA viloyatlarga amal qiladi —
         # uni faqat respublika darajasida yaratish mumkin (viloyat xodimi
         # uni faqat KO'RADI, `ExamScheduleViewSet.get_queryset`).
@@ -235,6 +236,35 @@ class ExamScheduleSerializer(serializers.ModelSerializer):
             null_message="Barcha binolar uchun (umumiy) seansni faqat respublika administratori yaratadi",
         )
         return attrs
+
+    def _check_overlap(self, attrs, starts_at, ends_at):
+        """
+        Bitta imtihon seanslarining kirish oynalari kesishmasin (`exams/schedules.py`).
+
+        Qisman PATCH'da yo'q maydon saqlangan qiymatdan; `zone` uchun `in`
+        bilan — `None` (umumiy seans) haqiqiy qiymat. Nofaolni qayta yoqish
+        (`is_active: true`) ham shu yerdan o'tadi.
+        """
+        from apps.exams import schedules
+
+        def value(name, default=None):
+            return attrs[name] if name in attrs else getattr(self.instance, name, default)
+
+        exam, zone = value("exam"), value("zone")
+        lead = value("checkin_lead_minutes", ExamSchedule._meta.get_field("checkin_lead_minutes").default)
+        if not value("is_active", True) or exam is None or not starts_at or not ends_at:
+            return
+        other = schedules.find_overlap(
+            exam_id=exam.pk, zone_id=getattr(zone, "pk", None),
+            starts_at=starts_at, ends_at=ends_at, lead_minutes=lead,
+            exclude_pk=getattr(self.instance, "pk", None),
+        )
+        if other is not None:
+            raise serializers.ValidationError(
+                {"starts_at": schedules.overlap_message(
+                    other, starts_at=starts_at, ends_at=ends_at, lead_minutes=lead,
+                )}
+            )
 
 
 # --------------------------------------------------------------------------

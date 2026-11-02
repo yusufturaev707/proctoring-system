@@ -121,6 +121,28 @@ class ExamScheduleViewSet(
             queryset = queryset.filter(region)
         return queryset
 
+    @action(detail=True, methods=["post"])
+    def restore(self, request, pk=None):
+        """
+        Tiklash serializer'dan o'tmaydi — kesishma tekshiruvi shu yerda ham
+        (`exams/schedules.py`): o'chirilgan seans o'rniga yangisi tuzilgan
+        bo'lsa, eskisini qaytarish ikki ochiq oyna berardi.
+        """
+        from apps.exams import schedules
+
+        self._include_deleted_override = True
+        try:
+            instance = self.get_object()
+        finally:
+            self._include_deleted_override = False
+        other = schedules.overlap_of(instance) if instance.deleted_at is not None else None
+        if other is not None:
+            raise ValidationError({"starts_at": schedules.overlap_message(
+                other, starts_at=instance.starts_at, ends_at=instance.ends_at,
+                lead_minutes=instance.checkin_lead_minutes,
+            )})
+        return super().restore(request, pk)
+
 
 class ComputerBookingViewSet(PermissionRequiredMixin, AuditLogMixin, viewsets.ModelViewSet):
     """

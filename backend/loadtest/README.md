@@ -14,6 +14,7 @@ so'rov narxi va skriptlarni tekshirish uchun.
 | `server/stub_platform.py` | tashqi platforma (`?imie=`) va ntest (`POST /api/v1/exam/session-result`) stub'i, kechikish/xato sozlanadi |
 | `server/loadtest_settings.py` | LOKAL ajratilgan sozlama: baza `proctoring_loadtest`, Redis 6–10, production throttle qiymatlari, `TRUSTED_PROXY_COUNT=1` |
 | `tools/profile_endpoints.py` | har endpoint narxi: vaqt, SQL (turi bo'yicha), Redis buyruqlari, `group_send`, so'rov/javob hajmi |
+| `tools/verify_accepted.py` | "yuborilgan = bazadagi": Locust qabul qilgan hodisa/savol kadri/sessiya (`<csv>_accepted_*.json`) bazadagi son bilan, Redis `lag`/`pending`/`:dead` (sinov oralig'ida) — PASS/FAIL |
 | `tools/stage_report.py` | `*_by_stage_*.json` -> bosqich bo'yicha CSV/HTML (p50/p95/p99, RPS, xato %, SLO belgisi) |
 | `tools/local_stack.ps1` | lokal stend (stub + HTTP 8012 + WS 8013 + Celery) start/stop |
 | `results/endpoint_profile.json` | [o'] endpoint profili (20 oqim, concurrency 1) |
@@ -91,8 +92,8 @@ $env:LT_HTTP_CLIENT="requests"   # runserver geventhttpclient bilan GET'da ulani
 powershell -File tools\local_stack.ps1 stop
 ```
 Har yurishdan OLDIN: `cleanup_loadtest --keep-seed --yes` + `seed_loadtest` (yakun bronni bo'shatadi).
-DIQQAT: toza bazada `setup_partitions --apply` `proctoring_event` ni 5 ustunsiz yaratadi (6-bo'lim, 1-muammo) —
-tuzatilguncha lokal bazaga ustunlarni qo'lda qo'shing.
+`steady`/`finish`/`reconnect` foydalanuvchi sonini `--users` dan EMAS, `--lt-storm-users` dan oladi
+(standart 5000!) — lokal smoke'da `--lt-storm-users 10 --lt-storm-seconds 10` bering.
 
 ## 6. Staging (production nusxasi) — runbook
 
@@ -116,7 +117,8 @@ tuzatilguncha lokal bazaga ustunlarni qo'lda qo'shing.
 5. **Kuzatish**: `backend/deploy/MONITORING.md` (L2) bo'yicha — CPU/RAM/swap, gunicorn thread bandligi,
    PgBouncer `cl_waiting`, Postgres ulanish/lock/WAL, Redis `proctoring:events` lag va PEL, `:dead` oqimi,
    Celery navbati, disk yozish/IOPS, tarmoq Mbit/s, `ws` ulanishlar soni.
-6. **Tozalash**: `cleanup_loadtest --allow-db <db> --yes` (Celery ishlab turganda, 15 s kutib).
+6. **Ma'lumot yo'qolmadi**: har yurishdan keyin `tools/verify_accepted.py results/stg/lt --since "<boshlanish>"` (Celery ishlab turganda).
+7. **Tozalash**: `cleanup_loadtest --allow-db <db> --yes` (Celery ishlab turganda, 15 s kutib).
 
 ### SLO jadvali (to'ldiring)
 

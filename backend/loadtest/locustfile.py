@@ -103,8 +103,9 @@ def _(parser):
     g.add_argument("--lt-finish-jitter-s", type=float, default=60.0)
     g.add_argument("--lt-outage-at-minutes", type=float, default=5.0, help="reconnect: uzilish vaqti")
     g.add_argument("--lt-outage-seconds", type=float, default=60.0)
-    g.add_argument("--lt-reconnect-jitter", type=int, default=0,
-                   help="reconnect: 1 — client backoff'iga tasodifiy jitter (tavsiya), 0 — hozirgi client")
+    g.add_argument("--lt-reconnect-jitter", type=int, default=1,
+                   help="reconnect: 1 — hozirgi client (`net_policy.backoff_delay`, equal jitter, "
+                        "1 s .. 60 s), 0 — eski jittersiz jadval 1,2,4,8,15,30 (solishtirish uchun)")
     g.add_argument("--lt-user-offset", type=int, default=0, help="Manifestdagi boshlang'ich indeks")
     g.add_argument("--lt-worker-stride", type=int, default=1,
                    help="Taqsimlangan rejim: worker soni (indekslar to'qnashmasin)")
@@ -195,6 +196,25 @@ def _multipart(fields: dict, files: dict) -> tuple[bytes, str]:
     return b"".join(out), f"multipart/form-data; boundary={boundary}"
 
 
+#: "Yuborilgan = bazadagi" tekshiruvi (SLO: dalil yo'qolmaydi). Faqat server
+#: QABUL QILGAN (2xx) narsa sanaladi; test oxirida `<csv>_accepted_<worker>.json`
+#: ga yoziladi va `tools/verify_accepted.py` bazadagi son bilan solishtiradi.
+#: Skrinshot — (sessiya, savol) juftligi: qayta javob kadri qatorni ALMASHTIRADI.
+ACCEPTED = {"events": 0, "sessions_started": 0, "sessions_finished": 0}
+ACCEPTED_SHOTS: set = set()
+
+
+@events.test_stop.add_listener
+def _dump_accepted(environment, **_kw):
+    prefix = getattr(environment.parsed_options, "csv_prefix", None)
+    if not prefix:
+        return
+    worker = getattr(environment.runner, "client_id", "local") if environment.runner else "local"
+    worker = "".join(ch if ch.isalnum() else "_" for ch in str(worker))[-40:]
+    out = dict(ACCEPTED, screenshots=len(ACCEPTED_SHOTS))
+    Path(f"{prefix}_accepted_{worker}.json").write_text(json.dumps(out), encoding="utf-8")
+
+
 def _fire_ws(name: str, started: float, exc=None, length: int = 0):
     if _ENV is None:
         return
@@ -233,9 +253,13 @@ class ExamClient(BaseHttpUser):
             h["Connection"] = "close"
         if self.opts.lt_real_ip:
             h["X-Real-IP"] = self.ident["source_ip"]
+        # Client `X-Device-ID` ni HAR so'rovda, login'da ham yuboradi
+        # (`client/services/api_client.py:_headers`). Usiz login'dagi
+        # `StaffLoginDeviceThrottle` bino IP'siga tushadi (10/daq butun binoga)
+        # va `--computers-per-operator` > 1 da soxta 429 chiqadi.
+        h["X-Device-ID"] = self.ident["device_id"]
         if auth and self.access:
             h["Authorization"] = f"Bearer {self.access}"
-            h["X-Device-ID"] = self.ident["device_id"]
         if session and self.session_token:
             h["X-Proctoring-Session"] = self.session_token
         return h
@@ -352,6 +376,7 @@ class ExamClient(BaseHttpUser):
         if self.call("client/proctoring/start", "POST", f"{API}/client/proctoring/start/",
                      json_body={"ai_profile": "cpu"}) is None:
             raise StopUser()
+        ACCEPTED["sessions_started"] += 1
 
         self.exam_started = time.time()
         self.face_checks = 0
@@ -414,6 +439,7 @@ class ExamClient(BaseHttpUser):
             if self.call("client/events", "POST", f"{API}/client/events/",
                          json_body={"events": payloads.event_batch(n, self.rnd)}) is not None:
                 self.backlog = max(0, backlog - n)
+                ACCEPTED["events"] += n
 
     def _do_shot(self):
         self._due["shot"] += self.shot_interval
@@ -427,9 +453,12 @@ class ExamClient(BaseHttpUser):
             {"file": ("screen.jpg", payloads.screenshot_jpeg(self.ident["index"] % 3), "image/jpeg")},
         )
         if self.call("client/screenshots/upload", "POST", f"{API}/client/screenshots/upload/",
-                     body=body, ctype=ctype, expect=(201,)) is None and self.offline is False:
-            # screen_capture: xatoda 15 s dan keyin qayta (kadr tashlanmaydi).
-            self._due["shot"] = min(self._due["shot"], time.time() + 15)
+                     body=body, ctype=ctype, expect=(201,)) is None:
+            if self.offline is False:
+                # screen_capture: xatoda 15 s dan keyin qayta (kadr tashlanmaydi).
+                self._due["shot"] = min(self._due["shot"], time.time() + 15)
+        else:
+            ACCEPTED_SHOTS.add((self.public_id, q))
 
     def _do_face(self):
         self._due["face"] += 10
@@ -453,8 +482,9 @@ class ExamClient(BaseHttpUser):
         elapsed_ms = int((time.time() - self.exam_started) * 1000)
         self.call("client/recordings", "POST", f"{API}/client/recordings/",
                   json_body=payloads.recording_body(self.public_id, elapsed_ms), expect=(201,))
-        self.call("client/session/finish", "POST", f"{API}/client/session/finish/",
-                  json_body={"reason": "", "completed": True})
+        if self.call("client/session/finish", "POST", f"{API}/client/session/finish/",
+                     json_body={"reason": "", "completed": True}) is not None:
+            ACCEPTED["sessions_finished"] += 1
         self.session_token = ""
         self._due = {"idle": time.time() + 3600}
         if self.ws is not None:
@@ -500,7 +530,7 @@ class ExamClient(BaseHttpUser):
     def _ws_loop(self):
         import websocket
 
-        backoff = (1, 2, 4, 8, 15, 30)  # client/services/realtime.py:_BACKOFF_S
+        backoff = (1, 2, 4, 8, 15, 30)  # ESKI client jadvali (`--lt-reconnect-jitter 0`)
         attempt = 0
         while self.session_token:
             if self.offline:
@@ -541,9 +571,13 @@ class ExamClient(BaseHttpUser):
                 self.ws = None
             if not self.session_token:
                 break
-            delay = backoff[min(attempt, len(backoff) - 1)]
             if self.opts.lt_reconnect_jitter:
-                delay = random.uniform(0.5 * delay, 1.5 * delay)
+                # client/services/net_policy.py:backoff_delay (base 1, cap 60 —
+                # realtime._BACKOFF_BASE_S/_BACKOFF_CAP_S): [exp/2, exp].
+                exp = min(60.0, 1.0 * 2 ** min(attempt, 32))
+                delay = exp / 2 + random.random() * exp / 2
+            else:
+                delay = backoff[min(attempt, len(backoff) - 1)]
             attempt += 1
             gevent.sleep(delay)
 

@@ -1551,16 +1551,17 @@ CPU'ga tushish jimgina o'tmaydi: ERROR log, ekranda "Model tayyor — CPU
 (GPU ishlatilmadi)", `Computer.info_pc.gpu_warning`. `FACE_REQUIRE_GPU=true`
 uni ochiq xatoga aylantiradi (standart `false`).
 
-**`onnxruntime-gpu` versiyasi CUDA nashriga qadalgan**: `1.22.x` → CUDA 12 +
+**`onnxruntime-gpu` versiyasi CUDA nashriga qadalgan**: `1.21–1.23` → CUDA 12 +
 cuDNN 9, `1.24+` → CUDA 13 (`client/requirements.txt` izohi). Yechim —
-faqat mos nashr.
+faqat mos nashr. **1.22.0 ga QAYTMANG**: u `dxcore.dll` ni oddiy import
+qiladi, Windows 10 1809 da u yo'q va model umuman yuklanmaydi. Hozir 1.23.2.
 
 **`pip install -r requirements.txt` GPU'ni jimgina o'chiradi**: `insightface`
 metadata'sida `onnxruntime` (CPU) bor, pip uni `onnxruntime-gpu` ning o'rnini
 bosuvchi deb tanimaydi va eng yangi CPU paketini umumiy `onnxruntime/` papkasiga
 yozadi (eski `providers_cuda.dll` qoladi — DLL tekshiruvi aldanadi). Keyin:
 `pip uninstall -y onnxruntime` + `pip install --force-reinstall --no-deps
-onnxruntime-gpu==1.22.0`. `build.ps1` ikkalasi birga bo'lsa to'xtaydi.
+onnxruntime-gpu==1.23.2`. `build.ps1` ikkalasi birga bo'lsa to'xtaydi.
 
 **ONNX sessiya sozlamasi BITTA joyda — `proctoring/inference/engine.py:
 session_options`** (`OnnxEngine` ham, FaceID ham): spinning O'CHIQ
@@ -1839,6 +1840,11 @@ ProctoringClientSetup-1.0.0-gpu.exe /VERYSILENT [/INVENTORY_CODE=INV-001]
   himoya `cuda_runtime._preload_cudnn_siblings`. Tutun tekshiruvi
   (`ProctoringClientCheck.exe`, `smoke_check.py`) provayderni inferensiyadan
   keyin o'qiydi.
+* **VC++ runtime to'liq to'plami `_internal` ILDIZIDA**
+  (`proctoring_client.spec:_complete_vc_runtime`, importdan to'ldiriladi):
+  `msvcp140_1.dll` faqat `PyQt6/Qt6/bin` da qolgan va runtime'siz
+  mashinada ORT importi yiqilgan. Build mashinasidagi tutun tekshiruvi
+  buni KO'RMAYDI (System32 da runtime bor).
 * Avtostart — Task Scheduler (`installer/autostart.ps1`), `HKLM\Run` emas.
 * **Administrator huquqi — vazifa orqali, manifest emas** (`uac_admin=False`
   qoladi — UAC oynasi kioskni to'xtatardi). Oddiy huquqda ochilgan nusxa
