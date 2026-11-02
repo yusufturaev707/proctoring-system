@@ -1,6 +1,5 @@
 .venv/
 __pycache__/
-results/storage/
-results/*.log
-results/manifest.json
-results/local_*/
+# Yurish natijalari (CSV/HTML, worker hisoblagichlari, storage) — har
+# mashinada lokal; nomlarida hisob/host nomi bo'ladi. Repoga kirmaydi.
+results/

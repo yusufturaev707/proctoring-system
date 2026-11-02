@@ -1,4 +1,0 @@
-Method,Name,Error,Occurrences
-POST,client/handshake,CatchResponseError('0 '),1
-POST,client/events,CatchResponseError('0 '),5
-POST,client/exam/access,CatchResponseError('0 '),2
