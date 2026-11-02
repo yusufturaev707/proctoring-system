@@ -48,3 +48,7 @@ staticfiles/
 
 client/
 .playwright-mcp/
+
+# Tashqi tizim (BBA Console) hujjati — ichki manzillar va hisob nomi bor,
+# repoga kirmaydi. Fayl lokal turadi (CLAUDE.md unga havola qiladi).
+bba_agent_api.md
