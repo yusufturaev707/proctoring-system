@@ -6,9 +6,9 @@ yotadi, ertaga ular S3-mos storage'ga ko'chishi mumkin. Agar `open()`,
 `os.path.join()` va `unlink()` chaqiruvlari view, service va Celery task
 bo'ylab sochilib ketsa, bu ko'chish o'nlab joyni qayta yozishni talab
 qiladi va ularning bittasi albatta e'tibordan chetda qoladi. Shuning
-uchun tashqi dunyo faqat beshta amalni biladi:
+uchun tashqi dunyo faqat shu amallarni biladi:
 
-    save / delete / exists / serve / prune_empty_dirs
+    save / delete / exists / serve / read / prune_empty_dirs
 
 `serve` ataylab HTTP javobini qaytaradi, `bytes` emas — "faylni qanday
 yetkazish" storage'ning O'Z ishi:
@@ -17,7 +17,9 @@ yetkazish" storage'ning O'Z ishi:
     S3          ->  presigned URL'ga 302
 
 Ikkala holatda ham binary Python worker'idan O'TMAYDI, lekin ruxsat
-tekshiruvi Django'da qoladi. Yangi backend qo'shish uchun shu klassdan
+tekshiruvi Django'da qoladi. `read` (baytlar) — FAQAT server o'zi faylni
+boshqa tizimga uzatadigan fon vazifasi uchun (`integrations/platform_push.py`);
+brauzerga berish uchun uni ishlatmang — u `serve`. Yangi backend qo'shish uchun shu klassdan
 meros olib, `SCREENSHOT_STORAGE["BACKEND"]` ni o'zgartirish yetarli.
 """
 
@@ -119,6 +121,16 @@ class ScreenshotStorage(abc.ABC):
 
         Fayl topilmasa `FileNotFoundError` ko'taradi — view uni 404 ga
         aylantiradi.
+        """
+
+    @abc.abstractmethod
+    def read(self, relative_path: str, *, max_bytes: int) -> bytes:
+        """
+        Fayl baytlari (fon vazifasi boshqa tizimga uzatishi uchun).
+
+        Topilmasa `FileNotFoundError`; `max_bytes` dan katta bo'lsa
+        `ValueError` — buzilgan/almashtirilgan fayl worker xotirasini
+        to'ldirmasin.
         """
 
     def prune_empty_dirs(self, limit: int = 1000) -> int:
@@ -299,6 +311,14 @@ class FilesystemScreenshotStorage(ScreenshotStorage):
         # Skrinshot dalil — u kesh yoki proxy'da qolib ketmasligi kerak.
         response["Cache-Control"] = "private, no-store"
         return response
+
+    def read(self, relative_path: str, *, max_bytes: int) -> bytes:
+        absolute = self._absolute(relative_path)
+        with absolute.open("rb") as handle:
+            data = handle.read(max_bytes + 1)
+        if len(data) > max_bytes:
+            raise ValueError(f"Fayl {max_bytes} baytdan katta: {relative_path!r}")
+        return data
 
     def internal_url(self, relative_path: str) -> str:
         """`X-Accel-Redirect` uchun ichki URI (nginx `internal` location)."""

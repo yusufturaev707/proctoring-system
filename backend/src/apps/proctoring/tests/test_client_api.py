@@ -369,6 +369,26 @@ class FaceEndpointTests(RedisStateMixin, TestCase):
         self.assertEqual(log.score, 88)
         self.assertTrue(log.image_path)
 
+    def test_entry_result_is_forwarded_to_platform(self):
+        """`Exam.face_result_url` bo'lsa — o'tgan urinish ham navbatga (rasm bilan)."""
+        from apps.integrations import tasks as push_tasks
+
+        self.exam.face_result_url = "https://api.test.uz/faceid"
+        self.exam.save(update_fields=["face_result_url"])
+        with patch.object(push_tasks.push_face_result, "delay") as delay,                 self.captureOnCommitCallbacks(execute=True):
+            response = self._post(
+                "client-face-verify",
+                {
+                    "challenge": self.challenge, "embedding": json.dumps([0.1] * 512),
+                    "score": "88", "faces_detected": "1", "image": self._image(),
+                },
+                multipart=True,
+            )
+        self.assertEqual(response.status_code, 201, response.content)
+        log = FaceVerificationLog.objects.get()
+        delay.assert_called_once_with(log.pk)
+        self.assertTrue(log.image_path)
+
     def test_session_keeps_server_determined_public_ip(self):
         """Login'da server aniqlagan tashqi IP sessiya bayonnomasiga ko'chadi."""
         self.device.public_ip = "8.8.8.8"

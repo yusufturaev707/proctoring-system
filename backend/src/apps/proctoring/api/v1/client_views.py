@@ -59,6 +59,7 @@ from apps.common.throttling import (
 from apps.controls import services as controls_services
 from apps.devices import services as device_services
 from apps.exams import bookings
+from apps.integrations import platform_push
 from apps.proctoring.api.v1.client_serializers import (
     CameraCheckSerializer,
     CameraStreamSerializer,
@@ -1420,6 +1421,13 @@ class ScreenshotCommitView(SessionRequiredView):
                 question_id=item.get("question_id") or "",
                 question_number=item.get("question_number"),
             )
+            if item["kind"] == ScreenshotMeta.Kind.SCREEN:
+                _push_screenshot(
+                    platform_push.schedule_s3_screenshot, session,
+                    object_key=item["object_key"], captured_at=item["captured_at"],
+                    question_id=item.get("question_id") or "",
+                    question_number=item.get("question_number"),
+                )
         return Response(
             {"accepted": len(serializer.validated_data["screenshots"])},
             status=status.HTTP_202_ACCEPTED,
@@ -1461,6 +1469,9 @@ class ScreenshotUploadView(SessionRequiredView):
             question_id=serializer.validated_data.get("question_id") or "",
             question_number=serializer.validated_data.get("question_number"),
         )
+        _push_screenshot(
+            platform_push.schedule_fs_screenshot, screenshot, exam_id=self.session.exam_id
+        )
 
         # `file_path` javobda YO'Q: u serverning ichki katalog
         # strukturasi va client uchun hech qanday ma'no bermaydi.
@@ -1476,6 +1487,14 @@ class ScreenshotUploadView(SessionRequiredView):
             },
             status=status.HTTP_201_CREATED,
         )
+
+
+def _push_screenshot(schedule, *args, **kwargs) -> None:
+    """Test platformasiga (`Exam.screenshot_url`, fonda) — yuklashni to'smaydi."""
+    try:
+        schedule(*args, **kwargs)
+    except Exception:
+        logger.warning("Skrinshot platformaga navbatga qo'yilmadi", exc_info=True)
 
 
 # --------------------------------------------------------------------------

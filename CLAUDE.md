@@ -163,8 +163,9 @@ Ikkalasi parallel yashaydi, o'rnatish profiliga qarab bittasi yoqiladi
 * **Yozish: avval fayl, keyin qator** (qator yozilmasa fayl o'chiriladi).
   **O'chirish: avval fayl, keyin qator** (`screenshot_delete`).
 * **Storage'ga faqat interfeys orqali** (`common/screenshot_storage.py`:
-  `save`/`delete`/`exists`/`serve`/`prune_empty_dirs`). Service/view
-  ichida `open()`/`os.unlink()` yozmang.
+  `save`/`delete`/`exists`/`serve`/`read`/`prune_empty_dirs`). Service/view
+  ichida `open()`/`os.unlink()` yozmang. `read` (baytlar) — faqat fon
+  vazifasi boshqa tizimga uzatishi uchun, brauzerga — `serve`.
 * **`serve` HTTP javob qaytaradi** (`X-Accel-Redirect`, baytlar Python'dan
   o'tmaydi). Dev'da `SCREENSHOT_SERVE_DIRECTLY=true` (production'da taqiq).
   nginx `internal` location'siz himoya yo'q — `deploy/nginx.conf.example`.
@@ -199,6 +200,26 @@ va yozuv» → «Saqlash joyi»):
   o'qiydi, yangi bayroqning standarti mavjud profillarni ma'lumot
   ko'chirishsiz saqlaydi. Client'ga `capture.local` (eski client uni
   bilmaydi va mashinada saqlayveradi).
+* **Uchinchi, mustaqil nusxa — platforma sahifasining localStorage'i**
+  (`Setting.is_screenshot_browser_storage`, standart O'CHIQ; client
+  `capture.browser_storage`, `services/platform_storage.py`). Faqat savolli
+  kadr, KICHRAYTIRILGAN (1366/60, kodlash bosqichida `Frame.browser_jpeg` →
+  `ScreenshotService.browser_frame` → `ExamWebViewPage._on_browser_frame`).
+  Shartnoma: kalit `proctoring_screenshots`, `{"pinfl": <son>, "data":
+  [{"q_id", "q_n", "img_screen": "data:image/jpeg;base64,…"}]}`, savolga
+  bitta (yangisi oxirida), hodisa `proctoring:screenshot` (`detail` = `q_id`;
+  `storage` hodisasi o'sha hujjatga kelmaydi). Sig'im ~5.24 M belgi
+  (o'lchangan) va PLATFORMA BILAN UMUMIY — qiymat `BUDGET_CHARS` (3.5 M) dan
+  oshmaydi, eng eski savol olib tashlanadi. Xavfsizlik: domen tekshiruvi
+  SKRIPT ICHIDA (`location.hostname` ∈ `allowed_domains`; CDN/xato
+  sahifasiga yozilmaydi, bo'sh ro'yxat — yozilmaydi), `ApplicationWorld`
+  (sahifa `JSON`/`Storage` ni almashtirib buzolmaydi), qiymatlar faqat
+  `json.dumps`, profil off-the-record va sessiyaga yangi, `stop()`
+  `about:blank` dan OLDIN o'chiradi, boshqa JSHSHIR qiymati almashtiriladi,
+  kechikkan qayta urinish keyingi sessiyaga yozmaydi (`_storage_generation`).
+  Dalil EMAS (sahifa o'zgartira oladi). (test) QtWebEngine `QApplication([])`
+  da 127 bilan chiqadi — Chromium testi alohida jarayonda
+  (`tests/test_platform_storage.py:EngineSubprocessTests`).
 * «Faqat serverda» da yuborilmagan kadrning yagona nusxasi — RAM navbati:
   yakun undan OLDIN `ScreenshotService.wait_idle` bilan bo'shatiladi
   (`_finish_with_recording`, oddiy yakunda ≤ 8 s, chiqishda ≤ 2 s; backoff
@@ -602,6 +623,18 @@ talqin qilinadi.
   renderer qulashi) 1.5 s dan keyin qaytarib oladi. Ruxsat so'roviga tayanmang —
   Chromium hujjat ichida uni bir marta so'raydi. Bayonnomada `proctoring_degraded`
   (`reason: platform_camera`) → `camera_reconnected` (`platform_camera_released`).
+* **Natija platformaga — server POST qiladi** (`integrations/platform_push.py`,
+  Celery `integrations.push_*`, `default` navbati): `Exam.face_result_url` —
+  kirishdagi FaceID (o'tgan `face/verify/` VA o'tmagan `face/attempt/`: jonli
+  kadr, `imie`, `score`, `passed`), `Exam.screenshot_url` — skrinshot (fayl
+  tizimi `upload/` va S3 `commit/`, `q_id`/`q_n` bilan). Har biri ALOHIDA,
+  BO'SH — yuborilmaydi (vazifa ham qo'yilmaydi); sarlavha — `site_header`.
+  Client platformaga YUBORMAYDI. Navbatga faqat ID (rasm brokerni to'ldirardi),
+  vazifa baytlarni storage'dan o'qiydi; almashgan savol kadri (hash) / yo'q fayl
+  — yuborilmaydi. Tana JSON, `image_base64` — `data:` URI, `id` — platforma
+  takrorni taniydi (retry/`acks_late`). 4xx — ERROR log, qayta urinilmaydi;
+  tarmoq/408/429/5xx — 4 marta (30 s × 2ⁿ). Breaker `exam_site_push:<host>` —
+  JSHSHIR tekshiruvinikidan ALOHIDA. Ulash xatosi FaceID/yuklashni to'smaydi.
 * `image_base64` FaceID etaloniga aylanadi (`data:` prefiksi olinadi).
 * **F.I.Sh. va `duration_time` ixtiyoriy**: yo'q bo'lsa oqim to'liq
   ishlaydi (ism o'rniga niqoblangan JSHSHIR — `Candidate.display_name`;

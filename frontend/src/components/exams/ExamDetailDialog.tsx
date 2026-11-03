@@ -10,6 +10,7 @@ import TuneIcon from '@mui/icons-material/TuneOutlined'
 import ImageIcon from '@mui/icons-material/ImageOutlined'
 import InfoIcon from '@mui/icons-material/InfoOutlined'
 import GavelIcon from '@mui/icons-material/GavelOutlined'
+import SendIcon from '@mui/icons-material/SendOutlined'
 
 import DetailDialog, { InfoNote, StatTiles } from '../data/DetailDialog'
 import type { DetailProblem } from '../data/DetailDialog'
@@ -161,6 +162,22 @@ export default function ExamDetailDialog({ row, onEdit, onClose }: DetailDialogB
               value={exam.site_header_masked}
               hint="O‘rnatilmagan"
               mono
+            />
+            <Field
+              icon={<SendIcon fontSize="small" />}
+              label="Yuz tekshiruvi natijasi — POST manzili"
+              value={exam.face_result_url}
+              hint="Yo‘q — yuborilmaydi"
+              mono
+              onCopy={copy}
+            />
+            <Field
+              icon={<SendIcon fontSize="small" />}
+              label="Skrinshotlar — POST manzili"
+              value={exam.screenshot_url}
+              hint="Yo‘q — yuborilmaydi"
+              mono
+              onCopy={copy}
             />
             <Field
               icon={<ImageIcon fontSize="small" />}

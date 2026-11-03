@@ -229,6 +229,22 @@ export default function ExamsPage() {
           },
         },
         {
+          // NATIJA YUBORISH manzillari — server POST qiladi (client emas),
+          // fonda; bo'sh qoldirilsa o'sha tur yuborilmaydi. Sarlavha
+          // (`site_header`) shu manzillarga ham qo'shiladi.
+          // (`apps/integrations/platform_push.py`)
+          name: 'face_result_url', label: 'Yuz tekshiruvi natijasi URL (POST)',
+          // Tozalash — bo'sh satr (`null` emas): ustun NOT NULL, bo'sh = yubormaslik.
+          nullable: false, pattern: 'url', maxLength: 500, colSpan: 12, section: 'Test platformasi',
+          helperText:
+            'Kirishdagi FaceID natijasi — o‘tgan va o‘tmaganlar: rasm, JSHSHIR (imie), o‘xshashlik foizi. Bo‘sh bo‘lsa yuborilmaydi',
+        },
+        {
+          name: 'screenshot_url', label: 'Skrinshot URL (POST)',
+          nullable: false, pattern: 'url', maxLength: 500, colSpan: 12, section: 'Test platformasi',
+          helperText: 'Test davomidagi skrinshotlar (q_id, q_n bilan). Bo‘sh bo‘lsa yuborilmaydi',
+        },
+        {
           // Savol rasmlari, shrift va CSS boshqa serverdan (CDN) kelsa,
           // client ularni bloklaydi — test sahifasi va API domenigina
           // ochiq. Bu ro'yxat FAQAT shunday resurslarga ochiladi:

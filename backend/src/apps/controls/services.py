@@ -134,6 +134,9 @@ def _serialize(setting) -> dict:
             # `local` ni bilmaydigan eski client mashinada saqlayveradi.
             "upload": setting.is_screenshot_upload,
             "local": setting.is_screenshot_local,
+            # Platforma sahifasining localStorage'i (qo'shimcha nusxa).
+            # Eski client kalitni bilmaydi va yozmaydi (xavfsiz tomonga).
+            "browser_storage": setting.is_screenshot_browser_storage,
             "quality": setting.screenshot_quality,
             "max_width": setting.screenshot_max_width,
             # Foizda (5..40), client ulushga o'zi o'giradi: panel ham,
@@ -496,6 +499,7 @@ def _default_config() -> dict:
             "screen_record": True,
             "upload": True,
             "local": True,
+            "browser_storage": False,
             "quality": 80,
             "max_width": 1920,
             "record_fps": 5,

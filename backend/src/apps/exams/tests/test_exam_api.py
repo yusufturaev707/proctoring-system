@@ -112,3 +112,32 @@ class ExamSerializerHeaderTests(TestCase):
         """
         self.assertNotIn("allowed_domains", ExamSerializer().fields)
         self.assertFalse(hasattr(Exam(), "allowed_domains"))
+
+
+class ExamPushUrlTests(TestCase):
+    """Natija yuborish manzillari: ixtiyoriy, alohida, tozalanadi."""
+
+    def test_set_and_clear(self):
+        exam = Exam.objects.create(name="Ingliz tili")
+        serializer = ExamSerializer(exam, data={
+            "face_result_url": " https://api.test.uz/faceid ",
+            "screenshot_url": "https://api.test.uz/shot",
+        }, partial=True)
+        serializer.is_valid(raise_exception=True)
+        exam = serializer.save()
+        self.assertEqual(exam.face_result_url, "https://api.test.uz/faceid")
+        self.assertEqual(ExamSerializer(exam).data["screenshot_url"], "https://api.test.uz/shot")
+
+        serializer = ExamSerializer(exam, data={"face_result_url": ""}, partial=True)
+        serializer.is_valid(raise_exception=True)
+        exam = serializer.save()
+        self.assertEqual(exam.face_result_url, "")
+        self.assertEqual(exam.screenshot_url, "https://api.test.uz/shot")
+
+    def test_rejects_non_http_url(self):
+        exam = Exam.objects.create(name="Tarix")
+        for value in ("ftp://api.test.uz/x", "javascript:alert(1)", "not a url"):
+            with self.subTest(value=value):
+                serializer = ExamSerializer(exam, data={"screenshot_url": value}, partial=True)
+                self.assertFalse(serializer.is_valid())
+                self.assertIn("screenshot_url", serializer.errors)

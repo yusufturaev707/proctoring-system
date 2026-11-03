@@ -440,3 +440,24 @@ class QuestionUploadApiTests(RedisStateMixin, TestCase):
 
     def test_untagged_upload_still_works(self):
         self.assertEqual(self.post(captured_at="2026-09-25T10:00:00Z").status_code, 201)
+
+    def test_upload_is_forwarded_to_platform_when_url_set(self):
+        """`Exam.screenshot_url` bo'lsa — navbatga (ID bilan), bo'sh bo'lsa — yo'q."""
+        from unittest import mock
+
+        from apps.integrations import tasks as push_tasks
+
+        with mock.patch.object(push_tasks.push_screenshot, "delay") as delay, \
+                self.captureOnCommitCallbacks(execute=True):
+            self.assertEqual(self.post(captured_at="2026-09-25T10:00:00Z").status_code, 201)
+        delay.assert_not_called()
+
+        exam = self.session.exam
+        exam.screenshot_url = "https://api.test.uz/screenshot"
+        exam.save(update_fields=["screenshot_url"])
+        with mock.patch.object(push_tasks.push_screenshot, "delay") as delay, \
+                self.captureOnCommitCallbacks(execute=True):
+            response = self.post(captured_at="2026-09-25T10:01:00Z", question_id="5")
+        self.assertEqual(response.status_code, 201, response.content)
+        source, ref = delay.call_args.args
+        self.assertEqual((source, ref["id"]), ("fs", response.json()["data"]["id"]))

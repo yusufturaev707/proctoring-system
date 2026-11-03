@@ -703,6 +703,25 @@ export default function Settings() {
                 </Section>
               </Grid>
               <Grid item xs={12} md={6}>
+                {/* Savol skrinshoti test platformasi sahifasining
+                    localStorage'iga ham yoziladi va platforma uni O'ZI
+                    o'qiydi (`client/services/platform_storage.py`). Saqlash
+                    joyidan mustaqil qo'shimcha nusxa; standart o'chiq —
+                    brauzer xotirasiga JSHSHIR va ekran rasmi tushadi. */}
+                <Section title="Test platformasiga">
+                  <Toggle
+                    label="Skrinshotni platforma localStorage’iga yozish"
+                    checked={form.is_screenshot_browser_storage}
+                    onChange={set('is_screenshot_browser_storage')} disabled={!canManage}
+                  />
+                  <Typography variant="body2" color="text.secondary">
+                    Faqat savolli kadr (q_id), kichraytirilgan nusxa, savolga bitta. Faqat test
+                    platformasi domeniga yoziladi va sessiya tugaganda o‘chiriladi. Bu dalil
+                    emas — dalil nusxasi yuqoridagi saqlash joyida.
+                  </Typography>
+                </Section>
+              </Grid>
+              <Grid item xs={12} md={6}>
                 {/* Yozuv MASHINADA qoladi (serverga faqat manzili boradi).
                     Ilgari bu kalit panelda bor edi, lekin client uni
                     o'qimasdi va ekranni .env bo'yicha doim yozardi. */}

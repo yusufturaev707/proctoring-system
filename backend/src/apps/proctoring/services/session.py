@@ -539,7 +539,7 @@ def verify_initial_face(
         kind="reference",
     )
     try:
-        FaceVerificationLog.objects.create(
+        log_row = FaceVerificationLog.objects.create(
             session=session,
             exam=exam,
             zone=session.zone,
@@ -566,6 +566,7 @@ def verify_initial_face(
         face_images.discard(image_path)
         face_images.discard(reference_path)
         raise
+    _push_face_result(log_row)
 
     # Shaxs hali tasdiqlanmagan — operator hujjat bilan tasdiqlamaguncha
     # `issue_exam_access` imtihonni ochmaydi. Hodisa YARATILMAYDI: bu holat
@@ -647,6 +648,7 @@ def record_entry_face_failure(
         face_images.discard(image_path)
         face_images.discard(reference_path)
         raise
+    _push_face_result(log_row)
 
     # Urinishlar SUTKA emas, 12 soat oynasida sanaladi: bir kunda
     # ikkita seans bo'lishi mumkin va ertalabki urinishlar kechki
@@ -675,6 +677,21 @@ def record_entry_face_failure(
         "threshold": threshold,
         "attempts": attempts,
     }
+
+
+def _push_face_result(log_row) -> None:
+    """
+    Kirish natijasi test platformasiga (`Exam.face_result_url`, fonda).
+
+    Xato TASHLAMAYDI: platformaga yuborish — qo'shimcha, sessiya ochilishi
+    yoki urinish qaydi undan bog'liq emas.
+    """
+    from apps.integrations import platform_push
+
+    try:
+        platform_push.schedule_face_result(log_row)
+    except Exception:
+        logger.warning("FaceID natijasi platformaga navbatga qo'yilmadi", exc_info=True)
 
 
 def _clamp_score(score) -> int:

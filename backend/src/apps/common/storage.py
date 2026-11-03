@@ -99,6 +99,33 @@ def presign_get(object_key: str, expires_in: int | None = None) -> str | None:
         return None
 
 
+def read_object(object_key: str, *, max_bytes: int) -> bytes | None:
+    """
+    Obyekt baytlari — FAQAT server o'zi boshqa tizimga uzatadigan fon
+    vazifasi uchun (`integrations/platform_push.py`); brauzer presigned
+    GET oladi.
+
+    `None` — obyekt yo'q (o'chirilgan/almashtirilgan savol kadri).
+    Tarmoq xatosi ko'tariladi: chaqiruvchi keyinroq qayta urinadi.
+    `max_bytes` dan kattasi — `ValueError`.
+    """
+    if not settings.STORAGE["ENABLED"] or not object_key:
+        return None
+    client = get_s3_client()
+    try:
+        response = client.get_object(Bucket=settings.STORAGE["BUCKET"], Key=object_key)
+    except client.exceptions.NoSuchKey:
+        return None
+    body = response["Body"]
+    try:
+        data = body.read(max_bytes + 1)
+    finally:
+        body.close()
+    if len(data) > max_bytes:
+        raise ValueError(f"Obyekt {max_bytes} baytdan katta: {object_key!r}")
+    return data
+
+
 def delete_objects(keys: list[str]) -> int:
     """Retention siyosati bo'yicha ommaviy o'chirish (1000 tadan)."""
     if not settings.STORAGE["ENABLED"] or not keys:

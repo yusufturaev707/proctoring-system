@@ -1,3 +1,4 @@
+from django.core.validators import URLValidator
 from rest_framework import serializers
 from rest_framework.validators import UniqueValidator
 
@@ -90,11 +91,24 @@ class ExamSerializer(serializers.ModelSerializer):
         required=False, allow_empty=True,
     )
 
+    # Natija yuborish manzillari (server POST qiladi). Faqat http(s):
+    # DRF modeldagi `URLValidator(schemes=...)` ni tashlab yuboradi va
+    # o'zinikini qo'yadi (u `ftp://` ni ham o'tkazadi).
+    face_result_url = serializers.URLField(
+        max_length=500, required=False, allow_blank=True,
+        validators=[URLValidator(schemes=("http", "https"))],
+    )
+    screenshot_url = serializers.URLField(
+        max_length=500, required=False, allow_blank=True,
+        validators=[URLValidator(schemes=("http", "https"))],
+    )
+
     class Meta:
         model = Exam
         fields = (
             "id", "name", "key", "exam_type", "exam_type_name", "external_code",
             "site_url", "site_header", "site_header_masked", "resource_domains",
+            "face_result_url", "screenshot_url",
             "duration_minutes", "setting", "setting_name",
             "offer", "offer_title", "offer_is_active",
             "is_active", "sessions_count", "created_at", "deleted_at",

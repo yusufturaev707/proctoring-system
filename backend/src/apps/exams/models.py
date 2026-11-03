@@ -1,3 +1,4 @@
+from django.core.validators import URLValidator
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
@@ -47,6 +48,9 @@ class ExamType(SoftDeleteModel):
         ]
 
 
+_HTTP_URL = URLValidator(schemes=("http", "https"))
+
+
 class Exam(SoftDeleteModel):
     """Imtihon (fan/yo'nalish). Tashqi platformadagi test bilan bog'lanadi."""
 
@@ -85,6 +89,23 @@ class Exam(SoftDeleteModel):
     # (base64 + nonce), JWT esa 2-4 KB bo'lishi mumkin.
     site_header_encrypted = models.TextField(
         _("Platforma sarlavhasi"), blank=True, default=""
+    )
+
+    # Platformaga NATIJA YUBORISH manzillari (server POST qiladi, client
+    # emas — `apps/integrations/platform_push.py`). Har biri ALOHIDA va
+    # ixtiyoriy: bo'sh — o'sha turdagi ma'lumot yuborilmaydi. Sarlavha
+    # (`site_header_encrypted`) shu manzillarga ham qo'shiladi — bitta
+    # platforma, bitta kredensial. Faqat http(s) — standart `URLField`
+    # `ftp://` ni ham o'tkazadi, server esa unga JSON POST qila olmaydi.
+    face_result_url = models.URLField(
+        _("Yuz tekshiruvi natijasi URL"), max_length=500, blank=True, default="",
+        validators=[_HTTP_URL],
+        help_text=_("Kirishdagi FaceID natijasi (rasm, JSHSHIR, o'xshashlik) shu manzilga POST qilinadi"),
+    )
+    screenshot_url = models.URLField(
+        _("Skrinshot URL"), max_length=500, blank=True, default="",
+        validators=[_HTTP_URL],
+        help_text=_("Test davomidagi skrinshotlar shu manzilga POST qilinadi"),
     )
 
     # Savol rasmlari, shrift, CSS keladigan QO'SHIMCHA domenlar (CDN).

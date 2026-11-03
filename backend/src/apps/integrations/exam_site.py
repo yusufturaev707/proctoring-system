@@ -30,6 +30,13 @@ aylanmasligi kerak.
 
 Circuit breaker HAR HOST uchun alohida: bitta imtihon platformasi
 yiqilgani boshqasiga tegishli emas.
+
+NATIJA YUBORISH (`post_json`) — teskari yo'nalish: FaceID natijasi va
+skrinshot platformaga POST qilinadi (`Exam.face_result_url` /
+`screenshot_url`, `integrations/platform_push.py`). U KRITIK YO'LDA EMAS
+(Celery), shuning uchun bitta urinish — qayta urinishni vazifa o'zi
+qiladi; breaker'i ham ALOHIDA (`exam_site_push:`): yiqilgan qabul
+endpointi o'sha hostdagi JSHSHIR tekshiruvini to'sib qo'ymasligi kerak.
 """
 
 from __future__ import annotations
@@ -101,10 +108,10 @@ def _get_session() -> requests.Session:
     return _session
 
 
-def _breaker(host: str) -> CircuitBreaker:
+def _breaker(host: str, prefix: str = "exam_site") -> CircuitBreaker:
     conf = settings.EXTERNAL_PLATFORM
     return CircuitBreaker(
-        name=f"exam_site:{host}",
+        name=f"{prefix}:{host}",
         fail_threshold=conf["CB_FAIL_THRESHOLD"],
         window=conf["CB_WINDOW"],
         reset_timeout=conf["CB_RESET_TIMEOUT"],
@@ -242,6 +249,58 @@ def _request(url: str, headers: dict) -> dict:
     raise ExternalPlatformError(
         str(last_error) if last_error else "Test platformasi javob bermadi"
     )
+
+
+#: `post_json` natijasi.
+PUSH_SENT = "sent"
+#: Vaqtinchalik (tarmoq, timeout, 408/429/5xx, breaker ochiq) — keyinroq qayta.
+PUSH_RETRY = "retry"
+#: Platforma rad etdi (boshqa 4xx) — qayta urinish tuzatmaydi.
+PUSH_REJECTED = "rejected"
+
+
+class _TransientPush(Exception):
+    """Breaker hisoblaydigan vaqtinchalik xato (5xx va h.k.)."""
+
+
+def post_json(*, url: str, site_header: str, payload: dict) -> str:
+    """
+    Platformaga JSON POST — BITTA urinish, istisno tashlamaydi.
+
+    Qaytadi: `PUSH_SENT` / `PUSH_RETRY` / `PUSH_REJECTED`. 4xx breaker'ni
+    ochmaydi (bu sozlama/ma'lumot xatosi, host tirik).
+    """
+    host = urlparse(url).hostname or "noma'lum"
+    try:
+        return _breaker(host, "exam_site_push").call(
+            _post_once, url, parse_header(site_header), payload
+        )
+    except CircuitOpenError:
+        logger.info("Platformaga yuborish circuit ochiq: %s", host)
+        return PUSH_RETRY
+    except (requests.RequestException, _TransientPush) as exc:
+        logger.warning("Platformaga yuborilmadi (%s): %s", host, exc)
+        return PUSH_RETRY
+
+
+def _post_once(url: str, headers: dict, payload: dict) -> str:
+    conf = settings.EXTERNAL_PLATFORM
+    response = _get_session().post(
+        url, json=payload, headers=headers,
+        timeout=(conf["CONNECT_TIMEOUT"], conf["READ_TIMEOUT"]),
+    )
+    status = response.status_code
+    if 200 <= status < 300:
+        return PUSH_SENT
+    if status in (408, 429) or status >= 500:
+        raise _TransientPush(f"HTTP {status}")
+    # Javob boshi log'da: platforma odatda sababini yozadi ("imie
+    # topilmadi", "token eskirgan") va administrator aynan shuni qidiradi.
+    logger.error(
+        "Platforma so'rovni rad etdi (%s) %s: %s",
+        status, url.split("?")[0], (response.text or "")[:300],
+    )
+    return PUSH_REJECTED
 
 
 def _normalize(raw: dict) -> dict:

@@ -584,6 +584,15 @@ class Setting(SoftDeleteModel):
         _("Skrinshotni mashinada saqlash"), default=True,
         help_text=_("O'chiq bo'lsa skrinshot faqat serverga yuboriladi, mashina diskida qolmaydi"),
     )
+    # Savol skrinshoti test platformasi sahifasining localStorage'iga ham
+    # yoziladi — platforma uni O'ZI o'qiydi (`client/services/platform_storage.py`).
+    # Standart O'CHIQ: brauzer xotirasiga JSHSHIR va ekran rasmi tushadi,
+    # bu imtihon egasining ongli tanlovi bo'lishi kerak. Saqlash joyi
+    # bayroqlaridan MUSTAQIL (qo'shimcha nusxa, dalil emas).
+    is_screenshot_browser_storage = models.BooleanField(
+        _("Skrinshotni test platformasi localStorage'iga yozish"), default=False,
+        help_text=_("Savol skrinshoti platforma sahifasining localStorage'iga yoziladi, platforma o'zi o'qiydi"),
+    )
     # 1920/80: ekran o'z o'lchamida qoladi. Ilgari 960/65 edi va 1920 li
     # ekranda test matni ~6 px harfga aylanib, O'QILMASDI — skrinshot
     # dalil sifatida ma'nosini yo'qotardi. Xiralikning asosiy sababi

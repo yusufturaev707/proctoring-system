@@ -60,6 +60,7 @@ class SettingAdmin(admin.ModelAdmin):
             {
                 "fields": (
                     "is_screenshot_local", "is_screenshot_upload",
+                    "is_screenshot_browser_storage",
                     "screenshot_quality", "screenshot_max_width",
                     "is_screenshot_camera_overlay", "screenshot_pip_percent",
                 )
