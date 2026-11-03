@@ -358,6 +358,10 @@ class Setting(SoftDeleteModel):
     keshlanadi — aks holda 10 000 client har 30 soniyada DB'ni o'qiydi.
     """
 
+    class MicrophoneSource(models.TextChoices):
+        HEADSET_PREFERRED = "headset_preferred", _("Naushnik afzal")
+        HEADSET_ONLY = "headset_only", _("Faqat naushnik")
+
     # `unique=True` EMAS — pastdagi shartli cheklovga qarang.
     name = models.CharField(_("Nom"), max_length=100)
     is_active = models.BooleanField(_("Global standart"), default=False, db_index=True)
@@ -365,6 +369,33 @@ class Setting(SoftDeleteModel):
     # --- FaceID ---
     is_faceid_student = models.BooleanField(_("Talabgor yuz tekshiruvi"), default=True)
     is_faceid_exam = models.BooleanField(_("Test davomida yuz tekshiruvi"), default=True)
+    #: Test platformasi (WebView) o'z FaceID'si uchun kamerani so'rasa
+    #: — ruxsat. Standart RAD: kamera talabgorga qaratilgan qurilma va
+    #: uni imtihon sahifasiga berish ongli qaror bo'lishi kerak. Faqat
+    #: kamera (mikrofon emas); client so'rov paytida o'z lokal kamerasini
+    #: platformaga QARZGA beradi va keyin qaytarib oladi — Windows'da
+    #: bitta qurilmani ikki jarayon ocholmaydi (`client/services/platform_camera.py`).
+    is_platform_camera = models.BooleanField(
+        _("Test platformasiga kamera ruxsati"), default=False
+    )
+    #: Mikrofon — masalan chet tili imtihonining «speaking» qismi. Standart
+    #: RAD. Kameradan ALOHIDA kalit: speaking uchun kamera, FaceID uchun
+    #: mikrofon berilishi shart emas. Qarz kerak emas — client mikrofonni
+    #: ochmaydi, Windows'da audio qurilma esa umumiy (shared) rejimda.
+    is_platform_microphone = models.BooleanField(
+        _("Test platformasiga mikrofon ruxsati"), default=False
+    )
+    #: Platformaga QAYSI mikrofon beriladi. Platforma qurilma ko'rsatmasa
+    #: Chromium Windows'ning standart mikrofonini oladi — ko'pincha
+    #: veb-kameraniki (uzoqda, xona shovqinini yozadi). Naushnikni client
+    #: tanlaydi (`client/services/microphone_select.py`) va sahifa skripti
+    #: majburlaydi. «Afzal» — naushnik yo'q bo'lsa standart mikrofon;
+    #: «faqat» — so'rov rad etiladi. Ikkalasida ham «Davom etish» da
+    #: naushnik yo'qligi operatorga ogohlantirish.
+    platform_microphone_source = models.CharField(
+        _("Platforma mikrofoni manbai"), max_length=24,
+        choices=MicrophoneSource.choices, default=MicrophoneSource.HEADSET_PREFERRED,
+    )
     faceid_interval = models.PositiveSmallIntegerField(_("Interval (s)"), default=10)
     faceid_max_fail = models.PositiveSmallIntegerField(_("Maks. muvaffaqiyatsiz urinish"), default=3)
     warning_timeout = models.PositiveSmallIntegerField(_("Ogohlantirish kutish vaqti (s)"), default=5)

@@ -164,10 +164,11 @@ class FaceVerifySerializer(serializers.Serializer):
     reference_image = serializers.FileField(required=False, allow_null=True)
     image_key = serializers.CharField(max_length=500, required=False, allow_blank=True)
 
-    def validate(self, attrs):
-        if attrs.get("embedding") is None and attrs.get("score") is None:
-            raise serializers.ValidationError("embedding yoki score berilishi shart")
-        return attrs
+    # "embedding yoki score shart" qoidasi BU YERDA EMAS: u imtihon
+    # profiliga bog'liq (`Setting.is_faceid_student`) va profil faqat
+    # challenge ochilgach ma'lum — `verify_initial_face` tekshiradi.
+    # O'chiq profilda client vektorsiz, ballsiz yuboradi (kamera
+    # ochilmaydi) va serializer uni 400 bilan rad etardi.
 
 
 class FaceAttemptSerializer(serializers.Serializer):

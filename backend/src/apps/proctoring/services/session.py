@@ -510,6 +510,21 @@ def verify_initial_face(
 
     # AVVAL FAYL, KEYIN QATOR. Qator yozilmasa fayl darhol o'chiriladi —
     # aks holda hech kim bilmaydigan yetim fayl qolardi.
+    if not face_required and not embedding:
+        # Kirish solishtiruvi profilda O'CHIQ va client kamerani ochmadi.
+        # `FaceVerificationLog` YOZILMAYDI: tekshiruv bo'lmagan, "o'tmadi"
+        # (`passed=False`) qatori esa panelda muvaffaqiyatsiz urinishdek
+        # ko'rinardi. Iz sessiyaning o'zida; etalon yo'q, ya'ni test
+        # davomidagi solishtiruv ham bo'lmaydi. Shaxs kafolati —
+        # avvalgidek operatorning hujjat tasdig'i (pastdagi `identity`).
+        session.meta = {
+            **(session.meta or {}),
+            "identity": {"verified": False},
+            "face_entry": "disabled",
+        }
+        session.save(update_fields=["meta", "updated_at"])
+        return session
+
     image_path, image_purge_after = _store_face_image(
         image, exam_id=exam.pk, session=session, config=config
     )
@@ -1128,6 +1143,22 @@ def verify_periodic_face(
     threshold = int(config["face"]["min_score_exam"])
     score = _clamp_score(score)
     passed_since_last = max(0, int(passed_since_last or 0))
+
+    if not config["face"].get("enabled_in_exam", True):
+        # Profilda test davomidagi tekshiruv O'CHIQ. Yangi client bunday
+        # so'rov yubormaydi; eski client (bayroqni o'qimagan) yuboraveradi
+        # va u hisoblagich, xavf balli va `high_suspicion_identity` ga
+        # tushmasligi kerak — aks holda paneldagi kalit faqat ko'rinish
+        # bo'lib qolardi. Qator ham, rasm ham yozilmaydi.
+        return {
+            "passed": True,
+            "score": score,
+            "threshold": threshold,
+            "fail_count": 0,
+            "max_fail": int(config["face"]["max_fail"]),
+            "limit_reached": False,
+            "disabled": True,
+        }
 
     # Ball CLIENTNIKI (`source=client`). Server uni qayta hisoblay
     # olmaydi: buning uchun rasmdan embedding olish, ya'ni serverda

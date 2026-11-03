@@ -31,6 +31,8 @@ from apps.proctoring.tests import factories
 #: Clientga ketadigan kalit -> `Setting` maydoni (panel qatlamiga
 #: ko'chirilgan va shu vazifada ulangan sozlamalar).
 RUNTIME_FIELDS = {
+    ("face", "enabled_student"): "is_faceid_student",
+    ("face", "enabled_in_exam"): "is_faceid_exam",
     ("face", "guide_seconds"): "faceid_guide_seconds",
     ("face", "match_streak"): "faceid_match_streak",
     ("face", "fail_streak"): "faceid_fail_streak",
@@ -53,6 +55,9 @@ RUNTIME_FIELDS = {
     ("capture", "camera_overlay_percent"): "screenshot_pip_percent",
     ("rdp", "block_exam"): "is_threat_block_exam",
     ("booking", "required"): "is_booking",
+    ("webview", "camera"): "is_platform_camera",
+    ("webview", "microphone"): "is_platform_microphone",
+    ("webview", "microphone_source"): "platform_microphone_source",
     ("network", "heartbeat_interval"): "heartbeat_interval",
     ("network", "event_batch_interval"): "event_batch_interval",
     ("network", "offline_buffer_size"): "offline_buffer_size",

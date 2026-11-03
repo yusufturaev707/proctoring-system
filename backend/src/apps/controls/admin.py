@@ -76,6 +76,15 @@ class SettingAdmin(admin.ModelAdmin):
         ),
         ("Qurilma tekshiruvi", {"fields": ("is_detect_monitor", "is_detect_camera", "is_detect_peripherals")}),
         (
+            "Test platformasi ruxsatlari",
+            {
+                "fields": (
+                    "is_platform_camera", "is_platform_microphone",
+                    "platform_microphone_source",
+                )
+            },
+        ),
+        (
             "Obyekt aniqlash (YOLO)",
             {
                 "fields": (

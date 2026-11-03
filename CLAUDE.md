@@ -302,6 +302,20 @@ dan. `FACE_MATCH_THRESHOLD` (42) — faqat sozlama kelmaganda.
 | Test: mos | — | — | hech nima (heartbeat'da son) |
 | Test: mos emas | `client/face/periodic/` | mavjud | ball + kadr + `passed_since_last` |
 
+* **Ikki kalit — `Setting.is_faceid_student` / `is_faceid_exam`** (client'ga
+  `face.enabled_student` / `face.enabled_in_exam`, `runtime_settings`).
+  Kirish o'chiq: FaceID sahifasi kamerani OCHMAYDI (`_start_without_face`),
+  `face/verify/` vektorsiz — server `FaceVerificationLog` yozmaydi,
+  `meta.face_entry = "disabled"`; etalon yo'q, ya'ni davriy FaceID ham yo'q.
+  "embedding yoki score shart" qoidasi SERVISDA (profilga bog'liq),
+  serializer'da emas. Test davomida o'chiq: davriy taymer ishga tushmaydi,
+  AI'siz yo'lda kamera aniqlashi o'chadi (yuz epizodlari yo'q, kadr tasma/
+  yozuv uchun qoladi), AI yo'lida server `modules.identity` ni o'chiradi;
+  eski client yuborgan `face/periodic/` hisobga olinmaydi (`disabled`).
+  Kamera FaceID sahifasidan kelmasa imtihon sahifasi uni O'ZI ochadi
+  (`_open_exam_camera`). Shaxs moduli o'chiq, nigoh yoqilgan — yuz modeli
+  faqat nigoh uchun chaqiriladi, analizatorga shaxs berilmaydi
+  (`pipeline._analyse_face`); `identity_ready` modul yoqilganini ham talab qiladi.
 * **Ekrandagi ball qarordan keyin muzlaydi** va serverdagi yozuv bilan
   aynan bir xil: `_verified_score` (`face/verify/` ga ketgani).
   `_best_score` faqat muvaffaqiyatsiz urinishda.
@@ -556,6 +570,38 @@ talqin qilinadi.
   bloklanadi. Qoida (host, ≥ 2 qism, loopback yo'q) bitta joyda —
   `apps/exams/domains.py` (serializer + `Exam.clean`). Bloklangan
   sub-resurs host bo'yicha bir marta xabar qilinadi, `main_frame` bilan.
+* **Platformaning qurilma so'rovlari** — ikki MUSTAQIL kalit, standart RAD:
+  `Setting.is_platform_camera` / `is_platform_microphone` (config `webview.*` →
+  `webview_policy.allow_camera` / `allow_microphone`; panel «Himoya» → «Test
+  platformasi ruxsatlari»). Faqat `allowed_domains` dagi manbaga; kamera+mikrofon
+  birga so'ralsa ikkalasi ham yoqilgan bo'lishi shart; ekran, joylashuv va boshqalar
+  — doim rad (`_on_permission_requested`). Mikrofonga qarz KERAK EMAS (client uni
+  ochmaydi, audio umumiy; o'lchangan — kamera ishlab turganda ham signal bor).
+* **Platforma mikrofoni — NAUSHNIK** (`Setting.platform_microphone_source`:
+  «Naushnik afzal» standart / «Faqat naushnik»; `webview_policy.microphone_source`).
+  Qurilma ko'rsatilmasa Chromium Windows standartini oladi — ko'pincha veb-kamera
+  (o'lchangan: standart = C270). Client tanlaydi (`services/microphone_select.py`,
+  fon thread'ida): kamera konteyneridagi mikrofon chiqadi, garnitura = o'z
+  konteynerida karnay bor (2) + Windows `Headset` turi (1); oddiy/ichki mikrofon
+  naushnik EMAS. Windows turi YETMAYDI (USB garnitura ham `Microphone` (4) keldi).
+  Skript audio so'rovida `request_a`/`request_av` beradi, javobda NOM keladi
+  (Chromium ID'si saytga shifrlangan), skript `enumerateDevices` dan nom
+  (+ Chromium qo'shadigan ` (vid:pid)`) bo'yicha `deviceId: {exact}` va shovqin
+  bostirishni yoqadi. Tanlov ketayotganda bo'sh javob YUBORMANG (javob har
+  freymga boradi). «Faqat naushnik»: yo'q bo'lsa `NotFoundError`, kamera+mikrofon
+  so'rovida kamera tanlovdan keyin beriladi; aniqlab bo'lmasa (`None`) TO'SILMAYDI.
+  «Davom etish» da naushnik yo'q — ogohlantirish (`policy._check_microphone`).
+* **Platformaning o'z FaceID'si — kamera QARZGA** (`client/services/platform_camera.py`).
+  Windows'da lokal
+  kamerani bitta jarayon ochadi (o'lchangan: ikkinchisi `Device in use`), shuning
+  uchun ruxsatning o'zi YETMAYDI: sahifaga qo'shilgan skript `getUserMedia` dan
+  OLDIN `request` belgisini beradi (konsol; mikrofon bilan — `request_av`, mikrofon
+  o'chiq bo'lsa kamera bo'shatilmaydi), client lokal kamerasini yopadi
+  (AI'siz — `CameraWorker`, AI — `release_local_cameras`; IP kameraga tegilmaydi)
+  va HAR FREYMGA javob qaytaradi; treklar to'xtasa (`released`, sahifa almashishi,
+  renderer qulashi) 1.5 s dan keyin qaytarib oladi. Ruxsat so'roviga tayanmang —
+  Chromium hujjat ichida uni bir marta so'raydi. Bayonnomada `proctoring_degraded`
+  (`reason: platform_camera`) → `camera_reconnected` (`platform_camera_released`).
 * `image_base64` FaceID etaloniga aylanadi (`data:` prefiksi olinadi).
 * **F.I.Sh. va `duration_time` ixtiyoriy**: yo'q bo'lsa oqim to'liq
   ishlaydi (ism o'rniga niqoblangan JSHSHIR — `Candidate.display_name`;

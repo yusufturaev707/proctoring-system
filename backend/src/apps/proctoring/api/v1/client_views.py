@@ -1064,10 +1064,19 @@ class ExamAccessView(SessionRequiredView):
         session = self.session
         ip_address = client_ip(request)
         access = session_service.issue_exam_access(session, ip_address=ip_address)
+        config = controls_services.get_client_config(session.exam)
 
         # WebView'ni qulflash ko'rsatmalari — client shu ro'yxatni
         # QWebEngineUrlRequestInterceptor allowlist sifatida ishlatadi.
         access["webview_policy"] = {
+            # Platformaning `getUserMedia` so'roviga ruxsat — imtihon
+            # profilidan (`Setting.is_platform_camera` / `is_platform_microphone`).
+            # Client faqat `allowed_domains` dagi manbaga beradi; ekran,
+            # joylashuv va boshqa ruxsatlar doim rad.
+            "allow_camera": bool(config["webview"]["camera"]),
+            "allow_microphone": bool(config["webview"]["microphone"]),
+            # Qaysi mikrofon: naushnik afzal / faqat naushnik (client tanlaydi).
+            "microphone_source": config["webview"]["microphone_source"],
             "allowed_domains": access.pop("allowed_domains", []),
             # Faqat rasm/shrift/CSS/media - client navigatsiya va
             # skriptga qo'llamaydi (`DomainAllowlistInterceptor`).

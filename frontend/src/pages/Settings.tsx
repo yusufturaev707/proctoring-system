@@ -865,6 +865,48 @@ export default function Settings() {
                   </Typography>
                 </Section>
               </Grid>
+              <Grid item xs={12} md={6}>
+                {/* Client faqat platforma domeniga beradi (`webview_policy`);
+                    ekran, joylashuv va boshqa so'rovlar doim rad. Kamerani
+                    client QARZGA beradi — Windows'da lokal kamerani ikki
+                    jarayon ocholmaydi; mikrofonni client ishlatmaydi. */}
+                <Section title="Test platformasi ruxsatlari">
+                  <Toggle
+                    label="Kamera (platformaning o‘z FaceID’si)"
+                    checked={form.is_platform_camera}
+                    onChange={set('is_platform_camera')} disabled={!canManage}
+                  />
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: -1.5 }}>
+                    Platforma kamerani ishlatayotganda client kuzatuvi shu kamerada to‘xtab
+                    turadi va platforma bo‘shatgach qayta tiklanadi; bu vaqt bayonnomada ko‘rinadi.
+                  </Typography>
+                  <Toggle
+                    label="Mikrofon (masalan, chet tili «speaking» qismi)"
+                    checked={form.is_platform_microphone}
+                    onChange={set('is_platform_microphone')} disabled={!canManage}
+                  />
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: -1.5 }}>
+                    Kamera va mikrofon birga so‘ralsa, ikkala kalit ham yoqilgan bo‘lishi kerak.
+                    Mashinada Windows «Maxfiylik → Mikrofon» ruxsati ham ochiq bo‘lishi shart.
+                  </Typography>
+                  {/* Naushnikni client tanlaydi (veb-kamera mikrofoni chetlanadi),
+                      sahifa skripti platformaga AYNAN shuni beradi
+                      (`client/services/microphone_select.py`). */}
+                  <TextField
+                    select
+                    label="Mikrofon manbai"
+                    value={form.platform_microphone_source ?? 'headset_preferred'}
+                    onChange={set('platform_microphone_source')}
+                    disabled={!canManage || !form.is_platform_microphone}
+                    helperText={form.platform_microphone_source === 'headset_only'
+                      ? 'Naushnik ulanmagan bo‘lsa platforma mikrofon ololmaydi. «Davom etish» da operator ogohlantiriladi.'
+                      : 'Naushnik mikrofoni ishlatiladi (veb-kamera mikrofoni emas). Naushnik bo‘lmasa — Windows’ning standart mikrofoni; «Davom etish» da operator ogohlantiriladi.'}
+                  >
+                    <MenuItem value="headset_preferred">Naushnik afzal</MenuItem>
+                    <MenuItem value="headset_only">Faqat naushnik</MenuItem>
+                  </TextField>
+                </Section>
+              </Grid>
             </Grid>
           )}
 

@@ -215,6 +215,14 @@ def _serialize(setting) -> dict:
         # Server o'zi o'qiydi (`session.lookup_candidate`); client'ga
         # ham ketadi - qaror baribir serverda, client faqat ko'rsatadi.
         "booking": {"required": setting.is_booking},
+        # Test platformasining (WebView) qurilma so'rovlari. Client ularni
+        # `exam/access/` dagi `webview_policy` dan o'qiydi (allowlist bilan
+        # birga, `ExamAccessView`); bu yerda — o'sha qiymatning yagona manbai.
+        "webview": {
+            "camera": setting.is_platform_camera,
+            "microphone": setting.is_platform_microphone,
+            "microphone_source": setting.platform_microphone_source,
+        },
         "network": {
             "heartbeat_interval": setting.heartbeat_interval,
             "event_batch_interval": setting.event_batch_interval,
@@ -508,6 +516,11 @@ def _default_config() -> dict:
         "technical_problem": {"enabled": True, "limit": 3},
         # Model standarti: sozlamasiz tizim avvalgi bron xulqida qoladi.
         "booking": {"required": True},
+        "webview": {
+            "camera": False,
+            "microphone": False,
+            "microphone_source": "headset_preferred",
+        },
         "network": {
             "heartbeat_interval": 30,
             "event_batch_interval": 5,
