@@ -330,11 +330,18 @@ dan. `FACE_MATCH_THRESHOLD` (42) — faqat sozlama kelmaganda.
   `meta.face_entry = "disabled"`; etalon yo'q, ya'ni davriy FaceID ham yo'q.
   "embedding yoki score shart" qoidasi SERVISDA (profilga bog'liq),
   serializer'da emas. Test davomida o'chiq: davriy taymer ishga tushmaydi,
-  AI'siz yo'lda kamera aniqlashi o'chadi (yuz epizodlari yo'q, kadr tasma/
-  yozuv uchun qoladi), AI yo'lida server `modules.identity` ni o'chiradi;
-  eski client yuborgan `face/periodic/` hisobga olinmaydi (`disabled`).
-  Kamera FaceID sahifasidan kelmasa imtihon sahifasi uni O'ZI ochadi
-  (`_open_exam_camera`). Shaxs moduli o'chiq, nigoh yoqilgan — yuz modeli
+  AI'siz yo'lda kamera aniqlashi o'chadi (yuz epizodlari yo'q), AI yo'lida
+  server `modules.identity` ni o'chiradi; eski client yuborgan
+  `face/periodic/` hisobga olinmaydi (`disabled`).
+  **AI'siz yo'lda kamera FAQAT kerak bo'lganda ochiq**
+  (`exam_webview_page.camera_consumers` → `_sync_camera_need`): test
+  davomida FaceID, skrinshot tasmasi (`ScreenshotService.uses_camera`),
+  ekran yozuvi (`ScreenRecorder.is_active`, PiP). Hech biri yo'q — FaceID
+  sahifasidan kelgan kamera `_begin` da yopiladi, kelmagan bo'lsa ochilmaydi
+  (`_open_exam_camera`); dalil oynasi tugasa (`_stop_capture`) qayta
+  tekshiriladi (u yerda faqat YOPADI); platformaga qarzdan keyin ham faqat
+  kerak bo'lsa ochiladi. Ilgari kamera hamma kalit o'chiq bo'lsa ham test
+  davomida yonib turardi. Shaxs moduli o'chiq, nigoh yoqilgan — yuz modeli
   faqat nigoh uchun chaqiriladi, analizatorga shaxs berilmaydi
   (`pipeline._analyse_face`); `identity_ready` modul yoqilganini ham talab qiladi.
 * **Ekrandagi ball qarordan keyin muzlaydi** va serverdagi yozuv bilan
@@ -622,7 +629,9 @@ talqin qilinadi.
   va HAR FREYMGA javob qaytaradi; treklar to'xtasa (`released`, sahifa almashishi,
   renderer qulashi) 1.5 s dan keyin qaytarib oladi. Ruxsat so'roviga tayanmang —
   Chromium hujjat ichida uni bir marta so'raydi. Bayonnomada `proctoring_degraded`
-  (`reason: platform_camera`) → `camera_reconnected` (`platform_camera_released`).
+  (`reason: platform_camera`) → `camera_reconnected` (`platform_camera_released`) —
+  faqat kamera HAQIQATAN bo'shatilgan bo'lsa (`_lent_released`; keraksiz bo'lib
+  yopiq turgan yoki IP kamerada hodisa yo'q).
 * **Natija platformaga — server POST qiladi** (`integrations/platform_push.py`,
   Celery `integrations.push_*`, `default` navbati): `Exam.face_result_url` —
   kirishdagi FaceID (o'tgan `face/verify/` VA o'tmagan `face/attempt/`: jonli
@@ -2331,6 +2340,33 @@ deploy'ni (`deploy.sh`) yangi `dist` almashtirilishidan OLDIN to'xtatadi.
   metodga beradi). Rad etilsa platformaning bu himoyasi yakundagi
   `about:blank`, «Sahifani yangilash» va KEYINGI talabgorning havolasini
   to'sadi. Platformaning oddiy `confirm()` i — `False`.
+* **(client) Oldingi sessiya sahifasi KEYINGI `_configure_profile` da
+  o'chiriladi** (`_retire_page`: signallar uziladi, `deleteLater`; profil
+  sahifaning, filtr profilning BOLASI). `setPage` otasi boshqa sahifani
+  o'chirmaydi — ilgari har talabgor o'z QtWebEngineProcess'ini qoldirardi
+  (o'lchangan: 6 sessiya — 6 jarayon, 394 MB; endi 1 jarayon, ~90 MB).
+  Test — `tests/test_webview_page_lifetime.py` (alohida jarayonda).
+* **(client) `BusyOverlay` klaviaturani ham yutadi** (fokus qoplamaga,
+  Tab chiqmaydi, `stop` da fokus joyiga). JSHSHIR qidiruvi: so'rov paytida
+  maydon `readOnly`, ikkinchisi ketmaydi, javob faqat oxirgi so'rovniki
+  (`_lookup_seq`; `refresh` bekor qiladi), `state.pinfl` — SO'ROVDAGI raqam.
+  Ilgari raqam javobdan oldin tuzatilsa karta A talabgorniki, `state.pinfl`
+  boshqa bo'lardi (yakun `candidate_mismatch`, arxiv noto'g'ri JSHSHIR bilan).
+* **(client) Imtihon boshlanmagan ochiq sessiya HAR chiqish yo'lida
+  yopiladi** (`MainWindow._close_held_session`, `completed` siz — bron
+  saqlanadi): «Boshqa talabgor», imtihon almashtirish, Ctrl+Q → «Talabgor
+  ma'lumotlariga qaytish» (`_back_from_faceid`), «Hisobdan chiqish»
+  (`_on_logout`). Chiqishda lokal tokenlar DARHOL tozalanadi — so'rov
+  tokenlarning oldindan olingan nusxasi bilan (`finish_session(auth_token=,
+  session_token=)`). Ochiq imtihon bu yerda yopilmaydi (`has_open_exam`).
+  Login muddati tugaganda yopilmaydi (access yaroqsiz) — server 15 daqiqada.
+* **(client) Rasmsiz talabgor FaceID'ga yuborilmaydi**
+  (`CandidatePage._apply_reference`): kirish yuz tekshiruvi yoqilgan va
+  `faceid_page.reference_required()` — karta ko'rinadi, «YUZNI TEKSHIRISH»
+  o'chiq, xato xabari, kamera oldindan ochilmaydi.
+* **(client) `proctoring/start/` javobi faqat o'z `start()` iga**
+  (`_start_generation`, `_start_answer_current`; `stop()` oshiradi va
+  `_pending_access` ni `_notify_proctoring_stop` dan KEYIN tozalaydi).
 * **Tezkor tugma lug'ati UCH joyda**: client `services/lockdown.py`
   (manba), server `controls/hotkeys.py` (saqlashda tekshiradi, kanonik
   shakl; testda client bilan solishtiriladi), panel `utils/hotkeys.ts`.
