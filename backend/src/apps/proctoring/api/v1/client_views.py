@@ -45,6 +45,7 @@ from apps.common.utils.crypto import mask_pinfl
 from apps.common.storage import build_object_key, presign_put
 from apps.common.throttling import (
     ClientIngestThrottle,
+    ExitVerifyDeviceBurstThrottle,
     ExitVerifyDeviceThrottle,
     ExitVerifyThrottle,
     FaceAttemptThrottle,
@@ -1652,7 +1653,7 @@ class TechnicalProblemReportView(SessionRequiredView):
 # --------------------------------------------------------------------------
 # 10. Dasturdan chiqish
 # --------------------------------------------------------------------------
-class ExitVerifyView(APIView):
+class ExitVerifyView(ScopeDetailsThrottleMixin, APIView):
     """
     Dasturdan chiqishga ruxsat — IKKI xil parol qabul qilinadi.
 
@@ -1669,7 +1670,14 @@ class ExitVerifyView(APIView):
     bo'shliq emas: u hech narsa ochmaydi va hech qanday ma'lumot
     bermaydi — faqat "parol to'g'rimi" degan javobni qaytaradi va
     o'sha javob bilan client o'z oynasini yopadi. Brute-force'ga
-    qarshi `ExitVerifyThrottle`, har bir urinish esa log'da.
+    qarshi `ExitVerify*Throttle`, har bir urinish esa log'da.
+
+    CHEGARA FAQAT XATO URINISHLARNI SANAYDI (`FailedAttemptThrottle`):
+    to'g'ri parol byudjetni yemaydi (`_forgive`), mashina kalitida esa
+    hisoblagichni tozalaydi. Ilgari har so'rov sanalardi — Ctrl+Q
+    oynasidagi «orqaga qaytish» lar va bir-ikki xato bilan mashina
+    ~40 daqiqaga yopilmay qolardi. 429 da `details.scope = "exit"` va
+    haqiqiy `details.wait` — client operatorga aniq matn beradi.
 
     Qurilma `DeviceResolution` orqali ANIQLANMAYDI: u noma'lum yoki
     tasdiqlanmagan qurilmada istisno tashlaydi, holbuki aynan shunday
@@ -1679,7 +1687,26 @@ class ExitVerifyView(APIView):
 
     authentication_classes = [JWTAuthentication]
     permission_classes: list = []
-    throttle_classes = [ExitVerifyDeviceThrottle, ExitVerifyThrottle]
+    throttle_classes = [
+        ExitVerifyDeviceBurstThrottle, ExitVerifyDeviceThrottle, ExitVerifyThrottle,
+    ]
+
+    def _forgive(self, request) -> None:
+        """
+        Bu urinish xato emas — chegaralardan qaytarib olinadi.
+
+        Xatosi YUTILADI: kesh (Redis) shu lahzada javob bermasa ham parol
+        to'g'ri va operator chiqishi kerak; eng yomoni — bitta ortiqcha
+        yozuv hisoblagichda qoladi.
+        """
+        for throttle in self.get_throttles():
+            forgive = getattr(throttle, "forgive", None)
+            if forgive is None:
+                continue
+            try:
+                forgive(request, self)
+            except Exception:  # noqa: BLE001 - kesh xatosi chiqishni to'smaydi
+                logger.warning("Chiqish paroli chegarasini tozalab bo'lmadi", exc_info=True)
 
     @staticmethod
     def _device(request):
@@ -1727,12 +1754,14 @@ class ExitVerifyView(APIView):
 
         # 1. Xodimning o'z paroli.
         if user is not None and user.check_password(password):
+            self._forgive(request)
             return self._allow(request, device, method="staff", user=user, purpose=purpose)
 
         # 2. Viloyatning chiqish paroli.
         region_id = self._region_id(device, client_ip(request))
         row = controls_services.verify_exit_password(password, region_id=region_id)
         if row is not None:
+            self._forgive(request)
             return self._allow(
                 request, device, method="region", user=user, region=row.region,
                 purpose=purpose,
@@ -1745,6 +1774,14 @@ class ExitVerifyView(APIView):
         # qolardi. Shuning uchun alohida kod - client uni tasdiqlash
         # dialogiga aylantiradi.
         if not controls_services.has_exit_password(region_id=region_id):
+            if user is None:
+                # Xodim ham, viloyat paroli ham yo'q — tanlanadigan sir
+                # umuman yo'q, client esa parolsiz tasdiqqa o'tadi. Bu
+                # urinish sanalmaydi: aks holda sozlanmagan viloyatda bir
+                # necha Ctrl+Q dan keyin tasdiq oynasi o'rniga 429 chiqardi.
+                # Xodim kirgan bo'lsa SANALADI — u yerda javob xodim
+                # parolini tekshirish yo'li bo'lib qolardi.
+                self._forgive(request)
             logger.error(
                 "Chiqish paroli SOZLANMAGAN (viloyat=%s). Administrator uni "
                 "panelda yaratishi kerak - shungacha chiqish parolsiz ochiq.",

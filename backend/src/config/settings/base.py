@@ -353,8 +353,12 @@ REST_FRAMEWORK = {
         "pinfl_lookup_device": env("THROTTLE_PINFL_DEVICE", "120/hour"),
         "face_verify": env("THROTTLE_FACE_VERIFY", "40/min"),
         "session_start": env("THROTTLE_SESSION_START", "10/hour"),
+        # Chiqish paroli: uchalasi ham faqat XATO urinishlarni sanaydi
+        # (`FailedAttemptThrottle` — to'g'ri parol byudjetni yemaydi).
+        # Mashinada ikki oyna: qisqa (ketma-ket xatolar) va soatlik.
         "exit_verify": env("THROTTLE_EXIT_VERIFY", "300/hour"),
-        "exit_verify_device": env("THROTTLE_EXIT_VERIFY_DEVICE", "10/hour"),
+        "exit_verify_device": env("THROTTLE_EXIT_VERIFY_DEVICE", "20/hour"),
+        "exit_verify_device_burst": env("THROTTLE_EXIT_VERIFY_DEVICE_BURST", "5/min"),
         "client_ingest": env("THROTTLE_CLIENT_INGEST", "600/min"),
         "staff_login": env("THROTTLE_STAFF_LOGIN", "60/min"),
         "staff_login_device": env("THROTTLE_STAFF_LOGIN_DEVICE", "10/min"),

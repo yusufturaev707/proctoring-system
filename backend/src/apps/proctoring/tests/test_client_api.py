@@ -294,6 +294,164 @@ class ExitVerifyTests(TestCase):
         self.assertEqual(entry.meta["region"], self.region.name)
 
 
+class ExitVerifyThrottleTests(TestCase):
+    """
+    Chiqish paroli chegarasi FAQAT XATO urinishlarni sanaydi.
+
+    Ilgari har so'rov sanalardi (to'g'ri parol va Ctrl+Q oynasidagi
+    «orqaga qaytish» ham): soatiga 10 ta so'rovdan keyin mashina ~40
+    daqiqa yopilmasdi, kioskda esa chiqishning boshqa yo'li yo'q.
+    """
+
+    RIGHT = "chiqish-paroli"
+
+    def setUp(self):
+        from rest_framework.throttling import SimpleRateThrottle
+
+        cache.clear()
+        self.addCleanup(cache.clear)
+        # Test sozlamalarida throttling o'chiq — chegaralar shu yerda.
+        rates = patch.dict(
+            SimpleRateThrottle.THROTTLE_RATES,
+            {
+                "exit_verify_device_burst": "3/min",
+                "exit_verify_device": "100/hour",
+                "exit_verify": "100/hour",
+            },
+        )
+        rates.start()
+        self.addCleanup(rates.stop)
+
+        self.client = APIClient()
+        self.url = reverse("client-exit-verify")
+        self.region = factories.make_region()
+        self.zone = factories.make_zone(region=self.region)
+        self.device = factories.make_device(computer=factories.make_computer(zone=self.zone))
+        row = ClientExitPassword(region=self.region)
+        row.set_password(self.RIGHT)
+        row.save()
+
+    def _rate(self, **rates):
+        from rest_framework.throttling import SimpleRateThrottle
+
+        override = patch.dict(SimpleRateThrottle.THROTTLE_RATES, rates)
+        override.start()
+        self.addCleanup(override.stop)
+
+    def post(self, password, *, device=None, user=None, purpose="exit"):
+        headers = {"HTTP_X_DEVICE_ID": (device or self.device).device_id}
+        if user is not None:
+            headers["HTTP_AUTHORIZATION"] = bearer(user)
+        return self.client.post(
+            self.url, {"password": password, "purpose": purpose}, format="json", **headers
+        )
+
+    def test_correct_password_is_never_counted(self):
+        """Orqaga qaytish va chiqish — nechta bo'lsa ham byudjet yemaydi."""
+        for index in range(8):
+            response = self.post(self.RIGHT, purpose="back" if index % 2 else "exit")
+            self.assertEqual(response.status_code, 200, index)
+
+    def test_wrong_passwords_block_and_say_how_long(self):
+        for _ in range(3):
+            self.assertEqual(self.post("xato").status_code, 403)
+
+        # Blok paytida TO'G'RI parol ham o'tmaydi: aks holda 429/200 farqi
+        # parol tanlashni davom ettirish yo'li bo'lardi.
+        response = self.post(self.RIGHT)
+        self.assertEqual(response.status_code, 429)
+        error = response.json()["error"]
+        self.assertEqual(error["code"], "throttled")
+        self.assertEqual(error["details"]["scope"], "exit")
+        # Qisqa oyna: adashgan operator soat emas, ko'pi bilan bir daqiqa kutadi.
+        self.assertTrue(0 < error["details"]["wait"] <= 60, error["details"])
+
+    def test_blocked_attempts_do_not_extend_the_block(self):
+        for _ in range(3):
+            self.post("xato")
+        first = self.post("xato").json()["error"]["details"]["wait"]
+        for _ in range(5):
+            self.post("xato")
+        self.assertLessEqual(self.post("xato").json()["error"]["details"]["wait"], first)
+
+    def test_correct_password_resets_the_machine_counter(self):
+        self.post("xato")
+        self.post("xato")
+        self.assertEqual(self.post(self.RIGHT).status_code, 200)
+        # Hisob noldan: yana uchta xato sig'adi (ilgarigi ikkitasi kechirilgan).
+        for _ in range(3):
+            self.assertEqual(self.post("xato").status_code, 403)
+        self.assertEqual(self.post("xato").status_code, 429)
+
+    def test_hourly_window_limits_guessing_on_one_machine(self):
+        """Qisqa oynadan sekin o'tib tanlash soatlik chegarada to'xtaydi."""
+        self._rate(exit_verify_device_burst="100/min", exit_verify_device="4/hour")
+        for _ in range(4):
+            self.assertEqual(self.post("xato").status_code, 403)
+        response = self.post("xato")
+        self.assertEqual(response.status_code, 429)
+        self.assertGreater(response.json()["error"]["details"]["wait"], 60)
+
+    def test_one_machine_does_not_block_another(self):
+        other = factories.make_device(computer=factories.make_computer(zone=self.zone))
+        for _ in range(4):
+            self.post("xato")
+        self.assertEqual(self.post("xato").status_code, 429)
+        self.assertEqual(self.post(self.RIGHT, device=other).status_code, 200)
+
+    def test_building_wide_exit_does_not_touch_the_account_limit(self):
+        """Kun oxiri: bitta operator hisobi bilan ko'p mashina — hammasi chiqadi."""
+        self._rate(exit_verify="2/hour")
+        user = factories.make_user(permissions=["client.operate"])
+        user.set_password("xodim-paroli")
+        user.save()
+        devices = [
+            factories.make_device(computer=factories.make_computer(zone=self.zone))
+            for _ in range(6)
+        ]
+        for device in devices:
+            response = self.post("xodim-paroli", device=device, user=user)
+            self.assertEqual(response.status_code, 200)
+
+    def test_success_elsewhere_does_not_forgive_account_failures(self):
+        """Keng kalit tozalanmaydi: boshqa mashinadagi to'g'ri parol begona xatolarni kechirmaydi."""
+        self._rate(exit_verify="3/hour", exit_verify_device_burst="100/min")
+        user = factories.make_user(permissions=["client.operate"])
+        user.set_password("xodim-paroli")
+        user.save()
+        other = factories.make_device(computer=factories.make_computer(zone=self.zone))
+
+        self.post("xato", user=user)
+        self.post("xato", user=user)
+        self.assertEqual(self.post("xodim-paroli", device=other, user=user).status_code, 200)
+        self.assertEqual(self.post("xato", user=user).status_code, 403)
+        self.assertEqual(self.post("xato", user=user).status_code, 429)
+
+    def test_unconfigured_region_without_staff_is_not_counted(self):
+        """Tanlanadigan sir yo'q — client parolsiz tasdiqqa o'tishi kerak, 429 emas."""
+        ClientExitPassword.objects.all().delete()
+        for _ in range(6):
+            response = self.post("nimadir")
+            self.assertEqual(response.status_code, 403)
+            self.assertEqual(response.json()["error"]["code"], "exit_password_not_configured")
+
+    def test_unconfigured_region_with_staff_is_counted(self):
+        """Xodim kirgan: javob uning parolini tekshirish yo'li — sanaladi."""
+        ClientExitPassword.objects.all().delete()
+        user = factories.make_user(permissions=["client.operate"])
+        user.set_password("xodim-paroli")
+        user.save()
+        for _ in range(3):
+            self.assertEqual(self.post("xato", user=user).status_code, 403)
+        self.assertEqual(self.post("xodim-paroli", user=user).status_code, 429)
+
+    def test_cache_failure_on_forgive_does_not_block_exit(self):
+        from apps.common.throttling import FailedAttemptThrottle
+
+        with patch.object(FailedAttemptThrottle, "forgive", side_effect=RuntimeError("redis")):
+            self.assertEqual(self.post(self.RIGHT).status_code, 200)
+
+
 class FaceEndpointTests(RedisStateMixin, TestCase):
     """
     Kirishdagi FaceID yuzasi: MOSLIK va MOS KELMASLIK.

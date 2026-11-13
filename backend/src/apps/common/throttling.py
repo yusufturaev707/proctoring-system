@@ -219,8 +219,9 @@ class PinflLookupDeviceThrottle(BaseScopedThrottle):
 
 #: Bir nechta chegara birdan to'lsa client'ga ENG KENGI aytiladi: u ko'proq
 #: narsani to'sadi va operatorning harakati shunga bog'liq (boshqa talabgorni
-#: qidirish ham yordam bermaydi).
-_SCOPE_BREADTH = ("operator", "device", "pinfl")
+#: qidirish ham yordam bermaydi). `exit` — chiqish paroli (boshqa endpoint,
+#: qolganlari bilan birga kelmaydi).
+_SCOPE_BREADTH = ("operator", "device", "pinfl", "exit")
 
 
 class ScopedThrottled(Throttled):
@@ -261,7 +262,51 @@ class ScopeDetailsThrottleMixin:
         raise ScopedThrottled(max(durations, default=None), scope=scope)
 
 
-class ExitVerifyThrottle(BaseScopedThrottle):
+class FailedAttemptThrottle(BaseScopedThrottle):
+    """
+    FAQAT MUVAFFAQIYATSIZ urinishlarni sanaydigan chegara (parol tekshiruvi).
+
+    Oddiy chegara har so'rovni sanaydi — to'g'ri parolni ham. Chiqish
+    parolida bu operatorni jazolardi: Ctrl+Q oynasidagi har «orqaga
+    qaytish» va har chiqish bittadan byudjet yeb, bir-ikki xato bilan
+    mashina soatlab yopilmas edi (kioskda chiqishning boshqa yo'li yo'q).
+
+    Urinish avvalgidek KIRISHDA yoziladi (`allow_request`), parol to'g'ri
+    chiqsa view uni `forgive` bilan qaytaradi. Teskari tartib ("avval
+    tekshir, xato bo'lsa yoz") parallel so'rovlarga ochiq: parol hash'i
+    sekin (~0.3 s), shu oraliqda kelgan o'nlab urinishning hammasi
+    "hali joy bor" deb o'tib ketardi.
+
+    Blok paytida TO'G'RI parol ham rad etiladi — aks holda 429 va 200
+    orasidagi farqning o'zi parol tanlashni davom ettirish yo'li bo'lardi.
+    """
+
+    #: To'g'ri parol hisoblagichni TO'LIQ tozalaydi. Faqat mashina kaliti
+    #: (`dev:`) uchun: u yerda to'g'ri parol "bu mashinada parolni biladigan
+    #: odam bor" degani. Keng kalitlarda (hisob, bino IP'si) boshqa
+    #: mashinaning muvaffaqiyati begona urinishlarni kechirmasligi kerak —
+    #: u yerda faqat shu so'rovning o'z yozuvi olinadi.
+    reset_on_success = False
+
+    def forgive(self, request, view) -> None:
+        """Muvaffaqiyatli urinish byudjetni yemaydi."""
+        if self.rate is None:
+            return
+        ident = self.get_ident_value(request, view)
+        if ident is None:
+            return
+        key = self.cache_format % {"scope": self.scope, "ident": ident}
+        if self.reset_on_success and ident.startswith("dev:"):
+            self.cache.delete(key)
+            return
+        history = self.cache.get(key, [])
+        if history:
+            # Eng yangisi boshida (`throttle_success` — `insert(0, ...)`).
+            history.pop(0)
+            self.cache.set(key, history, self.duration)
+
+
+class ExitVerifyThrottle(FailedAttemptThrottle):
     """
     Chiqish paroli — ALOHIDA scope, hisob bo'yicha KENG chegara.
 
@@ -269,12 +314,14 @@ class ExitVerifyThrottle(BaseScopedThrottle):
     10 marta noto'g'ri parol kiritilsa, o'sha kompyuterda bir soat
     davomida hech kim imtihon boshlay olmasdi.
 
-    Hisob regionga bitta, ya'ni bu binoning kun oxiridagi barcha
-    chiqishlari byudjeti (`THROTTLE_EXIT_VERIFY`). Parolni bitta
-    mashinada tanlashni `ExitVerifyDeviceThrottle` to'xtatadi.
+    Hisob regionga bitta, ya'ni bu butun binoning soatlik XATO urinishlari
+    (`THROTTLE_EXIT_VERIFY`): to'g'ri parol sanalmaydi, shuning uchun kun
+    oxirida 500 mashinaning birdan chiqishi bu chegaraga tegmaydi. Parolni
+    bitta mashinada tanlashni `ExitVerifyDevice*Throttle` to'xtatadi.
     """
 
     scope = "exit_verify"
+    public_scope = "exit"
 
     def get_ident_value(self, request, view):
         user = getattr(request, "user", None)
@@ -283,13 +330,33 @@ class ExitVerifyThrottle(BaseScopedThrottle):
         return f"ip:{client_ip(request)}"
 
 
-class ExitVerifyDeviceThrottle(BaseScopedThrottle):
-    """Chiqish paroli — bitta MASHINA bo'yicha QAT'IY chegara."""
+class ExitVerifyDeviceThrottle(FailedAttemptThrottle):
+    """
+    Chiqish paroli — bitta MASHINADA soatiga nechta XATO urinish.
+
+    Parol tanlashning asosiy chegarasi (`THROTTLE_EXIT_VERIFY_DEVICE`).
+    Halol operator bunga yetmaydi: to'g'ri parol hisoblagichni tozalaydi.
+    """
 
     scope = "exit_verify_device"
+    public_scope = "exit"
+    reset_on_success = True
 
     def get_ident_value(self, request, view):
         return device_user_ident(request)
+
+
+class ExitVerifyDeviceBurstThrottle(ExitVerifyDeviceThrottle):
+    """
+    Chiqish paroli — bitta mashinada KETMA-KET xatolar (qisqa oyna).
+
+    Soatlik chegaraning o'zi yetmaydi: u to'lguncha tanlash to'xtamaydi,
+    to'lgach esa mashina bir soatga yopiladi. Qisqa oyna
+    (`THROTTLE_EXIT_VERIFY_DEVICE_BURST`) birinchisini sekinlashtiradi,
+    adashgan operatorni esa bir daqiqadan ortiq ushlamaydi.
+    """
+
+    scope = "exit_verify_device_burst"
 
 
 class FaceAttemptThrottle(BaseScopedThrottle):

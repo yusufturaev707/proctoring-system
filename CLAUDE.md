@@ -2089,9 +2089,20 @@ biznes-mantiq) / `api/v1/{serializers,views,urls}.py`. View'lar yupqa.
   (`warning`) Enter hech narsa qilmaydi — faqat «Chiqish» tugmasi.
 * **Chiqish paroli** — `client/exit/verify/`: xodimning o'z paroli (JWT
   bo'lsa) yoki `controls.ClientExitPassword` (har viloyat uchun, hash;
-  API qaytarmaydi). Endpoint autentifikatsiyasiz (`ExitVerifyThrottle`).
+  API qaytarmaydi). Endpoint autentifikatsiyasiz (`ExitVerify*Throttle`).
   Parol sozlanmagan — `exit_password_not_configured`, client tasdiqlash
-  dialogiga o'tadi.
+  dialogiga o'tadi. **Chegara FAQAT XATO urinishni sanaydi**
+  (`common/throttling.py:FailedAttemptThrottle`): urinish kirishda yoziladi,
+  to'g'ri parolda view `_forgive` bilan qaytaradi (mashina kaliti `dev:` —
+  to'liq tozalanadi, hisob/bino kaliti — faqat o'z yozuvi). Mashinada ikki
+  oyna: `THROTTLE_EXIT_VERIFY_DEVICE_BURST` (5/min) + `_DEVICE` (20/hour);
+  hisob — `THROTTLE_EXIT_VERIFY`. Har so'rovni sanashni QAYTARMANG: Ctrl+Q
+  dagi «orqaga qaytish» lar + bir-ikki xato mashinani ~40 daqiqaga
+  yopilmas qilardi (kioskda boshqa chiqish yo'li yo'q). "Avval tekshir,
+  xatoda yoz" ham emas — parol hash'i sekin, parallel urinishlar o'tib
+  ketardi. Blok paytida to'g'ri parol ham 429. 429 da `details.scope =
+  "exit"` → client matni `THROTTLE_SCOPES["exit"]` (`ExitDialog` sarlavha
+  bilan); so'rov `gate=False`.
 * **Throttle — ikki qavat, chunki operator hisobi REGIONGA bitta** (bino
   ~500 mashina, bitta NAT IP). Login, JSHSHIR qidiruvi, chiqish paroli:
   `*DeviceThrottle` (bazadagi `X-Device-ID` — mashinaga qat'iy,

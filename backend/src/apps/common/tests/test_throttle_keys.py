@@ -16,6 +16,7 @@ from rest_framework.request import Request
 
 from apps.common.throttling import (
     DeviceRegisterThrottle,
+    ExitVerifyDeviceBurstThrottle,
     ExitVerifyDeviceThrottle,
     ExitVerifyThrottle,
     PinflLookupDeviceThrottle,
@@ -159,7 +160,9 @@ class DeviceUserIdentTests(TestCase):
     def test_device_scopes_use_device_key(self):
         device = factories.make_device()
         request = self.request(device.device_id)
-        for throttle in (PinflLookupDeviceThrottle(), ExitVerifyDeviceThrottle()):
+        for throttle in (
+            PinflLookupDeviceThrottle(), ExitVerifyDeviceThrottle(), ExitVerifyDeviceBurstThrottle(),
+        ):
             with self.subTest(throttle=type(throttle).__name__):
                 self.assertIn(
                     f"dev:{device.pk}:user:{self.user.pk}", throttle.get_cache_key(request, None)
@@ -253,6 +256,23 @@ class ThrottleWiringTests(TestCase):
             with self.subTest(view=view.__name__):
                 self.assertIn(device_layer, view.throttle_classes)
                 self.assertIn(account_layer, view.throttle_classes)
+
+    def test_exit_password_counts_only_failures_in_two_windows(self):
+        """Chiqish paroli: qisqa + soatlik oyna, uchalasi ham faqat xatoni sanaydi."""
+        from apps.common.throttling import FailedAttemptThrottle, ScopeDetailsThrottleMixin
+        from apps.proctoring.api.v1.client_views import ExitVerifyView
+
+        self.assertIn(ExitVerifyDeviceBurstThrottle, ExitVerifyView.throttle_classes)
+        self.assertTrue(issubclass(ExitVerifyView, ScopeDetailsThrottleMixin))
+        for cls in ExitVerifyView.throttle_classes:
+            with self.subTest(throttle=cls.__name__):
+                self.assertTrue(issubclass(cls, FailedAttemptThrottle))
+                self.assertEqual(cls.public_scope, "exit")
+        # Ikki oyna — ikki ALOHIDA kesh kaliti (bittasi ikkinchisini bosmaydi).
+        self.assertNotEqual(ExitVerifyDeviceBurstThrottle.scope, ExitVerifyDeviceThrottle.scope)
+        # Keng kalit (hisob/bino) to'g'ri parol bilan TOZALANMAYDI.
+        self.assertFalse(ExitVerifyThrottle.reset_on_success)
+        self.assertTrue(ExitVerifyDeviceThrottle.reset_on_success)
 
 
 class _Blocked(StaffLoginThrottle):
